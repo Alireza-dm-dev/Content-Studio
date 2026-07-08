@@ -1,0 +1,21 @@
+---
+source_file: ".agents/skills/impeccable/scripts/detector/engines/static-html/css-cascade.mjs"
+type: "code"
+community: "Browser URL Detector"
+location: "L833"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Browser_URL_Detector
+---
+
+# collectStaticCssText()
+
+## Connections
+- [[.textContent()]] - `calls` [EXTRACTED]
+- [[css-cascade.mjs]] - `contains` [EXTRACTED]
+- [[detect-html.mjs]] - `imports` [EXTRACTED]
+- [[detectHtml()]] - `calls` [EXTRACTED]
+- [[profileStep()]] - `calls` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Browser_URL_Detector

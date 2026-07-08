@@ -1,0 +1,24 @@
+---
+source_file: ".agents/skills/impeccable/scripts/live-server.mjs"
+type: "code"
+community: "Live Server Event Management"
+location: "L1091"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Live_Server_Event_Management
+---
+
+# broadcastAgentPollingIfChanged()
+
+## Connections
+- [[acknowledgePendingEvent()]] - `calls` [EXTRACTED]
+- [[agentPollingConnected()]] - `calls` [EXTRACTED]
+- [[broadcast()]] - `calls` [EXTRACTED]
+- [[cancelQueuedAnonymousExitEvents()]] - `calls` [EXTRACTED]
+- [[flushPendingPolls()]] - `calls` [EXTRACTED]
+- [[handlePollGet()]] - `calls` [EXTRACTED]
+- [[leaseEvent()]] - `calls` [EXTRACTED]
+- [[live-server.mjs]] - `contains` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Live_Server_Event_Management

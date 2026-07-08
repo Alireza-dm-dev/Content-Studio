@@ -1,0 +1,18 @@
+---
+source_file: ".agents/skills/impeccable/scripts/live-inject.mjs"
+type: "code"
+community: "Live Inject Module"
+location: "L327"
+tags:
+  - graphify/code
+  - graphify/EXTRACTED
+  - community/Live_Inject_Module
+---
+
+# validateConfig()
+
+## Connections
+- [[injectCli()]] - `calls` [EXTRACTED]
+- [[live-inject.mjs]] - `contains` [EXTRACTED]
+
+#graphify/code #graphify/EXTRACTED #community/Live_Inject_Module

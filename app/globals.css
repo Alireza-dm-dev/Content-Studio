@@ -1,26 +1,533 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-sans);
   --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* Conceptual Sketch additions: ink/accent tokens exposed as Tailwind utilities
+     (text-accent-vermilion, border-sketch-line, bg-sketch-ink, etc.) */
+  --color-accent-vermilion: var(--accent-vermilion);
+  --color-accent-vermilion-foreground: var(--accent-vermilion-foreground);
+  --color-sketch-ink: var(--sketch-ink);
+  --color-sketch-line: var(--sketch-line);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/*
+  Conceptual Sketch palette — off-white paper + black ink + one limited accent
+  (a muted vermilion "red ink" used sparingly for emphasis: links, focus rings,
+  eyebrow labels, active marks). Everything else stays close to greyscale, warm
+  tinted to read as paper/pencil rather than cool digital grey.
+
+  Token NAMES are unchanged from the shadcn defaults so every existing
+  component and page keeps working — only the values shift to the new mood.
+*/
+:root {
+  --background: oklch(0.975 0.01 90);
+  --foreground: oklch(0.26 0.06 255);
+  --card: oklch(0.97 0.014 245);
+  --card-foreground: oklch(0.26 0.06 255);
+  --popover: oklch(0.97 0.014 245);
+  --popover-foreground: oklch(0.26 0.06 255);
+  --primary: oklch(0.32 0.09 258);
+  --primary-foreground: oklch(0.98 0.012 90);
+  --secondary: oklch(0.93 0.02 245);
+  --secondary-foreground: oklch(0.28 0.07 258);
+  --muted: oklch(0.935 0.018 245);
+  --muted-foreground: oklch(0.5 0.04 250);
+  --accent: oklch(0.86 0.13 95);
+  --accent-foreground: oklch(0.28 0.07 258);
+  --destructive: oklch(0.55 0.2 27);
+  --border: oklch(0.32 0.09 258 / 16%);
+  --input: oklch(0.32 0.09 258 / 22%);
+  --ring: oklch(0.55 0.16 255 / 50%);
+  --chart-1: oklch(0.75 0.12 230);
+  --chart-2: oklch(0.65 0.14 250);
+  --chart-3: oklch(0.7 0.13 95);
+  --chart-4: oklch(0.6 0.1 270);
+  --chart-5: oklch(0.5 0.08 255);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.96 0.018 245);
+  --sidebar-foreground: oklch(0.26 0.06 255);
+  --sidebar-primary: oklch(0.32 0.09 258);
+  --sidebar-primary-foreground: oklch(0.98 0.012 90);
+  --sidebar-accent: oklch(0.88 0.11 95);
+  --sidebar-accent-foreground: oklch(0.28 0.07 258);
+  --sidebar-border: oklch(0.32 0.09 258 / 14%);
+  --sidebar-ring: oklch(0.55 0.16 255 / 50%);
+
+  /* Ink Cartography design system tokens */
+  --accent-vermilion: #B23E26;
+  --accent-vermilion-foreground: #F7F4EC;
+  --sketch-ink: #1C1812;
+  --sketch-ink-soft: #3A332A;
+  --sketch-ink-faint: #6B6052;
+  --sketch-paper: #F2EEE4;
+  --sketch-paper-raw: #ECE6D8;
+  --sketch-paper-bright: #F7F4EC;
+  --sketch-line: #CFC6B4;
+  --sketch-line-soft: #E0D9CA;
+  --sketch-vermilion: #B23E26;
+  --sketch-vermilion-ink: #8F2E1B;
+  --sketch-vermilion-wash: #F0DDD3;
+  --sketch-stone: #B49C78;
+  --sketch-parchment: #DCC8A8;
+  --sketch-sage: #587860;
+  --sketch-class-image: #7E84B5;
+  --sketch-class-video: #587860;
+  --sketch-class-caption: #9A7B52;
+  --sketch-class-media: #3A3733;
+  --sketch-shadow: rgba(28,24,18,0.10);
+
+  --font-display: 'Big Shoulders Display', 'Arial Narrow', sans-serif;
+  --font-serif: 'IBM Plex Serif', Georgia, 'Times New Roman', serif;
+  --font-mono-ink: 'DM Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  /* Pre-mixed translucent washes (alpha baked into the oklch value, same
+     convention as --sketch-line/--sketch-shadow above). Avoids color-mix():
+     Lightning CSS emits a solid-color @supports fallback for it that would
+     render the destructive hover as a full fill and the scrim as fully
+     opaque — both contradicting the spec's "outline only" / "ink overlay"
+     intent (§8, §11) for any browser that takes the fallback path. */
+  --destructive-wash: oklch(0.55 0.2 27 / 12%);
+  --sketch-scrim: oklch(0.28 0.07 258 / 45%);
+
+  /* Shared "control tier" radius signature (§6) — one fixed asymmetric
+     four-corner shape reused by buttons, inputs, badges, and nav rows so the
+     interactive vocabulary reads as drawn by the same hand. Distinct from
+     (but harmonious with) the larger "surface tier" on frame/card/modal.
+     Not theme-dependent — same value applies in light and dark. */
+  --radius-sketch-control: 5px 8px 6px 9px / 8px 5px 9px 6px;
+}
+
+.dark {
+  --background: oklch(0.22 0.04 258);
+  --foreground: oklch(0.93 0.02 90);
+  --card: oklch(0.27 0.05 258);
+  --card-foreground: oklch(0.93 0.02 90);
+  --popover: oklch(0.27 0.05 258);
+  --popover-foreground: oklch(0.93 0.02 90);
+  --primary: oklch(0.78 0.1 250);
+  --primary-foreground: oklch(0.2 0.05 258);
+  --secondary: oklch(0.32 0.05 255);
+  --secondary-foreground: oklch(0.93 0.02 90);
+  --muted: oklch(0.32 0.05 255);
+  --muted-foreground: oklch(0.72 0.03 250);
+  --accent: oklch(0.5 0.1 95);
+  --accent-foreground: oklch(0.97 0.02 90);
+  --destructive: oklch(0.65 0.19 27);
+  --border: oklch(0.93 0.02 90 / 14%);
+  --input: oklch(0.93 0.02 90 / 18%);
+  --ring: oklch(0.7 0.12 250 / 50%);
+  --chart-1: oklch(0.75 0.12 230);
+  --chart-2: oklch(0.65 0.14 250);
+  --chart-3: oklch(0.7 0.13 95);
+  --chart-4: oklch(0.6 0.1 270);
+  --chart-5: oklch(0.5 0.08 255);
+  --sidebar: oklch(0.25 0.045 258);
+  --sidebar-foreground: oklch(0.93 0.02 90);
+  --sidebar-primary: oklch(0.78 0.1 250);
+  --sidebar-primary-foreground: oklch(0.2 0.05 258);
+  --sidebar-accent: oklch(0.42 0.09 95);
+  --sidebar-accent-foreground: oklch(0.93 0.02 90);
+  --sidebar-border: oklch(0.93 0.02 90 / 12%);
+  --sidebar-ring: oklch(0.7 0.12 250 / 50%);
+
+  --accent-vermilion: oklch(0.82 0.14 92);
+  --accent-vermilion-foreground: oklch(0.2 0.04 258);
+  --sketch-ink: var(--foreground);
+  --sketch-line: oklch(0.93 0.02 90 / 30%);
+  --sketch-shadow: oklch(0 0 0 / 40%);
+  /* Ink-toned (not foreground-toned) on purpose: a scrim must darken the
+     surface behind it in both themes, and dark mode's --foreground is
+     near-white. Mirrors --sketch-shadow's light/dark split for the same
+     reason. */
+  --destructive-wash: oklch(0.65 0.19 27 / 16%);
+  --sketch-scrim: oklch(0 0 0 / 55%);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    /* Subtle paper grain — desaturated turbulence noise blended into the paper
+       background. Kept very low-opacity on purpose ("do not overdo texture"). */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' width='200' height='200'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23grain)' opacity='0.05'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-blend-mode: multiply;
+  }
+  html {
+    @apply font-sans;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/*
+  Conceptual Sketch component-level utilities.
+  Opt-in building blocks for the "hand drawn ink line / editorial poster" mood —
+  irregular frames, ink-line borders, offset poster shadows, expressive
+  headings, and mono "annotation" labels. Pages adopt these incrementally;
+  nothing here is force-applied to existing layouts.
+*/
+@layer components {
+  /* Irregular, slightly-imperfect rectangle — the core "sketch frame" shape.
+     Each corner gets a different radius so edges read as drawn, not CAD-perfect. */
+  .sketch-frame {
+    border: 1.5px solid var(--sketch-line);
+    border-radius: 7px 11px 9px 13px / 11px 9px 13px 7px;
+    box-shadow: 2px 2px 0 0 var(--sketch-shadow);
+  }
+
+  /* Card surface built on the sketch frame — used by components/ui/card.jsx */
+  .sketch-card {
+    background-color: var(--card);
+    color: var(--card-foreground);
+    border: 1.5px solid var(--sketch-line);
+    border-radius: 10px 14px 10px 14px / 14px 10px 14px 10px;
+    box-shadow: 2px 2px 0 0 var(--sketch-shadow);
+  }
+
+  /* Hand-drawn rule for opt-in section dividers (the default Separator stays a
+     clean hairline so dense layouts remain calm). */
+  .sketch-divider {
+    height: 1.5px;
+    border: none;
+    border-radius: 999px;
+    background-color: var(--sketch-line);
+  }
+
+  /* Slight rotation helpers for poster-style accent blocks. Use sparingly —
+     rotating functional list items hurts scanability, so reserve these for
+     hero / decorative elements, never dense data surfaces. */
+  .sketch-tilt-left {
+    transform: rotate(-0.6deg);
+  }
+  .sketch-tilt-right {
+    transform: rotate(0.6deg);
+  }
+
+  /* Large expressive heading — "editorial poster" display type. Built on Geist
+     Sans at heavy weight + tight tracking; swap in --font-display here later if
+     a hand-lettered face is sourced and self-hosted via next/font/local. */
+  .heading-display,
+  .sketch-heading {
+    font-family: var(--font-sans);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    font-size: clamp(2.25rem, 1.5rem + 3vw, 3.75rem);
+    color: var(--foreground);
+  }
+
+  /* Section heading — one notch down from display, still bold/expressive */
+  .heading-section,
+  .sketch-subheading {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+    font-size: clamp(1.375rem, 1.1rem + 1vw, 1.875rem);
+    color: var(--foreground);
+  }
+
+  /* Mono "annotation" label — sketchbook caption / margin-note feel, used for
+     eyebrows, footers, and small meta text. */
+  .label-sketch {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    font-size: 0.6875rem;
+    color: var(--muted-foreground);
+  }
+
+  /* Loosen lucide icon strokes slightly so they read closer to pen line work */
+  .icon-sketch svg {
+    stroke-width: 1.5px;
+  }
+
+  /* -------------------------------------------------------------------
+     Remaining Conceptual Sketch utilities (design_system.md §7–§16).
+     ------------------------------------------------------------------- */
+
+  /* Off-white paper canvas + grain for full-bleed surfaces apart from <body>
+     (e.g. modal scrims, large panels) — same low-opacity technique as §7. */
+  .sketch-paper-bg {
+    background-color: var(--background);
+    color: var(--foreground);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' width='200' height='200'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23grain)' opacity='0.05'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-blend-mode: multiply;
+  }
+
+  /* Opt-in decorative grain overlay (§7) — marginally heavier than the global
+     body grain, painted via ::before (pointer-events: none, negative z-index
+     inside its own stacking context) so it never intercepts clicks or sits
+     between text and its background. One texture layer per view — don't pair
+     with sketch-paper-bg/body grain on the same surface. */
+  .sketch-texture {
+    position: relative;
+    isolation: isolate;
+  }
+  .sketch-texture::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: inherit;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200' width='200' height='200'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23grain)' opacity='0.08'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    mix-blend-mode: multiply;
+  }
+
+  /* Ink-line button family (§8) — pair the base with exactly one variant
+     modifier; existing size utilities and focus-visible ring stay as-is so
+     hit targets and focus indicators are never softened (§19). */
+  .sketch-button {
+    border: 1.5px solid var(--sketch-line);
+    border-radius: var(--radius-sketch-control);
+    background-color: var(--card);
+    color: var(--foreground);
+    transition:
+      background-color 140ms ease,
+      border-color 140ms ease,
+      box-shadow 140ms ease,
+      transform 140ms ease;
+  }
+  /* Universal press feedback; primary/accent override below with the
+     "shadow collapses, content settles flat" signature from §8. Native
+     :disabled buttons never match :active, so no extra guard is needed —
+     and adding one would outrank the variant overrides on specificity. */
+  .sketch-button:active {
+    transform: translate(1px, 1px);
+  }
+  .sketch-button-primary {
+    background-color: var(--primary);
+    color: var(--primary-foreground);
+    border-color: var(--sketch-ink);
+    box-shadow: 2px 2px 0 0 var(--sketch-shadow);
+  }
+  .sketch-button-primary:active {
+    box-shadow: 0 0 0 0 var(--sketch-shadow);
+    transform: translate(2px, 2px);
+  }
+  .sketch-button-accent {
+    background-color: var(--accent-vermilion);
+    color: var(--accent-vermilion-foreground);
+    border-color: var(--accent-vermilion);
+    box-shadow: 2px 2px 0 0 var(--sketch-shadow);
+  }
+  .sketch-button-accent:active {
+    box-shadow: 0 0 0 0 var(--sketch-shadow);
+    transform: translate(2px, 2px);
+  }
+  .sketch-button-secondary {
+    background-color: transparent;
+  }
+  .sketch-button-secondary:hover {
+    background-color: var(--secondary);
+  }
+  .sketch-button-outline {
+    background-color: transparent;
+  }
+  .sketch-button-outline:hover {
+    background-color: var(--muted);
+  }
+  .sketch-button-ghost {
+    background-color: transparent;
+    border-color: transparent;
+  }
+  .sketch-button-ghost:hover {
+    background-color: var(--muted);
+    border-color: var(--sketch-line);
+  }
+  /* Outline + shared red-ink text only — solid fill is reserved for
+     confirm-destructive dialogs, not routine destructive buttons (§8). */
+  .sketch-button-destructive {
+    background-color: transparent;
+    color: var(--destructive);
+  }
+  .sketch-button-destructive:hover {
+    background-color: var(--destructive-wash);
+    border-color: var(--destructive);
+  }
+
+  /* Ink-line field family for input/textarea/select (§9). Existing
+     focus-visible ring utilities already supply the soft vermilion ring —
+     this layer only owns the sketch border language so the two don't fight. */
+  .sketch-input {
+    background-color: var(--card);
+    color: var(--foreground);
+    border: 1.5px solid var(--sketch-line);
+    border-radius: var(--radius-sketch-control);
+    transition: border-color 140ms ease;
+  }
+  .sketch-input:focus-visible {
+    border-color: var(--sketch-ink);
+  }
+  .sketch-input[aria-invalid="true"] {
+    border-color: var(--destructive);
+  }
+
+  /* Ledger-style table (§12) — horizontal dividers only, mono header over a
+     heavier rule, no zebra striping; hover gets a faint wash, never a border
+     change, so the flat "ledger page" feel survives interaction. */
+  .sketch-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  .sketch-table thead th {
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    text-align: left;
+    color: var(--muted-foreground);
+    padding: 0.75rem 1rem;
+    border-bottom: 2px solid var(--sketch-line);
+  }
+  .sketch-table tbody td {
+    padding: 0.875rem 1rem;
+    color: var(--foreground);
+    border-bottom: 1.5px solid var(--sketch-line);
+  }
+  .sketch-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+  .sketch-table tbody tr:hover td {
+    background-color: var(--muted);
+    transition: background-color 120ms ease;
+  }
+
+  /* Popped-page modal surface (§11) — a larger sketch-frame with a heavier
+     offset shadow. Pair `.sketch-modal-scrim` with `.sketch-texture` on the
+     backdrop for the spec's "ink overlay + low-opacity grain" combination. */
+  .sketch-modal {
+    background-color: var(--card);
+    color: var(--card-foreground);
+    border: 1.5px solid var(--sketch-line);
+    border-radius: 12px 18px 12px 18px / 18px 12px 18px 12px;
+    box-shadow: 4px 4px 0 0 var(--sketch-shadow);
+  }
+  .sketch-modal-scrim {
+    background-color: var(--sketch-scrim);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .sketch-modal {
+      animation: sketch-modal-in 160ms ease-out;
+    }
+  }
+  @keyframes sketch-modal-in {
+    from {
+      opacity: 0;
+      transform: scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* Sidebar/nav row + active mark (§13) — mono label, divider-separated rows,
+     never a filled pill. The active mark reads as "circled in red ink": a
+     small hand-drawn vermilion stroke beside the label, not a color fill. */
+  .sketch-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 0.875rem;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    font-size: 0.6875rem;
+    color: var(--muted-foreground);
+    border-radius: var(--radius-sketch-control);
+    transition: background-color 120ms ease, color 120ms ease;
+  }
+  .sketch-nav-item:hover {
+    background-color: var(--muted);
+    color: var(--foreground);
+  }
+  .sketch-nav-active {
+    color: var(--foreground);
+  }
+  .sketch-nav-active::after {
+    content: "";
+    display: inline-block;
+    width: 0.75rem;
+    height: 2px;
+    margin-left: 0.375rem;
+    vertical-align: middle;
+    background-color: var(--accent-vermilion);
+    border-radius: 999px;
+    transform: rotate(-3deg);
+  }
+
+  /* Mono-uppercase status pill (§16) — outline by default; pair color with an
+     icon shape and label text in the component, never color alone (§19). */
+  .sketch-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.625rem;
+    line-height: 1;
+    padding: 0.3125rem 0.5rem;
+    color: var(--muted-foreground);
+    background-color: transparent;
+    border: 1px solid var(--sketch-line);
+    border-radius: var(--radius-sketch-control);
+  }
+  /* The one "highlight" tag type (e.g. NEW/FEATURED) — at most one per
+     context; routine status badges stay greyscale-on-paper (§16). */
+  .sketch-badge-highlight {
+    color: var(--accent-vermilion-foreground);
+    background-color: var(--accent-vermilion);
+    border-color: var(--accent-vermilion);
+  }
 }
