@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
+import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
 
 function stripRatioMentions(prompt) {
   return prompt
@@ -197,11 +199,17 @@ function buildConcreteReferenceCompositionBlock(refAnalysis, cvdObj) {
 }
 
 export async function POST(request, { params }) {
+  const access = await getAdminAccess();
+  if (!access.user) {
+    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  }
+
   try {
     const { id } = await params;
     console.log("[NanobananaPrompt] POST for CombinedVisualDirection id:", id);
     const body = await request.json().catch(() => ({}));
     const useEditedJson = body.useEditedJson !== false;
+    const visualControls = normalizeVisualControls(body.visualControls);
 
     // ── Load CombinedVisualDirection ──────────────────────────────────────────
     const cvd = await prisma.combinedVisualDirection.findUnique({ where: { id } });
@@ -424,7 +432,7 @@ export async function POST(request, { params }) {
 
     // ── Build userInput for the Nanobanana template ───────────────────────────
     // The template expects: Brand visual identity, post type, image text requirements, raw image idea
-    const userInput = [
+    const userInputParts = [
       "Brand visual identity:",
       detailLines.length > 0 ? detailLines.join("\n") : "See combined visual direction below.",
       "",
@@ -444,7 +452,23 @@ export async function POST(request, { params }) {
       concreteCompositionBlock,
       "",
       avoidSection,
-    ].join("\n");
+    ];
+
+    // ── Selected Visual Production Controls (user constraints) ─────────────────
+    // Only non-auto selections are serialized; auto is never sent to the AI.
+    // Appended as explicit production constraints that must not override the
+    // reference image's required identity or brand-preserved assets.
+    const visualControlsBlock = serializeVisualControls(visualControls);
+    if (visualControlsBlock) {
+      userInputParts.push(
+        "",
+        visualControlsBlock,
+        "",
+        "These selected Visual Production Controls are intentional user constraints. Apply them as production/style direction only. They must NOT alter the reference image's required identity — objects, logos, products, people, artwork, colours, and text — nor the brand's preserved assets or structural composition. Where a control conflicts with required reference or brand preservation, apply it in the closest compatible way (for example, a lighting or colour-treatment choice may shift mood and grade but must not redesign the product or replace brand assets). Never invent a different subject or asset.",
+      );
+    }
+
+    const userInput = userInputParts.join("\n");
 
     console.log("[NanobananaPrompt] userInput length:", userInput.length);
 

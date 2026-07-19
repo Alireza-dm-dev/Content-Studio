@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 
@@ -88,6 +89,12 @@ function buildCalendarPostSummary(norm) {
 
 export async function POST(request, { params }) {
   const { id } = await params;
+
+  const access = await getAdminAccess();
+  if (!access.user) {
+    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  }
+
   console.log("[FinalVideoPrompt] POST storyboardId:", id);
 
   try {

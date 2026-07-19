@@ -12,6 +12,10 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { Sparkles, Loader2, Copy, Save, Check, ArrowLeft } from "lucide-react";
 import HiggsfieldImageGenerationCard from "@/components/HiggsfieldImageGenerationCard";
+import OpenAIImageGenerationCard from "@/components/OpenAIImageGenerationCard";
+import GenerationReferenceImageInput from "@/components/GenerationReferenceImageInput";
+import ImageVisualProductionControls from "@/components/ImageVisualProductionControls";
+import { defaultVisualControls } from "@/lib/image-visual-controls";
 
 const TARGET_TOOLS = ["Nanobanana", "Midjourney", "DALL-E 3", "Stable Diffusion", "Ideogram", "Flux"];
 
@@ -26,7 +30,10 @@ export default function CreateImageRawIdeaPage() {
   const [saved, setSaved] = useState(false);
   const [savedId, setSavedId] = useState(null);
   const [model, setModel] = useState("");
+  const [referenceImageUrl, setReferenceImageUrl] = useState(null);
+  const [referenceImageDescription, setReferenceImageDescription] = useState("");
   const [usage, setUsage] = useState(null);
+  const [visualControls, setVisualControls] = useState(defaultVisualControls());
 
   async function handleGenerate() {
     if (!rawImageIdea.trim()) return toast.error("Enter a raw image idea first.");
@@ -50,6 +57,7 @@ export default function CreateImageRawIdeaPage() {
             rawIdea: rawImageIdea.trim(),
             targetTool,
           },
+          visualControls,
         }),
       });
       const data = await res.json();
@@ -159,6 +167,13 @@ export default function CreateImageRawIdeaPage() {
           </CardContent>
         </Card>
 
+        {/* Visual production controls */}
+        <ImageVisualProductionControls
+          value={visualControls}
+          onChange={setVisualControls}
+          disabled={running}
+        />
+
         {/* Generate button */}
         <Button
           onClick={handleGenerate}
@@ -239,12 +254,34 @@ export default function CreateImageRawIdeaPage() {
           </>
         )}
 
+        {/* Reference Image for Generation */}
+        {output && (
+          <GenerationReferenceImageInput
+            referenceImageUrl={referenceImageUrl}
+            setReferenceImageUrl={setReferenceImageUrl}
+            referenceImageDescription={referenceImageDescription}
+            setReferenceImageDescription={setReferenceImageDescription}
+          />
+        )}
+
         {/* Generate with Higgsfield */}
         <HiggsfieldImageGenerationCard
           finalPrompt={output}
           brandId={null}
           calendarPostId={null}
           generatedPromptId={savedId}
+          referenceImageDescription={referenceImageDescription}
+          referenceImageUrl={referenceImageUrl}
+        />
+
+        {/* Generate with OpenAI / ChatGPT */}
+        <OpenAIImageGenerationCard
+          finalPrompt={output}
+          brandId={null}
+          calendarPostId={null}
+          generatedPromptId={savedId}
+          referenceImageUrl={referenceImageUrl}
+          referenceImageDescription={referenceImageDescription}
         />
       </div>
     </div>

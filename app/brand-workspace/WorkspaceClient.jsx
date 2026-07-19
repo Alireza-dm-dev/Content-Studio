@@ -7,6 +7,9 @@ import { toast } from "sonner";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { StatBlock } from "@/components/content-report/StatBlock";
 import { StatusPill } from "@/components/content-report/StatusPill";
+import PublishedPostsSection from "@/components/PublishedPostsSection";
+import LinkedInPublishedPostsSection from "@/components/LinkedInPublishedPostsSection";
+import WorkspaceReviewPanel from "@/components/WorkspaceReviewPanel";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -354,6 +357,15 @@ export default function WorkspaceClient({ brand, initialCalendars = [] }) {
 
       {/* Calendar section */}
       <CalendarSection brand={brand} initialCalendars={initialCalendars} />
+
+      {/* Instagram Published Posts section */}
+      <PublishedPostsSection brand={brand} />
+
+      {/* LinkedIn Published Posts section */}
+      <LinkedInPublishedPostsSection brand={brand} />
+
+      {/* Workspace Review Links section */}
+      <WorkspaceReviewPanel brandId={brand.id} />
 
       {/* Footer */}
       <div style={{

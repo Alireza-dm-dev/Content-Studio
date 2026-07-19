@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { buildExportRows, generateXlsx, safeFileName } from "@/lib/calendar-export";
+import { buildExportRows, generateXlsx, safeFileName, VALID_AUDIENCES } from "@/lib/calendar-export";
 
 // POST /api/content-calendar/[calendarId]/export/google-drive
-// Body: { format: "xlsx" }
+// Body: { format: "xlsx", audience: "creator" | "client" }
 export async function POST(request, { params }) {
   const { calendarId } = await params;
+  const body = await request.json().catch(() => ({}));
+  const audienceRaw = body?.audience ?? "creator";
+  const audience = VALID_AUDIENCES.includes(audienceRaw) ? audienceRaw : "creator";
 
   // ── Check Google Drive credentials are configured ──────────────────────────
   const clientId     = process.env.GOOGLE_CLIENT_ID;
@@ -50,10 +53,10 @@ export async function POST(request, { params }) {
       );
     }
 
-    const rows     = buildExportRows(calendar.posts);
+    const rows     = buildExportRows(calendar.posts, audience);
     const safeName = safeFileName(calendar.title, calendar.id);
     const fileName = `content-calendar-${safeName}.xlsx`;
-    const buffer   = await generateXlsx(rows, calendar);
+    const buffer   = await generateXlsx(rows, calendar, audience);
 
     // ── Upload to Google Drive via REST API ─────────────────────────────────
     const metadata = JSON.stringify({

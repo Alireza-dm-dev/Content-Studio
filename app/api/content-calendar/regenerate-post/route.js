@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import {
@@ -126,11 +127,11 @@ function buildOutputImageTextRules(isCarousel, isVideo) {
     "outputImageTextRequirementsStructured is a STRATEGIC field — the exact on-image text plan, derived in this priority order from: (1) Format, (2) Hook/Title, (3) Main Angle + Core Message, (4) Content Structure, (5) Visual Direction.",
     "Return a real structured object (NOT a string): { type: 'static'|'carousel'|'video', items: [...] } for static/video, or { type: 'carousel', slides: [ { slideNumber, slideRole, fields } ] } for carousel.",
     "Each item/slide `fields` uses ONLY these keys (omit any without real content): main_headline, subheadline, supporting_text, call_to_action, badge_or_label, offer_or_promotion, date_or_time, website_or_contact, logo_text, additional_text_notes. Never return a key with an empty string — omit it entirely.",
-    "Never repeat the same headline (or near-identical phrasing) across slides/items. Never copy the full caption into on-image text — it is short, punchy, and scannable. Never invent offers, dates, or contact info that aren't in the brand identity, campaign details, or caption.",
+    "Never repeat the same headline (or near-identical phrasing) across slides/items. Never copy the full caption into on-image text — on-image text is substantive and stands on its own; the caption is a separate field entirely. Never invent offers, dates, or contact info that aren't in the brand identity, campaign details, or caption.",
     "AVOID GENERIC RESTATEMENT (CRITICAL): do NOT simply copy hookTitle into main_headline, coreMessage into subheadline, and mainAngle into badge_or_label — pull out the SPECIFIC fact, step, number, benefit, mistake, quote, or detail that makes this post's image useful.",
     "badge_or_label must be a meaningful on-image label (a real step name, stat, category, or callout) — never a generic content-type tag like 'Educational Insight', 'Tip', or 'Did You Know', and never the raw mainAngle value, unless that exact phrase is genuinely meant to appear on the image.",
     "subheadline/supporting_text must add information BEYOND the headline — a concrete detail, step, number, benefit, or reason to care, never a vaguer restatement of the headline or coreMessage. Never use placeholder text ('N/A', 'Coming soon', 'Educational Insight', etc.).",
-    "For educational/how-it-works/process/consultation posts, pull the ACTUAL steps, stages, checklist items, mistakes, or takeaways from contentStructure or the caption. For testimonial/proof posts, use a short concrete quote or result from the caption — never invented. Keep on-image text concise: main_headline around 60 chars or fewer, subheadline/supporting_text around 90 chars or fewer.",
+    "For educational/how-it-works/process/consultation posts, pull the ACTUAL steps, stages, checklist items, mistakes, or takeaways from contentStructure or the caption. For testimonial/proof posts, use a short concrete quote or result from the caption — never invented. Keep on-image text design-ready and substantive: main_headline should make a complete, specific claim; subheadline / supporting_text must add concrete value beyond the headline — use the space to be useful rather than artificially brief.",
   ];
 
   if (isVideo) {
@@ -145,6 +146,7 @@ function buildOutputImageTextRules(isCarousel, isVideo) {
       "This is a CAROUSEL post: return { type: 'carousel', slides: [...] } with EXACTLY one slide per slide in contentStructure — never fewer, never more, never skipped. Slide numbers must be sequential 1..N with no gaps or duplicates.",
       "Slide 1's main_headline is derived from hookTitle — sharpened into the strongest on-image claim, not copied verbatim. The final slide should usually carry call_to_action pulled from the caption's actual CTA.",
       "CAROUSEL MIDDLE SLIDES (MANDATORY): Every middle slide MUST include both main_headline AND at least one of supporting_text or subheadline — never return main_headline alone for a middle slide. The supporting_text or subheadline must pull a SPECIFIC detail, benefit, step, stat, concrete claim, or mini-explanation from that slide's OWN Content Structure entry. A vague one-liner or generic restatement is not acceptable.",
+      "For educational carousel slides, add sub_supporting_text_1 to most middle/informative slides and sub_supporting_text_2 to the most complex slides to provide deeper explanation, practical examples, or proof points. Hook and CTA slides should stay concise.",
       "`slideRole` is a short label for the slide's role in the flow (e.g. 'Hook', 'Tip 1', 'Proof', 'CTA'). Match the Visual Direction's style (checklist → short list-style lines, comparison → compare/contrast phrasing, steps → numbered action phrasing) and the Main Angle's tone (education → explain/teach, promotion → offer + CTA, trust → proof/credibility).",
       "CAROUSEL QUALITY EXAMPLE — middle slide: GOOD: { main_headline: 'Plan Your Social Content Early', supporting_text: 'Get match-day posts ready 2 weeks before kickoff' } | BAD: { main_headline: 'Plan your content' } — headline only with no supporting detail.",
     ];
@@ -172,7 +174,7 @@ function buildJsonHint(isCarousel, isVideo) {
     '  "hookTitle": "...",',
     '  "mainAngle": "...",',
     '  "coreMessage": "...",',
-    '  "caption": "...",',
+    '  "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA",',
     '  "hashtags": ["#tag1", "#tag2"],',
     '  "contentStructure": "...",',
     isCarousel
@@ -209,13 +211,13 @@ function buildOutputImageTextRulesForCustomInstruction() {
     "outputImageTextRequirementsStructured is a STRATEGIC field — the exact on-image text plan, derived in this priority order from: (1) Format, (2) Hook/Title, (3) Main Angle + Core Message, (4) Content Structure, (5) Visual Direction.",
     "Return a real structured object (NOT a string): { type: 'static'|'carousel'|'video', items: [...] } for static/video, or { type: 'carousel', slides: [ { slideNumber, slideRole, fields } ] } for carousel.",
     "Each item/slide `fields` uses ONLY these keys (omit any without real content): main_headline, subheadline, supporting_text, call_to_action, badge_or_label, offer_or_promotion, date_or_time, website_or_contact, logo_text, additional_text_notes. Never return a key with an empty string — omit it entirely.",
-    "Never repeat the same headline (or near-identical phrasing) across slides/items. Never copy the full caption into on-image text — it is short, punchy, and scannable. Never invent offers, dates, or contact info that aren't in the brand identity, campaign details, or caption.",
+    "Never repeat the same headline (or near-identical phrasing) across slides/items. Never copy the full caption into on-image text — on-image text is substantive and stands on its own; the caption is a separate field entirely. Never invent offers, dates, or contact info that aren't in the brand identity, campaign details, or caption.",
     "AVOID GENERIC RESTATEMENT (CRITICAL): do NOT simply copy hookTitle into main_headline, coreMessage into subheadline, and mainAngle into badge_or_label — pull out the SPECIFIC fact, step, number, benefit, mistake, quote, or detail that makes this post's image useful.",
     "badge_or_label must be a meaningful on-image label (a real step name, stat, category, or callout) — never a generic content-type tag like 'Educational Insight', 'Tip', or 'Did You Know', and never the raw mainAngle value, unless that exact phrase is genuinely meant to appear on the image.",
     "subheadline/supporting_text must add information BEYOND the headline — a concrete detail, step, number, benefit, or reason to care, never a vaguer restatement of the headline or coreMessage. Never use placeholder text ('N/A', 'Coming soon', 'Educational Insight', etc.).",
-    "For educational/how-it-works/process/consultation posts, pull the ACTUAL steps, stages, checklist items, mistakes, or takeaways from contentStructure or the caption. For testimonial/proof posts, use a short concrete quote or result from the caption — never invented. Keep on-image text concise: main_headline around 60 chars or fewer, subheadline/supporting_text around 90 chars or fewer.",
+    "For educational/how-it-works/process/consultation posts, pull the ACTUAL steps, stages, checklist items, mistakes, or takeaways from contentStructure or the caption. For testimonial/proof posts, use a short concrete quote or result from the caption — never invented. Keep on-image text design-ready and substantive: main_headline should make a complete, specific claim; subheadline / supporting_text must add concrete value beyond the headline — use the space to be useful rather than artificially brief.",
     "CRITICAL — FORMAT-AWARE IMAGE TEXT: Choose the correct type based on the FINAL format you return — not the original post format.",
-    "If final format is Carousel → return { type: 'carousel', slides: [...] } with EXACTLY one slide per slide in contentStructure. Slide 1's main_headline from hookTitle (sharpened). Each middle slide MUST include both main_headline AND at least one of supporting_text or subheadline — pull a specific detail, benefit, step, or claim from that slide's own contentStructure entry. Final slide usually carries call_to_action. slideRole is a short label (e.g. 'Hook', 'Tip 1', 'CTA').",
+    "If final format is Carousel → return { type: 'carousel', slides: [...] } with EXACTLY one slide per slide in contentStructure. Slide 1's main_headline from hookTitle (sharpened). Each middle slide MUST include both main_headline AND at least one of supporting_text or subheadline — pull a specific detail, benefit, step, or claim from that slide's own contentStructure entry. For educational carousel slides, add sub_supporting_text_1 to most middle/informative slides and sub_supporting_text_2 to the most complex slides for deeper explanation, practical examples, or proof points. Hook and CTA slides should stay concise. Final slide usually carries call_to_action. slideRole is a short label (e.g. 'Hook', 'Tip 1', 'CTA').",
     "If final format is Reel/video/story → return { type: 'video', items: [] } unless a thumbnail or end card needs on-screen text. If so, return ONE item — set additional_text_notes to 'Use as thumbnail, cover, or end card only.'",
     "If final format is Static Image → return { type: 'static', items: [ { ...fields } ] } with exactly ONE item. main_headline is the strongest on-image hook; subheadline/supporting_text is a specific detail; badge_or_label is a meaningful callout; call_to_action only if caption has a clear CTA.",
     "NEVER return { type: 'static' } when final format is carousel. NEVER return { type: 'carousel' } when final format is static or video.",
@@ -240,7 +242,7 @@ function buildJsonHintForCustomInstruction() {
     '  "hookTitle": "...",',
     '  "mainAngle": "...",',
     '  "coreMessage": "...",',
-    '  "caption": "...",',
+    '  "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA",',
     '  "hashtags": ["#tag1", "#tag2"],',
     '  "contentStructure": "updated to match final format if it changed",',
     '  "visualDirection": "updated to describe the final format",',
@@ -274,7 +276,14 @@ function buildJsonHintForCustomInstruction() {
 export async function POST(request) {
   console.log("[RegeneratePost] POST /api/content-calendar/regenerate-post");
 
+  // ── 1. Authenticate ────────────────────────────────────────────────────────
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 });
+  }
+
   try {
+    // ── 2. Parse request body ────────────────────────────────────────────────
     let body;
     try { body = await request.json(); }
     catch (e) {
@@ -284,6 +293,7 @@ export async function POST(request) {
       );
     }
 
+    // ── 3. Validate required fields ──────────────────────────────────────────
     const { post, brandId, calendarContext, scope = "visual_only", customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction } = body;
 
     if (!post || typeof post !== "object") {
@@ -297,6 +307,12 @@ export async function POST(request) {
         { success: false, error: "brandId is required." },
         { status: 400 }
       );
+    }
+
+    // ── 4. Authorize brand access ────────────────────────────────────────────
+    const access = await getBrandCalendarAccess(brandId);
+    if (!access.allowed) {
+      return NextResponse.json({ success: false, error: access.error }, { status: access.status });
     }
 
     const validScopes = ["visual_only", "visual_ideas_only", "entire_post", "custom_instruction", "image_text_only"];
@@ -394,6 +410,20 @@ export async function POST(request) {
         "8. Return only valid JSON. Do not use markdown. Do not use code blocks.",
         "9. If the instruction asks to change Image Text, image copy, on-image text, headline text, overlay text, slide text, or visual copy, you MUST return a new outputImageTextRequirementsStructured object. Follow the OUTPUT IMAGE TEXT REQUIREMENTS rules below exactly.",
         "",
+        "=== CAPTION GENERATION RULES ===",
+        "If the instruction modifies or regenerates the caption, the new caption must follow these rules:",
+        "  - At least 5 visible lines of substantive content",
+        "  - Maximum 3 paragraphs, separated by natural blank line breaks",
+        "  - Always include a clear call-to-action in the final paragraph",
+        "  - Do not artificially shorten captions to a fixed character limit — let content and depth dictate the length",
+        "  - Use natural line breaks between paragraphs to improve readability",
+        "",
+        "CAPTION DEPTH BY POST TYPE:",
+        "  - Educational posts (mainAngle: education): captions must be more detailed than regular posts. Use longer explanations, practical examples, steps, reasons, mini-frameworks, or key takeaways. Aim for at least 2 substantial paragraphs when the content supports it. Do not add filler — useful depth only.",
+        "  - Static posts: Since a static post has only one visual, the caption must carry more explanation and context. Include a hook/opening, explanation/context, practical value or proof, and a CTA. Aim for at least 2 substantial paragraphs when the content supports it.",
+        "  - Educational static posts: Receive the richest captions — usually 2-3 substantial paragraphs with explanation, practical value, and a clear next step.",
+        "  - Other posts: Follow the base rules above (at least 5 visible lines, max 3 paragraphs, ending with CTA).",
+        "",
         "=== OUTPUT IMAGE TEXT REQUIREMENTS ===",
         ...buildOutputImageTextRulesForCustomInstruction(),
         "",
@@ -484,13 +514,26 @@ export async function POST(request) {
           ? "IMPORTANT: narrationOrDialogueOfCharacterOrCharacters MUST be regenerated as a complete voiceover or dialogue script — cover hook/title, core message, main angle, promised value, key supporting points, and CTA/closing line where relevant. A one-line placeholder is not acceptable."
           : null,
         "",
+        "=== CAPTION GENERATION RULES ===",
+        "  - At least 5 visible lines of substantive content",
+        "  - Maximum 3 paragraphs, separated by natural blank line breaks",
+        "  - Always include a clear call-to-action in the final paragraph",
+        "  - Do not artificially shorten captions to a fixed character limit — let content and depth dictate the length",
+        "  - Use natural line breaks between paragraphs to improve readability",
+        "",
+        "CAPTION DEPTH BY POST TYPE:",
+        "  - Educational posts (mainAngle: education): captions must be more detailed than regular posts. Use longer explanations, practical examples, steps, reasons, mini-frameworks, or key takeaways. Aim for at least 2 substantial paragraphs when the content supports it. Do not add filler — useful depth only.",
+        "  - Static posts: Since a static post has only one visual, the caption must carry more explanation and context. Include a hook/opening, explanation/context, practical value or proof, and a CTA. Aim for at least 2 substantial paragraphs when the content supports it.",
+        "  - Educational static posts: Receive the richest captions — usually 2-3 substantial paragraphs with explanation, practical value, and a clear next step.",
+        "  - Other posts: Follow the base rules above (at least 5 visible lines, max 3 paragraphs, ending with CTA).",
+        "",
         "=== OUTPUT IMAGE TEXT REQUIREMENTS ===",
         ...buildOutputImageTextRules(isCarousel, isVideo),
         "",
         ...buildJsonHint(isCarousel, isVideo),
       ].filter(v => v !== null && v !== false && v !== undefined).join("\n");
     }
-
+ 
     // ── Call AI ───────────────────────────────────────────────────────────────
     let aiResult;
     try {

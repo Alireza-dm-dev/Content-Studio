@@ -6,9 +6,12 @@ import {
   X, Sparkles, Loader2, Copy, Check, ImageIcon, RefreshCw, AlertCircle, ChevronDown, ChevronUp, MessageSquare,
 } from "lucide-react";
 import ReferenceImageUploader from "@/components/ReferenceImageUploader";
+import GenerationReferenceImageInput from "@/components/GenerationReferenceImageInput";
 import HiggsfieldImageGenerationCard from "@/components/HiggsfieldImageGenerationCard";
 import OpenAIImageGenerationCard from "@/components/OpenAIImageGenerationCard";
 import { formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
+import { defaultVisualControls, ASPECT_RATIO_OPTIONS } from "@/lib/image-visual-controls";
+import ImageVisualProductionControls from "@/components/ImageVisualProductionControls";
 
 // ── Safe JSON response helper ──────────────────────────────────────────────────
 async function safeParseJson(response) {
@@ -82,6 +85,25 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
   const [refinementFeedback, setRefinementFeedback] = useState("");
   const [refiningPrompt, setRefiningPrompt] = useState(false);
   const [promptGuidance, setPromptGuidance] = useState("");
+
+// Reference image for generation (final-step upload — not CVD flow)
+   const [referenceImageUrl, setReferenceImageUrl] = useState(null);
+   const [referenceImageDescription, setReferenceImageDescription] = useState("");
+
+   // Visual Production Controls — initialized from safe calendar-post fields.
+   // The modal remounts per post (conditional render in the parent), so this
+   // initializer runs fresh for every opened post and prevents stale leakage.
+   const [visualControls, setVisualControls] = useState(() => {
+     const defaults = defaultVisualControls();
+     if (post?.aspectRatio) {
+       const aspectRatio = post.aspectRatio.trim();
+       const found = ASPECT_RATIO_OPTIONS.find(
+         (o) => o.value === aspectRatio && o.value !== "auto"
+       );
+       if (found) defaults.aspectRatio = aspectRatio;
+     }
+     return defaults;
+   });
 
   // ── Reference: combine brand + ref analysis ──────────────────────────────
   async function handleCombine(refAnalysis) {
@@ -188,6 +210,7 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
         carouselMode: isCarousel ? carouselMode : "not_carousel",
         carouselSlideNumber: carouselMode === "exact_slide" ? carouselSlideNumber : null,
         combinedVisualDirectionId: combined?.id || null,
+        visualControls,
         ...(promptGuidance.trim() ? { promptGuidance: promptGuidance.trim() } : {}),
       };
 
@@ -217,6 +240,9 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
     }
   }
 
+  // ── Reference image upload ──────────────────────────────────────────────
+  // (handled inside GenerationReferenceImageInput)
+
   async function handleCopy() {
     await navigator.clipboard.writeText(finalPrompt);
     setCopied(true);
@@ -236,6 +262,7 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
         carouselMode: isCarousel ? carouselMode : "not_carousel",
         carouselSlideNumber: carouselMode === "exact_slide" ? carouselSlideNumber : null,
         combinedVisualDirectionId: combined?.id || null,
+        visualControls,
         currentPrompt: finalPrompt,
         refinementFeedback: refinementFeedback.trim(),
       };
@@ -283,6 +310,9 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
     }
     return null;
   })();
+
+  // Busy state for disabling controls during generation/refinement
+  const busyState = generating || refiningPrompt;
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -396,36 +426,43 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
                   Change mode
                 </button>
               </div>
-              {/* Pre-generation guidance */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground block">
-                  Extra guidance for the final prompt
-                  <span className="ml-1 font-normal text-muted-foreground/60">(optional)</span>
-                </label>
-                <textarea
-                  value={promptGuidance}
-                  onChange={e => setPromptGuidance(e.target.value)}
-                  placeholder="Make it more premium and minimal. Focus on clean composition and stronger CTA placement."
-                  rows={2}
-                  disabled={generating}
-                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs resize-y"
-                />
-                <p className="text-xs text-muted-foreground/60">
-                  Tell AI what to emphasize in the final image prompt.
-                </p>
-              </div>
+{/* Pre-generation guidance */}
+       <div className="space-y-1.5">
+         <label className="text-xs font-medium text-muted-foreground block">
+           Extra guidance for the final prompt
+           <span className="ml-1 font-normal text-muted-foreground/60">(optional)</span>
+         </label>
+         <textarea
+           value={promptGuidance}
+           onChange={e => setPromptGuidance(e.target.value)}
+           placeholder="Make it more premium and minimal. Focus on clean composition and stronger CTA placement."
+           rows={2}
+           disabled={generating}
+           className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs resize-y"
+         />
+         <p className="text-xs text-muted-foreground/60">
+           Tell AI what to emphasize in the final image prompt.
+         </p>
+       </div>
 
-              {error && (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive flex items-center gap-2">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />{error}
-                </div>
-              )}
-              <button type="button" onClick={handleGenerate} disabled={generating}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-60 transition-colors">
-                {generating
-                  ? <><Loader2 className="w-4 h-4 animate-spin" />Generating Nanobanana prompt…</>
-                  : <><Sparkles className="w-4 h-4" />Generate Image Prompt</>}
-              </button>
+       {/* Visual Production Controls */}
+       <ImageVisualProductionControls
+         value={visualControls}
+         onChange={setVisualControls}
+         disabled={busyState}
+       />
+
+       {error && (
+         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive flex items-center gap-2">
+           <AlertCircle className="w-3.5 h-3.5 shrink-0" />{error}
+         </div>
+       )}
+       <button type="button" onClick={handleGenerate} disabled={generating}
+         className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-60 transition-colors">
+         {generating
+           ? <><Loader2 className="w-4 h-4 animate-spin" />Generating Nanobanana prompt…</>
+           : <><Sparkles className="w-4 h-4" />Generate Image Prompt</>}
+       </button>
             </div>
           )}
 
@@ -475,60 +512,68 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
               )}
 
               {/* Step 3: CVD review */}
-              {combined && (
-                <div className="rounded-lg border border-border overflow-hidden">
-                  <button type="button"
-                    onClick={() => setCvdCollapsed(v => !v)}
-                    className="w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">Combined Visual Direction</span>
-                      {combined.status === "approved" && (
-                        <span className="inline-flex items-center gap-1 text-xs bg-green-500/10 text-green-400 border border-green-500/20 rounded px-1.5 py-0.5">
-                          <Check className="w-2.5 h-2.5" />Approved
-                        </span>
-                      )}
-                    </div>
-                    {cvdCollapsed ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronUp className="w-4 h-4 text-muted-foreground" />}
-                  </button>
+{combined && (
+         <div className="rounded-lg border border-border overflow-hidden">
+           <button type="button"
+             onClick={() => setCvdCollapsed(v => !v)}
+             className="w-full flex items-center justify-between px-4 py-3 bg-muted/30 hover:bg-muted/50 transition-colors">
+             <div className="flex items-center gap-2">
+               <span className="text-sm font-medium">Combined Visual Direction</span>
+               {combined.status === "approved" && (
+                 <span className="inline-flex items-center gap-1 text-xs bg-green-500/10 text-green-400 border border-green-500/20 rounded px-1.5 py-0.5">
+                   <Check className="w-2.5 h-2.5" />Approved
+                 </span>
+               )}
+             </div>
+             {cvdCollapsed ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronUp className="w-4 h-4 text-muted-foreground" />}
+           </button>
 
-                  {!cvdCollapsed && (
-                    <div className="p-4 space-y-3 border-t border-border">
-                      <p className="text-xs text-muted-foreground">
-                        Edit if needed, then approve to generate the final Nanobanana prompt.
-                      </p>
-                      {combinedJsonError && (
-                        <p className="text-xs text-destructive flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" />{combinedJsonError}
-                        </p>
-                      )}
-                      <textarea
-                        value={combinedText}
-                        onChange={e => { setCombinedText(e.target.value); setCombinedJsonError(null); }}
-                        rows={12}
-                        readOnly={combined.status === "approved"}
-                        className="w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs resize-y"
-                        spellCheck={false}
-                      />
-                      {combined.status !== "approved" && (
-                        <div className="flex gap-2 flex-wrap">
-                          <button type="button" onClick={handleApproveCvd} disabled={approvingCvd || savingCvd}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
-                            {approvingCvd ? <><Loader2 className="w-3 h-3 animate-spin" />Approving…</> : <><Check className="w-3 h-3" />Approve Direction</>}
-                          </button>
-                          <button type="button" onClick={handleSaveCvd} disabled={savingCvd || approvingCvd}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-60">
-                            {savingCvd ? <><Loader2 className="w-3 h-3 animate-spin" />Saving…</> : "Save Edits"}
-                          </button>
-                          <button type="button" onClick={() => handleCombine(referenceAnalysis)} disabled={combining}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-muted-foreground hover:text-foreground disabled:opacity-60">
-                            <RefreshCw className="w-3 h-3" />Recombine
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
+           {!cvdCollapsed && (
+             <div className="p-4 space-y-3 border-t border-border">
+               <p className="text-xs text-muted-foreground">
+                 Edit if needed, then approve to generate the final Nanobanana prompt.
+               </p>
+               {combinedJsonError && (
+                 <p className="text-xs text-destructive flex items-center gap-1">
+                   <AlertCircle className="w-3 h-3" />{combinedJsonError}
+                 </p>
+               )}
+               <textarea
+                 value={combinedText}
+                 onChange={e => { setCombinedText(e.target.value); setCombinedJsonError(null); }}
+                 rows={12}
+                 readOnly={combined.status === "approved"}
+                 className="w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs resize-y"
+                 spellCheck={false}
+               />
+               {combined.status !== "approved" && (
+                 <div className="flex gap-2 flex-wrap">
+                   <button type="button" onClick={handleApproveCvd} disabled={approvingCvd || savingCvd}
+                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
+                     {approvingCvd ? <><Loader2 className="w-3 h-3 animate-spin" />Approving…</> : <><Check className="w-3 h-3" />Approve Direction</>}
+                   </button>
+                   <button type="button" onClick={handleSaveCvd} disabled={savingCvd || approvingCvd}
+                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:text-foreground disabled:opacity-60">
+                     {savingCvd ? <><Loader2 className="w-3 h-3 animate-spin" />Saving…</> : "Save Edits"}
+                   </button>
+                   <button type="button" onClick={() => handleCombine(referenceAnalysis)} disabled={combining}
+                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-muted-foreground hover:text-foreground disabled:opacity-60">
+                     <RefreshCw className="w-3 h-3" />Recombine
+                   </button>
+                 </div>
+               )}
+             </div>
+           )}
+         </div>
+       )}
+       {/* Visual Production Controls - show when we have combined data */}
+       {combined && (
+         <ImageVisualProductionControls
+           value={visualControls}
+           onChange={setVisualControls}
+           disabled={busyState}
+         />
+       )}
 
               {/* Step 4: Generate */}
               {combined?.status === "approved" && !finalPrompt && (
@@ -610,12 +655,24 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
             </div>
           )}
 
+          {/* ── Reference Image for Generation ── */}
+          {finalPrompt && (
+            <GenerationReferenceImageInput
+              referenceImageUrl={referenceImageUrl}
+              setReferenceImageUrl={setReferenceImageUrl}
+              referenceImageDescription={referenceImageDescription}
+              setReferenceImageDescription={setReferenceImageDescription}
+            />
+          )}
+
           {/* ── Generate with Higgsfield ── */}
           <HiggsfieldImageGenerationCard
             finalPrompt={finalPrompt}
             brandId={brandId}
             calendarPostId={post?.id}
             generatedPromptId={generatedPromptId}
+            referenceImageDescription={referenceImageDescription}
+            referenceImageUrl={referenceImageUrl}
           />
 
           {/* ── Generate with OpenAI ── */}
@@ -624,6 +681,8 @@ export default function ImagePromptModal({ post, calendarId, brandId, onClose })
             brandId={brandId}
             calendarPostId={post?.id}
             generatedPromptId={generatedPromptId}
+            referenceImageUrl={referenceImageUrl}
+            referenceImageDescription={referenceImageDescription}
           />
         </div>
       </div>

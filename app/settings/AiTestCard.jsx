@@ -420,7 +420,7 @@ export default function AiTestCard() {
         variables,
         ...(selectedImages.length > 0 ? { images: selectedImages } : {}),
       };
-      const res = await fetch("/api/generate/test", {
+      const res = await fetch("/api/admin/generate/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

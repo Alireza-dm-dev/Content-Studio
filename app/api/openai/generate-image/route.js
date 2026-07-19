@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
-import { writeFile, mkdir } from "fs/promises";
+import OpenAI, { toFile } from "openai";
+import { writeFile, mkdir, readFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
@@ -38,6 +38,64 @@ function buildPresetInstruction({ platformPreset, targetWidth, targetHeight, asp
   return `Compose this image for ${label}${dims}${ratio}. Keep important subjects and text within safe margins.`;
 }
 
+// Safely normalizes a final-step reference image location into an absolute
+// path under public/uploads/temp-images. Throws on anything unsafe.
+//
+// Accepts:
+//   /uploads/temp-images/filename.png
+//   http://localhost:3001/uploads/temp-images/filename.png
+//   https://origin/uploads/temp-images/filename.png
+// Rejects:
+//   empty / non-string values
+//   file:// and any non-http(s) scheme
+//   external URLs whose pathname is not /uploads/temp-images/...
+//   ../ traversal and any path resolving outside the temp-images dir
+function normalizeReferenceImageUrl(raw, cwd) {
+  if (typeof raw !== "string" || !raw.trim()) {
+    throw new Error("empty referenceImageUrl");
+  }
+
+  const trimmed = raw.trim();
+  let pathname;
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    let parsed;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      throw new Error("invalid reference URL");
+    }
+    pathname = parsed.pathname;
+  } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+    // file:// or any other scheme — disallowed (no remote fetching either)
+    throw new Error("unsupported scheme");
+  } else {
+    // Treat as a path; drop any query/hash.
+    pathname = trimmed.split("#")[0].split("?")[0];
+  }
+
+  try {
+    pathname = decodeURIComponent(pathname);
+  } catch {
+    // Keep raw if it cannot be decoded.
+  }
+
+  if (!pathname.startsWith("/uploads/temp-images/")) {
+    throw new Error("reference path not under /uploads/temp-images/");
+  }
+
+  // Strip leading slash so it joins under public/ instead of filesystem root.
+  const rel = pathname.replace(/^\/+/, "");
+  const abs = path.resolve(cwd, "public", rel);
+
+  const allowedBase = path.resolve(cwd, "public", "uploads", "temp-images");
+  if (abs !== allowedBase && !abs.startsWith(allowedBase + path.sep)) {
+    throw new Error("path traversal detected");
+  }
+
+  return { absPath: abs, publicPath: pathname };
+}
+
 // ── POST /api/openai/generate-image ──────────────────────────────────────────
 
 export async function POST(request) {
@@ -62,6 +120,8 @@ export async function POST(request) {
     targetWidth,
     targetHeight,
     aspectRatioLabel,
+    referenceImageUrl,
+    referenceImageDescription,
   } = body ?? {};
 
   // 1. Validate prompt
@@ -127,26 +187,118 @@ export async function POST(request) {
     : trimmedPrompt;
   const openai = new OpenAI({ apiKey });
 
-  // 5. Call OpenAI image generation
+  // 5. Optional final-step reference image mode.
+  //    When a reference image is supplied we use the OpenAI image-edit API
+  //    (images.edit) so the uploaded asset is sent as an actual image input
+  //    rather than just being described in text. Without a reference image we
+  //    keep the existing text-to-image generate behavior unchanged.
+  const hasReferenceImage =
+    typeof referenceImageUrl === "string" && referenceImageUrl.trim().length > 0;
+
+  console.log("[OpenAIImage] reference image mode", {
+    hasReferenceImage: Boolean(hasReferenceImage),
+    referenceImageUrl,
+    hasDescription: Boolean(referenceImageDescription),
+  });
+
+  let referenceBuffer = null;
+  let referenceMime = "image/png";
+  let referenceFilename = "reference.png";
+  let finalPromptOverride = finalPrompt;
+
+  if (hasReferenceImage) {
+    console.log("[OpenAIImage] received referenceImageUrl", referenceImageUrl);
+
+    // 5a. Normalize + safely resolve the uploaded file path.
+    let normalized;
+    try {
+      normalized = normalizeReferenceImageUrl(referenceImageUrl, process.cwd());
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid reference image path. Please upload the image again.",
+        },
+        { status: 400 }
+      );
+    }
+    const referenceAbs = normalized.absPath;
+
+    const ext = path.extname(referenceAbs).toLowerCase();
+    referenceMime =
+      ext === ".png"
+        ? "image/png"
+        : ext === ".webp"
+        ? "image/webp"
+        : "image/jpeg";
+    referenceFilename = `reference${ext || ".png"}`;
+
+    // 5b. Confirm the file exists and is readable.
+    try {
+      referenceBuffer = await readFile(referenceAbs);
+    } catch (err) {
+      console.error("[openai/generate-image] reference file read error:", err);
+      const status = err?.code === "ENOENT" ? 400 : 500;
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            status === 400
+              ? "Uploaded reference image could not be found. Please upload it again."
+              : `Reference image file is unreadable: ${err.message}`,
+        },
+        { status }
+      );
+    }
+
+    // 5c. Build an enhanced prompt that treats the upload as a source asset
+    //     and explicitly preserves its identity.
+    const instruction = (referenceImageDescription || "").trim();
+    const preservation = instruction
+      ? `Use the uploaded reference image as a source asset according to this instruction:\n${instruction}\n\nIf the instruction asks to place a logo/product/image into the final image, preserve the uploaded image as closely as possible. Do not redesign it. Do not change its colors, shape, text, proportions, or core visual identity. Place it naturally in the requested position.`
+      : `Use the uploaded reference image as a visual source asset. Incorporate it into the composition as faithfully as possible, preserving its colors, shape, text, proportions, and core visual identity.`;
+    finalPromptOverride = `${preservation}\n\nOriginal image prompt:\n${finalPrompt}`;
+  }
+  const effectivePrompt = hasReferenceImage ? finalPromptOverride : finalPrompt;
+
+  // 6. Call OpenAI image generation (or edit when a reference image is supplied).
   let imageData;
   try {
-    const response = await openai.images.generate({
-      model: MODEL,
-      prompt: finalPrompt,
-      n: 1,
-      size,
-      quality,
-    });
-    imageData = response.data?.[0];
+    if (hasReferenceImage) {
+      const imageFile = await toFile(referenceBuffer, referenceFilename, {
+        type: referenceMime,
+      });
+      const response = await openai.images.edit({
+        model: MODEL,
+        image: imageFile,
+        prompt: effectivePrompt,
+        n: 1,
+        size,
+        quality,
+      });
+      imageData = response.data?.[0];
+    } else {
+      const response = await openai.images.generate({
+        model: MODEL,
+        prompt: effectivePrompt,
+        n: 1,
+        size,
+        quality,
+      });
+      imageData = response.data?.[0];
+    }
     if (!imageData) throw new Error("OpenAI returned no image data.");
   } catch (err) {
     console.error("[openai/generate-image] OpenAI API error:", err);
-    // Surface the HTTP status from the SDK error when available so the client
-    // can distinguish a content-policy refusal (400) from a server fault (500).
+    // Reference-image failures must surface clearly — never silently fall
+    // back to text-only generation.
+    const errMessage = hasReferenceImage
+      ? `Reference image generation failed: ${err?.message ?? "Unknown error."}`
+      : err?.message ?? "OpenAI image generation failed.";
     const httpStatus =
       typeof err?.status === "number" && err.status >= 400 ? err.status : 500;
     return NextResponse.json(
-      { success: false, error: err?.message ?? "OpenAI image generation failed." },
+      { success: false, error: errMessage },
       { status: httpStatus }
     );
   }

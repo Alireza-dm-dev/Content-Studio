@@ -1,16 +1,18 @@
 import { prisma } from "@/lib/prisma";
-import { buildExportRows, generateCsv, generateXlsx, generatePdf, safeFileName } from "@/lib/calendar-export";
+import { buildExportRows, generateCsv, generateXlsx, generatePdf, safeFileName, VALID_AUDIENCES } from "@/lib/calendar-export";
 import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-// GET /api/content-calendar/[calendarId]/export?format=csv
-// GET /api/content-calendar/[calendarId]/export?format=xlsx
+// GET /api/content-calendar/[calendarId]/export?format=csv&audience=creator
+// GET /api/content-calendar/[calendarId]/export?format=xlsx&audience=client
 // GET /api/content-calendar/[calendarId]/export?format=pdf
 export async function GET(request, { params }) {
   const { calendarId } = await params;
   const { searchParams } = new URL(request.url);
   const format = searchParams.get("format") ?? "csv";
+  const audienceRaw = searchParams.get("audience") ?? "creator";
+  const audience = VALID_AUDIENCES.includes(audienceRaw) ? audienceRaw : "creator";
 
   if (!["csv", "xlsx", "pdf"].includes(format)) {
     return NextResponse.json(
@@ -47,11 +49,11 @@ export async function GET(request, { params }) {
       );
     }
 
-    const rows     = buildExportRows(calendar.posts);
+    const rows     = buildExportRows(calendar.posts, audience);
     const safeName = safeFileName(calendar.title, calendar.id);
 
     if (format === "csv") {
-      const csv = generateCsv(rows);
+      const csv = generateCsv(rows, audience);
       return new Response(csv, {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
@@ -61,7 +63,7 @@ export async function GET(request, { params }) {
     }
 
     if (format === "xlsx") {
-      const buffer = await generateXlsx(rows, calendar);
+      const buffer = await generateXlsx(rows, calendar, audience);
       return new Response(buffer, {
         headers: {
           "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -98,7 +100,7 @@ export async function GET(request, { params }) {
       }
     }
 
-    const pdfBuffer = await generatePdf(rows, calendar, logoBuffer, logoMimeType);
+    const pdfBuffer = await generatePdf(rows, calendar, logoBuffer, logoMimeType, audience);
     return new Response(pdfBuffer, {
       headers: {
         "Content-Type": "application/pdf",

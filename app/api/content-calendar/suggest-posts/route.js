@@ -3,6 +3,8 @@ import OpenAI from "openai";
 import { prisma } from "@/lib/prisma";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
+import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
+import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
 
 const str = (v) => (typeof v === "string" ? v : Array.isArray(v) ? v.join(" ") : "");
 
@@ -146,35 +148,74 @@ Include 5–15 dates total. Prioritise dates genuinely relevant to a ${businessT
 export async function POST(request) {
   console.log("[SuggestPosts] POST /api/content-calendar/suggest-posts");
 
+  // ── 1. Authenticate ─────────────────────────────────────────────────────
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: "Authentication required" },
+      { status: 401 }
+    );
+  }
+
+  // ── 2. Parse body ──────────────────────────────────────────────────────
+  let body;
+  try { body = await request.json(); }
+  catch {
+    return NextResponse.json(
+      { success: false, error: "Invalid request body" },
+      { status: 400 }
+    );
+  }
+
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json(
+      { success: false, error: "Invalid request body" },
+      { status: 400 }
+    );
+  }
+
+  const {
+    brandId, platform, monthlyObjective,
+    calendarPeriod, calendarPeriodStart, calendarPeriodEnd,
+    numberOfPosts,
+    popularIndustryPosts, importantIndustryWebsites, competitorPages,
+    campaignEvents, offers, attachmentIds, seasonalDates: _ignored, contentLimitations, additionalNotes,
+  } = body;
+
+  console.log("[SuggestPosts] brandId:", brandId, "| posts:", numberOfPosts);
+
+  if (!brandId) {
+    return NextResponse.json(
+      { success: false, error: "brandId is required." },
+      { status: 400 }
+    );
+  }
+
+  // ── 3. Brand access ─────────────────────────────────────────────────────
+  const access = await getBrandCalendarAccess(brandId);
+  if (!access.allowed) {
+    return NextResponse.json(
+      { success: false, error: "Brand access required" },
+      { status: 403 }
+    );
+  }
+
+  // ── 4. Resolve attachment context ──────────────────────────────────────
+  const attachmentContext = await resolveCalendarAttachmentContext({
+    attachmentIds: attachmentIds,
+    brandId,
+    mode: "creation",
+  });
+
+  if (!attachmentContext.ok) {
+    return NextResponse.json(
+      { success: false, error: attachmentContext.error },
+      { status: attachmentContext.status }
+    );
+  }
+
   try {
-    // ── 1. Parse body ──────────────────────────────────────────────────────
-    let body;
-    try { body = await request.json(); }
-    catch (e) {
-      return NextResponse.json(
-        { success: false, error: "Invalid request body.", details: e.message },
-        { status: 400 }
-      );
-    }
-
-    const {
-      brandId, platform, monthlyObjective,
-      calendarPeriod, calendarPeriodStart, calendarPeriodEnd,
-      numberOfPosts,
-      popularIndustryPosts, importantIndustryWebsites, competitorPages,
-      campaignEvents, offers, seasonalDates: _ignored, contentLimitations, additionalNotes,
-    } = body;
-
-    console.log("[SuggestPosts] brandId:", brandId, "| posts:", numberOfPosts);
-
-    if (!brandId) {
-      return NextResponse.json(
-        { success: false, error: "brandId is required." },
-        { status: 400 }
-      );
-    }
-
-    // ── 2. Load brand + identity + API key ────────────────────────────────
+    // ── 5. Load brand + identity + API key ────────────────────────────────
     const [brand, identity, apiKeySetting] = await Promise.all([
       prisma.brand.findUnique({ where: { id: brandId } }),
       prisma.brandIdentity.findFirst({ where: { brandId }, orderBy: { createdAt: "desc" } }),
@@ -191,7 +232,7 @@ export async function POST(request) {
     const apiKey = apiKeySetting?.value || process.env.OPENAI_API_KEY || "";
     const brandIdentitySummary = buildIdentitySummary(identity, brand);
 
-    // ── 3. Derive post count and period ───────────────────────────────────
+    // ── 6. Derive post count and period ───────────────────────────────────
     const effectivePeriod = calendarPeriod ||
       (calendarPeriodStart && calendarPeriodEnd
         ? `${calendarPeriodStart} to ${calendarPeriodEnd}`
@@ -200,7 +241,7 @@ export async function POST(request) {
     const requestedCount = parseInt(String(numberOfPosts ?? 12), 10);
     const safeCount = isNaN(requestedCount) || requestedCount < 1 ? 12 : requestedCount;
 
-    // ── 4. Build variables + userInput ────────────────────────────────────
+    // ── 7. Build variables + userInput ────────────────────────────────────
     const variables = {
       brandName:              brand.name,
       brandTone:              brand.brandTone              ?? "",
@@ -223,7 +264,7 @@ export async function POST(request) {
     };
 
     const row = (label, value) => value ? `${label}: ${value}` : null;
-    const userInput = [
+    let userInput = [
       "=== BRAND INFORMATION ===",
       row("Brand Name",        brand.name),
       row("Business Type",     brand.businessType),
@@ -250,9 +291,13 @@ export async function POST(request) {
       row("Additional Notes",         additionalNotes),
     ].filter(v => v !== null).join("\n");
 
+    if (attachmentContext.block) {
+      userInput += "\n\n=== INTERPRETED UPLOADED REFERENCE MATERIAL ===\n" + attachmentContext.block;
+    }
+
     console.log("[SuggestPosts] userInput length:", userInput.length, "chars | safeCount:", safeCount);
 
-    // ── 5. Run AI + seasonal dates in parallel ────────────────────────────
+    // ── 8. Run AI + seasonal dates in parallel ────────────────────────────
     const [suggestResult, seasonalDates] = await Promise.all([
       generateWithPromptTemplate({
         templateSlug: "post-suggestor",
@@ -270,7 +315,7 @@ export async function POST(request) {
 
     console.log("[SuggestPosts] Raw AI output length:", suggestResult.raw?.length ?? 0, "chars");
 
-    // ── 6. Extract posts array ────────────────────────────────────────────
+    // ── 9. Extract posts array ────────────────────────────────────────────
     let raw = [];
     const content = suggestResult.content;
     if (Array.isArray(content)) {
@@ -286,7 +331,7 @@ export async function POST(request) {
     let posts = raw.map((p, i) => normalisePost(p, i, platform));
     if (posts.length > safeCount) posts = posts.slice(0, safeCount);
 
-    // ── 7. Extract calendar-level strategy fields ─────────────────────────
+    // ── 10. Extract calendar-level strategy fields ────────────────────────
     const isContentObject = content && typeof content === "object" && !Array.isArray(content);
     const strategicSummary      = isContentObject ? str(content.strategicSummary ?? content.strategic_summary ?? "") : "";
     const recommendedContentMix = isContentObject ? str(content.recommendedContentMix ?? content.recommended_content_mix ?? "") : "";

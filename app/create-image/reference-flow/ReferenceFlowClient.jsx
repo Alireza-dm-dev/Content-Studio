@@ -16,6 +16,9 @@ import {
 } from "lucide-react";
 import ReferenceImageUploader from "@/components/ReferenceImageUploader";
 import HiggsfieldImageGenerationCard from "@/components/HiggsfieldImageGenerationCard";
+import GenerationReferenceImageInput from "@/components/GenerationReferenceImageInput";
+import ImageVisualProductionControls from "@/components/ImageVisualProductionControls";
+import { defaultVisualControls } from "@/lib/image-visual-controls";
 
 // ── Step indicator ─────────────────────────────────────────────────────────────
 
@@ -125,6 +128,13 @@ export default function ReferenceFlowClient({
   const [promptSaved, setPromptSaved] = useState(false);
   const [savedId, setSavedId]     = useState(null);
 
+  // Visual production controls (applied only to the final prompt request; not persisted)
+  const [visualControls, setVisualControls] = useState(defaultVisualControls());
+
+  // Final-step reference image for generation (separate from the CVD reference flow)
+  const [genReferenceImageUrl, setGenReferenceImageUrl] = useState(null);
+  const [genReferenceImageDescription, setGenReferenceImageDescription] = useState("");
+
   // Determine current step
   function currentStep() {
     if (!brand) return 1;
@@ -182,6 +192,7 @@ export default function ReferenceFlowClient({
     setCombined(null);
     setFinalPrompt("");
     setSavedId(null);
+    setVisualControls(defaultVisualControls());
   }
 
   // ── Brand selection ──────────────────────────────────────────────────────────
@@ -317,7 +328,7 @@ export default function ReferenceFlowClient({
       const res = await fetch(`/api/image/combined-visual-direction/${combined.id}/create-nanobanana-prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ useEditedJson }),
+        body: JSON.stringify({ useEditedJson, visualControls }),
       });
       if (!res.ok && res.headers.get("content-type")?.includes("text/html")) {
         throw new Error(`Server error: HTTP ${res.status}`);
@@ -437,7 +448,7 @@ export default function ReferenceFlowClient({
             </div>
             <button
               type="button"
-              onClick={() => { setBrand(null); setBrandIdentity(null); setReferenceAnalysis(null); setCombined(null); setFinalPrompt(""); setSavedId(null); setRecentReferenceItems([]); setRecentError(null); setLoadingRecent(false); setUsedRecentReference(false); }}
+              onClick={() => { setBrand(null); setBrandIdentity(null); setReferenceAnalysis(null); setCombined(null); setFinalPrompt(""); setSavedId(null); setRecentReferenceItems([]); setRecentError(null); setLoadingRecent(false); setUsedRecentReference(false); setVisualControls(defaultVisualControls()); }}
               className="text-xs text-muted-foreground hover:text-foreground underline"
             >
               Change
@@ -551,6 +562,7 @@ export default function ReferenceFlowClient({
                 setCombined(null);
                 setFinalPrompt("");
                 setSavedId(null);
+                setVisualControls(defaultVisualControls());
               }}
               onAnalysisSaved={(a) => setReferenceAnalysis(prev => prev ? { ...prev, ...a } : a)}
             />
@@ -706,6 +718,12 @@ export default function ReferenceFlowClient({
                 </p>
               </div>
 
+              <ImageVisualProductionControls
+                value={visualControls}
+                onChange={setVisualControls}
+                disabled={creating}
+              />
+
               {!finalPrompt ? (
                 <Button
                   onClick={handleCreatePrompt}
@@ -762,12 +780,24 @@ export default function ReferenceFlowClient({
           </>
         )}
 
+        {/* ── Reference Image for Generation ── */}
+        {finalPrompt && (
+          <GenerationReferenceImageInput
+            referenceImageUrl={genReferenceImageUrl}
+            setReferenceImageUrl={setGenReferenceImageUrl}
+            referenceImageDescription={genReferenceImageDescription}
+            setReferenceImageDescription={setGenReferenceImageDescription}
+          />
+        )}
+
         {/* ── Generate with Higgsfield ──────────────────────────────────────────── */}
         <HiggsfieldImageGenerationCard
           finalPrompt={finalPrompt}
           brandId={brand?.id ?? null}
           calendarPostId={null}
           generatedPromptId={savedId}
+          referenceImageDescription={genReferenceImageDescription}
+          referenceImageUrl={genReferenceImageUrl}
         />
       </div>
     </div>

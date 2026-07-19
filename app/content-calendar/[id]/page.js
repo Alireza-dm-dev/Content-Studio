@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 import CalendarDetailClient from "./CalendarDetailClient";
 
 export const dynamic = "force-dynamic";
@@ -15,5 +16,7 @@ export default async function CalendarDetailPage({ params }) {
   });
   if (!calendar) notFound();
 
-  return <CalendarDetailClient calendar={calendar} />;
+  const user = await getCurrentUser();
+
+  return <CalendarDetailClient calendar={calendar} isAdmin={user?.role === "admin"} />;
 }

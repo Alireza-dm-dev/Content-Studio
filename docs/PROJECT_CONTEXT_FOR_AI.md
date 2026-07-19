@@ -1,17 +1,19 @@
 # Project Context for AI
 
-This file is the primary orientation document for AI agents (Claude Code, etc.) working in this repository. Read this before making changes. It summarizes facts gathered from a project audit on 2026-06-08, with an update on 2026-06-15 reflecting the new Higgsfield media-generation integration — verify against current code if something looks stale, and update this file when the facts change.
+This file is the primary orientation document for AI agents (Claude Code, etc.) working in this repository. Read this before making changes. It summarizes facts gathered from a project audit on 2026-06-08, with updates on 2026-06-15 (Higgsfield integration) and 2026-07-18 (auth, published-posts, reviews, reports) — verify against current code if something looks stale, and update this file when the facts change.
 
 ## 1. Project purpose
 
-Content Studio is a **local-first, single-user AI content production tool** for social media. It lets one operator:
+Content Studio is a **local-first AI content production tool** for social media, growing from a single-operator tool toward multi-user brand-team support. It lets operators:
 - manage "Brand" profiles (identity, visual style, uploaded reference assets)
 - build content calendars of scheduled posts
 - generate AI prompts for images, videos, and captions — either from a raw idea or derived from brand identity / reference imagery
-- generate actual images/video via the Higgsfield API (`/generated-media`, `app/api/higgsfield/*`, `lib/higgsfield.js`), tracked against an operator token balance
-- store generated output in a prompt library and export calendars (CSV/Excel/PDF now; Google Drive planned)
+- generate actual images/video via the Higgsfield API or OpenAI (`/generated-media`, `app/api/higgsfield/*`, `lib/higgsfield.js`, `app/api/openai/*`), tracked against an operator token balance
+- manage published posts with approval workflows and public review links
+- store generated output in a prompt library and export calendars (CSV/Excel/PDF)
+- log in with email/password (session-based auth, `app/login/`, `lib/auth.js`)
 
-It is **not** a SaaS or multi-tenant product — there is one operator, one local SQLite database, no accounts.
+It is **not** a SaaS product — auth is session-based with a single `User` table, designed for a small team sharing one instance.
 
 ## 2. Actual tech stack
 
@@ -24,6 +26,7 @@ It is **not** a SaaS or multi-tenant product — there is one operator, one loca
 - **OpenAI SDK** (`openai` ^6), default model `gpt-4o`
 - **Higgsfield SDK** (`@higgsfield/client` ^0.2.1, via `@higgsfield/client/v2`) — image/video generation provider; credentials resolved by `lib/higgsfield.js` from the `Settings` table (`HIGGSFIELD_API_KEY`), falling back to env
 - `sonner` (toasts), `next-themes` (light/dark), `xlsx` + `pdfmake` (calendar export to Excel/PDF), `tailwind-merge` / `clsx` (via `cn()`)
+- `bcryptjs` (password hashing), `ssh2-sftp-client` (SFTP upload), `tw-animate-css` (animation utilities)
 - **JavaScript**, not TypeScript — only `prisma.config.ts` is `.ts` (a Prisma 7 requirement)
 - **No test framework configured** — `npm run lint` (ESLint) is the only automated check
 
@@ -31,41 +34,53 @@ It is **not** a SaaS or multi-tenant product — there is one operator, one loca
 
 ```
 app/
-  api/                42 REST route handlers, 15 resource groups (incl. `higgsfield/`)
-  page.js             Home
+  api/                ~50 REST route handlers, 21 resource groups (incl. `higgsfield/`, `auth/`, `openai/`)
+  page.js             Home (login-gated)
   layout.js           Root shell (fonts, SidebarNav, Toaster, paper-grain bg)
   globals.css         Tailwind v4 theme + Conceptual Sketch design tokens/utilities
   brands/, brand-workspace/, content-calendar/, create-image/,
   create-video/, generated-media/, generated-prompts/, prompt-library/, settings/
+  login/              Email/password login page
+  calendar-portal/    Brand-specific calendar portal (multi-user)
+  content-report/     Brand content reporting
+  review/             Public workspace review pages ([token])
 components/
   ui/                 shadcn/Base UI primitives (button, card, input, select,
                       badge, page-container, page-header, empty-state, …)
-  *.jsx               feature components (modals, galleries, uploaders, sidebar-nav)
+  *.jsx               feature components (modals, galleries, uploaders, sidebar-nav,
+                      published-posts, workspace-review, LinkedIn, OpenAI gen)
 lib/
   prisma.js           Prisma singleton (better-sqlite3 adapter)
   ai.js               OpenAI generation pipeline (generateWithPromptTemplate)
   higgsfield.js       Higgsfield SDK config + credential resolution (image/video generation)
+  auth.js             Session-based authentication (bcryptjs, session tokens)
   template-utils.js / template-variables.js   prompt templating engine
   brand-identity-utils.js, calendar-export.js, calendar-post-utils.js, uploads.js, utils.js
+  calendar-attachment-*.js   Attachment extraction & interpretation
+  published-post-*.js        Published post management & webhooks
+  workspace-review-*.js      Public review access & tokens
+  image-visual-controls.js   Visual production controls
+  timezone.js, url-resource-utils.js
   generated/prisma/   generated Prisma client (gitignored, regenerate after schema changes)
 prisma/
-  schema.prisma, seed.js, migrations/ (8 so far)
+  schema.prisma, seed.js, migrations/ (19 so far)
 public/uploads/
   images/, videos/, logos/, brands/, reference-images/, + per-brand-id directories
 docs/                 project documentation (this folder)
 ```
-Root also has `.agents/`, `.claude/` (agent/skill scaffolding), `skills-lock.json`, `components.json` (shadcn config), `design_system.md` (252-line "Conceptual Sketch" UI spec), `dev.db` (SQLite file), `CLAUDE.md`, `AGENTS.md`.
+Root also has `.agents/`, `.claude/` (agent/skill scaffolding), `skills-lock.json`, `components.json` (shadcn config), `design_system.md` (252-line "Conceptual Sketch" UI spec), `CLAUDE.md`, `AGENTS.md`. Note: `dev.db` is now in `.gitignore`.
 
 ## 4. Important files
 
 | File | Role |
-|---|---|
+|---|---|---|
 | `app/layout.js` | Root shell: fonts, `SidebarNav`, `Toaster`, global paper-grain background |
-| `components/sidebar-nav.jsx` | Defines the entire primary navigation / IA (9 routes, incl. Generated Media) |
+| `components/sidebar-nav.jsx` | Defines the entire primary navigation / IA |
 | `lib/prisma.js` | Prisma singleton — all DB access goes through this |
 | `lib/ai.js` | `generateWithPromptTemplate()` — loads a `PromptTemplate`, interpolates variables, calls OpenAI with optional images |
+| `lib/auth.js` | Session-based auth: password hashing, session token generation/verification |
 | `lib/template-utils.js` / `template-variables.js` | Prompt templating engine (placeholders, variable extraction, validation) |
-| `prisma/schema.prisma` + `seed.js` | 11-model schema and DB seed script |
+| `prisma/schema.prisma` + `seed.js` | 22-model schema and DB seed script |
 | `design_system.md` | "Conceptual Sketch" design spec — source of truth for the in-progress UI redesign |
 | `CLAUDE.md` / `AGENTS.md` | Agent working rules — Prisma 7 quirks, Next.js 16 API drift warnings, token-saving rules |
 | `components.json` | shadcn config: style `base-nova`, base color `neutral`, RSC on, JSX (not TSX) |
@@ -92,17 +107,23 @@ npm run lint    # eslint (eslint-config-next/core-web-vitals)
 ## 7. Database notes
 
 - SQLite via Prisma 7, file `dev.db` at the **project root** (not `prisma/dev.db`) — `DATABASE_URL="file:./dev.db"`
-- 15 models: `Brand` (the hub — 1-to-many to nearly everything), `BrandIdentity`, `UploadedFile`, `ContentCalendar`, `CalendarPost`, `VideoStoryboard`, `GeneratedPrompt`, `PromptTemplate`, `ReferenceImageAnalysis`, `CombinedVisualDirection`, `Settings` (key/value store), plus 4 added for the Higgsfield integration: `HiggsfieldModel`, `OperatorTokenBalance`, `TokenLedgerEntry`, `GeneratedMedia`
+- 22 models: `Brand`, `User`, `BrandAssignment`, `BrandMembership`, `BrandIdentity`, `UploadedFile`, `ContentCalendar`, `CalendarPost`, `VideoStoryboard`, `GeneratedPrompt`, `PromptTemplate`, `ReferenceImageAnalysis`, `CombinedVisualDirection`, `WorkspaceReview`, `Settings`, `HiggsfieldModel`, `OperatorTokenBalance`, `TokenLedgerEntry`, `GeneratedMedia`, `PublishedPost`, `PublishedPostMedia`, `PublishedPostComment`
 - IDs are `cuid()`; most foreign keys are optional with `onDelete: SetNull` (a few `Cascade`, e.g. `Brand → BrandIdentity`, `ContentCalendar → CalendarPost`)
 - Several fields store **JSON as strings** (`jsonOutput`, `editedJson`, `referenceData`, `finalPrompt`) — no DB-level schema validation; shape is enforced only in app code
-- 10 migrations exist (`2026-06-02` → `2026-06-11`), most recently `20260611151726_add_higgsfield_foundation`; generated client lives at `lib/generated/prisma/` (gitignored — must run `prisma generate` after pulling schema changes)
+- 19 migrations exist (`2026-06-02` → `2026-07-18`), most recently `20260718083341_add_calendar_reference_interpretation_fields`; generated client lives at `lib/generated/prisma/` (gitignored — must run `prisma generate` after pulling schema changes)
 - App settings (e.g. `OPENAI_API_KEY`, `HIGGSFIELD_API_KEY`) are stored in the `Settings` table via `/api/settings`; the `.env` values are fallback placeholders only
 
 ## 8. Auth notes
 
-**There is no authentication or authorization system.** No `next-auth`, no middleware, no session/JWT/login code. This is intentional — a single-user local tool.
+**Session-based authentication is implemented.** Users log in via `app/login/page.js` → `POST /api/auth/login` → server verifies bcrypt password hash against the `User` table and sets a `sessionToken` cookie. Protected pages check the session via `lib/auth.js`. There is a `User` model with `email`, `name`, `role`, `passwordHash`, `sessionToken`, and `sessionExpiresAt` fields.
 
-The only auth-adjacent code is a **stubbed Google Drive OAuth integration** (`app/api/content-calendar/[calendarId]/export/google-drive/route.js`), surfaced in Settings as "Not connected." It requires `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` env vars and an OAuth callback that does not yet exist — explicitly unimplemented, not a bug.
+- Users can be assigned to brands via `BrandAssignment` (direct owner assignment) and `BrandMembership` (role-based access, e.g. `calendar_editor`)
+- Admin functionality exists at `app/api/admin/users` and `app/api/admin/generate`
+- The `scripts/seed-admin.js` and `scripts/ensure-owner-admin.js` scripts provision initial admin users
+- **No third-party auth providers** (no OAuth, no next-auth) — login is email/password only
+- This app should not be exposed to a public network without reviewing the auth layer's security posture
+
+There is also a **stubbed Google Drive OAuth integration** (`app/api/content-calendar/[calendarId]/export/google-drive/route.js`), surfaced in Settings as "Not connected." It requires `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` env vars and an OAuth callback that does not yet exist — explicitly unimplemented, not a bug.
 
 ## 9. Styling and design system notes
 
@@ -142,17 +163,17 @@ The only auth-adjacent code is a **stubbed Google Drive OAuth integration** (`ap
 ## 12. Current known risks
 
 - **No automated tests** — 36 API routes and the AI-generation pipeline are unverified by anything but manual exercise; regressions surface only in the browser
-- **`dev.db` (SQLite, ~724 KB) sits in the repo root** and is **not** in `.gitignore` — confirm it isn't accidentally committed; double check no secrets live in its `Settings` table before sharing the repo
+- **`dev.db` is now in `.gitignore`** — the database file is excluded from git; the `.env` placeholder fallback pattern means secrets still shouldn't be committed, but accidental DB leakage via `git add` is mitigated
 - **JSON-as-string DB fields** (`jsonOutput`, `editedJson`, `referenceData`, …) have no schema validation — drift between what app code writes and reads is possible and silent
 - **Stubbed Google Drive export** — half-built feature, surfaced in the UI as "Not connected"; could read as either WIP or abandoned to a new contributor
 - **Design system mid-migration** — `.sketch-*` classes/tokens coexist with legacy shadcn defaults (e.g. `heading-display` ≈ `sketch-heading` aliasing, legacy low-contrast `--border`/`--input` tokens alongside the new `--sketch-line`); pausing the rollout mid-way would leave visual inconsistencies
 - **`public/uploads/` has two overlapping storage conventions** — generic `images/videos/logos/` dirs alongside ad hoc per-brand-ID directories; no single documented convention
 - Stray `.DS_Store` files present in `lib/`, `prisma/`, and root (minor hygiene)
-- A stray `dev.db.backup-before-higgsfield-20260611184523` file sits at the project root (pre-migration DB snapshot) — same untracked-large-file concern as `dev.db` itself; confirm it isn't needed before deleting
+- A stray `dev.db.backup-before-higgsfield-20260611184523` file sits at the project root (pre-migration DB snapshot) — `*.db.backup-*` is now gitignored, but the file persists on disk; confirm it isn't needed before deleting. There are also `dev.db.backup-before-linkedin-template-20260705161653` and `dev.db.backup-before-restore-20260711-155716` backups.
 - `README.md` is still the generic `create-next-app` boilerplate — gives no indication this is "Content Studio"
 
 ## 13. Current development phase
 
-The app is **functionally built out** (42 API routes, 15 DB models, a complete brand → calendar → prompt-generation → library workflow, a working AI pipeline, plus a newly-added Higgsfield image/video generation pipeline with token balance tracking) and is currently in a **UI/design-system migration phase**: the "Conceptual Sketch" redesign (`design_system.md`) is being rolled from CSS utilities → shared primitives → page-level wrappers, page by page, with the 7 main pages done as of the 2026-06-08 audit (a `generated-media` page has since been added — TODO: confirm whether it has adopted `PageContainer`/`PageHeader`/`EmptyState` and `.sketch-*` styling). Documentation and automated testing are the least-developed areas.
+The app is **functionally extensive** (~50 API routes, 22 DB models, the original brand → calendar → prompt-generation → library workflow, plus auth/login, a published-posts lifecycle with public workspace reviews, OpenAI image generation/editing, content reports, brand assignments/memberships, calendar attachment interpretation, and LinkedIn publishing scaffolding) and is currently in a **feature-expansion phase** following the addition of multi-user auth and publishing workflows. The "Conceptual Sketch" redesign (`design_system.md`) is ongoing. Documentation and automated testing remain the least-developed areas.
 
-TODO: confirm with the project owner whether finishing the redesign, adding test coverage, or something else (e.g. Google Drive export) is the highest near-term priority.
+TODO: confirm with the project owner whether finishing the redesign, adding test coverage, or the next feature (e.g. Google Drive export, LinkedIn publishing completion) is the highest near-term priority.

@@ -31,6 +31,57 @@ model Brand {
   combinedVisualDirections CombinedVisualDirection[]
   videoStoryboards         VideoStoryboard[]
   generatedMedia           GeneratedMedia[]
+  publishedPosts           PublishedPost[]
+  brandAssignments         BrandAssignment[]
+  brandMemberships         BrandMembership[]
+  workspaceReviews         WorkspaceReview[]
+}
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String
+  role             String    @default("user")
+  isActive         Boolean   @default(true)
+  passwordHash     String
+  sessionToken     String?   @unique
+  sessionExpiresAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  brandAssignments        BrandAssignment[]
+  brandMemberships        BrandMembership[]
+  publishedPostComments   PublishedPostComment[]
+  workspaceReviewsCreated WorkspaceReview[]
+  uploadedFiles           UploadedFile[]
+}
+
+model BrandAssignment {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brandId   String
+  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, brandId])
+  @@index([userId])
+  @@index([brandId])
+}
+
+model BrandMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  brandId   String
+  brand     Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  role      String   @default("calendar_editor")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, brandId])
+  @@index([userId])
+  @@index([brandId])
 }
 
 model BrandIdentity {
@@ -46,18 +97,40 @@ model BrandIdentity {
 }
 
 model UploadedFile {
-  id             String        @id @default(cuid())
-  brandId        String?
-  brand          Brand?        @relation(fields: [brandId], references: [id], onDelete: SetNull)
-  calendarPostId String?
-  calendarPost   CalendarPost? @relation(fields: [calendarPostId], references: [id], onDelete: SetNull)
-  fileName       String
-  filePath       String
-  fileType       String?
-  purpose        String?
-  createdAt      DateTime      @default(now())
+  id                   String           @id @default(cuid())
+  brandId              String?
+  brand                Brand?           @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  calendarPostId       String?
+  calendarPost         CalendarPost?    @relation(fields: [calendarPostId], references: [id], onDelete: SetNull)
+  calendarId           String?
+  calendar             ContentCalendar? @relation(fields: [calendarId], references: [id], onDelete: SetNull)
+  fileName             String
+  filePath             String
+  fileType             String?
+  purpose              String?
+  sizeBytes            Int?
+  extractedText        String?
+  extractionStatus     String?
+  extractionError      String?
+  wasTruncated         Boolean          @default(false)
+  interpretationJson   Json?
+  interpretationStatus String?
+  interpretationError  String?
+  interpretationModel  String?
+  interpretedAt        DateTime?
+  expiresAt            DateTime?
+  createdById          String?
+  createdBy            User?            @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt            DateTime         @default(now())
 
   referenceImageAnalyses ReferenceImageAnalysis[]
+
+  @@index([calendarId])
+  @@index([calendarPostId])
+  @@index([createdById])
+  @@index([expiresAt])
+  @@index([extractionStatus])
+  @@index([interpretationStatus])
 }
 
 model ContentCalendar {
@@ -80,6 +153,7 @@ model ContentCalendar {
   videoStoryboards         VideoStoryboard[]
   referenceImageAnalyses   ReferenceImageAnalysis[]
   combinedVisualDirections CombinedVisualDirection[]
+  uploadedFiles            UploadedFile[]
 }
 
 model CalendarPost {
@@ -203,6 +277,32 @@ model CombinedVisualDirection {
   updatedAt                DateTime                @updatedAt
 }
 
+model WorkspaceReview {
+  id               String    @id @default(cuid())
+  brandId          String
+  createdById      String?
+  label            String?
+  tokenHash        String    @unique
+  tokenLast4       String
+  isActive         Boolean   @default(true)
+  expiresAt        DateTime?
+  includeCalendars Boolean   @default(true)
+  includeInstagram Boolean   @default(true)
+  includeLinkedIn  Boolean   @default(true)
+  allowComments    Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  publishedPostComments PublishedPostComment[]
+
+  @@index([brandId, createdAt])
+  @@index([createdById])
+}
+
 model Settings {
   id        String   @id @default(cuid())
   key       String   @unique
@@ -268,4 +368,59 @@ model GeneratedMedia {
   updatedAt         DateTime         @updatedAt
 
   tokenLedgerEntries TokenLedgerEntry[]
+}
+
+model PublishedPost {
+  id            String    @id @default(cuid())
+  brandId       String
+  brand         Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  postType      String
+  caption       String?
+  platform      String    @default("Instagram")
+  status        String    @default("draft")
+  scheduledDate DateTime?
+  notes         String?
+  thumbnailUrl  String?
+  jsonPayload   String?
+  postNumber    Int?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  media PublishedPostMedia[]
+
+  comments PublishedPostComment[]
+
+  @@index([brandId, platform])
+}
+
+model PublishedPostMedia {
+  id              String        @id @default(cuid())
+  publishedPostId String
+  publishedPost   PublishedPost @relation(fields: [publishedPostId], references: [id], onDelete: Cascade)
+  url             String
+  mediaType       String
+  order           Int
+  fileType        String?
+  fileName        String?
+  createdAt       DateTime      @default(now())
+}
+
+model PublishedPostComment {
+  id                String   @id @default(cuid())
+  publishedPostId   String
+  userId            String?
+  workspaceReviewId String?
+  authorName        String
+  reviewerName      String?
+  body              String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  publishedPost   PublishedPost    @relation(fields: [publishedPostId], references: [id], onDelete: Cascade)
+  user            User?            @relation(fields: [userId], references: [id], onDelete: SetNull)
+  workspaceReview WorkspaceReview? @relation(fields: [workspaceReviewId], references: [id], onDelete: SetNull)
+
+  @@index([publishedPostId, createdAt])
+  @@index([userId])
+  @@index([workspaceReviewId])
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 
 // ── Cinematic Controls helpers ────────────────────────────────────────────────
@@ -30,6 +31,11 @@ function cinematicLine(label, value) {
 }
 
 export async function POST(request) {
+  const access = await getAdminAccess();
+  if (!access.user) {
+    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  }
+
   console.log("[VideoRawIdea] POST /api/video/raw-idea/generate");
 
   try {

@@ -19,6 +19,8 @@ export default function HiggsfieldImageGenerationCard({
   brandId,
   calendarPostId,
   generatedPromptId,
+  referenceImageDescription,
+  referenceImageUrl,
 }) {
   const [higgsfieldModels, setHiggsfieldModels] = useState([]);
   const [higgsfieldModelsLoading, setHiggsfieldModelsLoading] = useState(true);
@@ -76,6 +78,7 @@ export default function HiggsfieldImageGenerationCard({
           ...(generatedPromptId ? { generatedPromptId } : {}),
           ...(brandId ? { brandId } : {}),
           ...(calendarPostId ? { calendarPostId } : {}),
+          ...(referenceImageDescription ? { referenceImageDescription } : {}),
         }),
       });
       const data = await safeParseJson(res);
@@ -121,6 +124,13 @@ export default function HiggsfieldImageGenerationCard({
         <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2">
           <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           Generate an image prompt first, then you can create the image with Higgsfield.
+        </div>
+      )}
+
+      {referenceImageUrl && finalPrompt && (
+        <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          Higgsfield currently uses the reference description as text guidance. Image file upload is not yet supported.
         </div>
       )}
 

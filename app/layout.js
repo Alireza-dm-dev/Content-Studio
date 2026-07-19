@@ -1,7 +1,7 @@
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
-import { SidebarNav } from "@/components/sidebar-nav";
+import { SidebarWrapper } from "@/components/SidebarWrapper";
 import { Toaster } from "@/components/ui/sonner";
 
 export const metadata = {
@@ -29,7 +29,7 @@ export default function RootLayout({ children }) {
         />
       </head>
       <body className="min-h-full flex" suppressHydrationWarning>
-        <SidebarNav />
+        <SidebarWrapper />
         <main className="flex-1 overflow-auto">
           {children}
         </main>

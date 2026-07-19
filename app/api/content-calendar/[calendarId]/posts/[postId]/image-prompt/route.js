@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
+import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
 
 function stripRatioMentions(prompt) {
   return prompt
@@ -237,6 +239,11 @@ function resolvePost(post) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(request, { params }) {
+  const access = await getAdminAccess();
+  if (!access.user) {
+    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  }
+
   const { calendarId, postId } = await params;
   console.log("[ImagePrompt] POST calendarId:", calendarId, "postId:", postId);
 
@@ -256,9 +263,16 @@ export async function POST(request, { params }) {
       currentPrompt = "",
       refinementFeedback = "",
       promptGuidance = "",
+      visualControls = null,
     } = body;
 
     const isRefinement = currentPrompt.trim().length > 0 && refinementFeedback.trim().length > 0;
+
+    // ── Visual Production Controls (optional) ───────────────────────────────
+    // Normalize untrusted client input; unknown values collapse to "auto" and
+    // are omitted from prompt serialization. Never throws on bad input.
+    const normalizedVisualControls = normalizeVisualControls(visualControls);
+    const visualControlsBlock = serializeVisualControls(normalizedVisualControls);
 
     if (!brandId?.trim()) {
       return NextResponse.json({ success: false, error: "Brand is required." }, { status: 400 });
@@ -403,10 +417,15 @@ export async function POST(request, { params }) {
       ] : []),
     ].filter(v => v !== null && v !== false && v !== undefined && v !== "").join("\n");
 
+    // ── Append visual production controls block (non-auto selections) ────────
+    const baseUserInput = visualControlsBlock
+      ? `${userInput}\n\n${visualControlsBlock}\n\nPriority: treat the selected visual production controls as explicit user constraints, but never override required brand identity, supplied reference composition, or visible text/logos/products. If a control conflicts with required identity, preserve the required identity and apply the control in the closest compatible manner without redesigning logos, products, people, artwork, or required text.`
+      : userInput;
+
     // ── Append refinement block when refining an existing prompt ────────────
     const finalUserInput = isRefinement
       ? [
-          userInput,
+          baseUserInput,
           "",
           "=== CURRENT NANOBANANA PROMPT TO REFINE ===",
           currentPrompt.trim(),
@@ -420,7 +439,7 @@ export async function POST(request, { params }) {
           "Output only the refined Nanobanana prompt text.",
           "Do not include explanations, markdown, or commentary.",
         ].join("\n")
-      : userInput;
+      : baseUserInput;
 
     console.log(`[ImagePrompt] ${isRefinement ? "REFINE" : "GENERATE"} | userInput length: ${finalUserInput.length}`);
 

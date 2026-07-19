@@ -96,6 +96,8 @@ export default function OpenAIImageGenerationCard({
   brandId,
   calendarPostId,
   generatedPromptId,
+  referenceImageUrl,
+  referenceImageDescription,
 }) {
   const [platformPreset, setPlatformPreset] = useState("square");
   const [quality, setQuality] = useState("auto");
@@ -130,6 +132,8 @@ export default function OpenAIImageGenerationCard({
           ...(brandId ? { brandId } : {}),
           ...(calendarPostId ? { calendarPostId } : {}),
           ...(generatedPromptId ? { generatedPromptId } : {}),
+          ...(referenceImageUrl ? { referenceImageUrl } : {}),
+          ...(referenceImageDescription ? { referenceImageDescription } : {}),
         }),
       });
       const data = await safeParseJson(res);

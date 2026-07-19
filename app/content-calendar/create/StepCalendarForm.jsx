@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Sparkles, ArrowLeft, ChevronDown, ChevronUp, Check } from "lucide-react";
 import { toast } from "sonner";
+import { ReferenceFileUpload } from "@/components/ReferenceFileUpload";
 
 const PLATFORMS = ["Instagram", "TikTok", "LinkedIn", "Facebook", "YouTube", "Pinterest", "Twitter/X"];
 const FORMATS = ["Carousel", "Reel", "Static", "Story", "Live", "YouTube Video", "Short"];
@@ -25,6 +26,19 @@ const MONTHLY_SUBJECT_SUGGESTIONS = [
   "Offer & promotion",
   "Thought leadership",
   "Local community spotlight",
+];
+
+const TARGET_AUDIENCE_SUGGESTIONS = [
+  "Small business owners",
+  "Local homeowners",
+  "Parents",
+  "Working professionals",
+  "C-level executives",
+  "HR managers",
+  "Freelancers & solopreneurs",
+  "Beginners",
+  "Existing customers",
+  "Warm leads",
 ];
 
 const MAIN_GOAL_SUGGESTIONS = [
@@ -229,9 +243,10 @@ function SuggestField({ id, label, hint, value, onChange, suggestions, rows, pla
 
 export default function StepCalendarForm({
   brand, brandIdentity, selectedPosts,
-  prefillCampaignEvents = "", prefillMonthlySubject = "",
+  prefillCampaignEvents = "", prefillMonthlySubject = "", prefillMainGoal = "", prefillMainOfferOrMessage = "",
   calendarPeriod = "", calendarPeriodStart = "", calendarPeriodEnd = "", chosenSeasonalDates = [],
   form, setForm, onBack, onGenerated,
+  brandId, referenceAttachments = [], onReferenceAttachmentsChange,
 }) {
   const [generating, setGenerating] = useState(false);
   const [showAutoFilled, setShowAutoFilled] = useState(false);
@@ -241,11 +256,17 @@ export default function StepCalendarForm({
     setForm(prev => ({ ...prev, [field]: value }));
   }
 
-  // Default Monthly Subject from Step 1's monthlyObjective, without overwriting a manual edit.
+  // Main Goal from Step 1's monthlyObjective, without overwriting a manual edit.
   useEffect(() => {
-    if (!prefillMonthlySubject) return;
-    setForm(prev => prev.mainMonthlySubject ? prev : { ...prev, mainMonthlySubject: prefillMonthlySubject });
-  }, [prefillMonthlySubject, setForm]);
+    if (!prefillMainGoal) return;
+    setForm(prev => prev.mainGoal ? prev : { ...prev, mainGoal: prefillMainGoal });
+  }, [prefillMainGoal, setForm]);
+
+  // Offer / Key Message from Step 1's offers, without overwriting a manual edit.
+  useEffect(() => {
+    if (!prefillMainOfferOrMessage) return;
+    setForm(prev => prev.mainOfferOrMessage ? prev : { ...prev, mainOfferOrMessage: prefillMainOfferOrMessage });
+  }, [prefillMainOfferOrMessage, setForm]);
 
   // Default Priority Content Ideas from the seasonal dates chosen in Step 2, without overwriting a manual edit.
   useEffect(() => {
@@ -287,6 +308,14 @@ export default function StepCalendarForm({
     if (!form.mainMonthlySubject.trim() && !form.mainGoal.trim()) {
       return toast.error("Fill in at least Monthly Subject or Main Goal.");
     }
+    try {
+      localStorage.setItem(`calendarSetupDefaults:${brand.id}`, JSON.stringify({
+        importantDetailsToInclude: form.importantDetailsToInclude,
+        detailsNotToInvent:        form.detailsNotToInvent,
+        sourceMaterial:            form.sourceMaterial,
+        targetAudience:            form.targetAudience,
+      }));
+    } catch {}
     setGenerating(true);
     try {
       const res = await fetch("/api/content-calendar/generate", {
@@ -300,6 +329,7 @@ export default function StepCalendarForm({
           calendarPeriodStart,
           calendarPeriodEnd,
           chosenSeasonalDates,
+          attachmentIds: (referenceAttachments || []).map(a => a.id),
         }),
       });
 
@@ -445,7 +475,27 @@ export default function StepCalendarForm({
           hint="specific ideas or topics that must be included"
           value={form.priorityContentIdeas} onChange={v => set("priorityContentIdeas", v)}
           placeholder="Client transformation story, myth-busting post, team behind-the-scenes…" />
+        <SuggestField
+          id="targetAudience"
+          label="Target Audience"
+          hint="specific audience for this campaign"
+          value={form.targetAudience}
+          onChange={v => set("targetAudience", v)}
+          suggestions={TARGET_AUDIENCE_SUGGESTIONS}
+          placeholder="e.g. Small business owners in Manchester, HR managers hiring technical staff"
+        />
       </div>
+
+      {/* ─── Reference files ───────────────────────────────────── */}
+      <ReferenceFileUpload
+        brandId={brandId ?? brand.id}
+        attachments={referenceAttachments}
+        onAttachmentsChange={onReferenceAttachmentsChange}
+        disabled={generating}
+        maxFiles={5}
+        title="Reference files"
+        description="Upload documents for AI to interpret as supporting context. They will not replace the calendar settings you enter above."
+      />
 
       {/* ─── Posting Schedule ───────────────────────────────────── */}
       <div className="space-y-4">

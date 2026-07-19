@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { PageContainer } from "@/components/ui/page-container";
+import { PageHeader } from "@/components/ui/page-header";
 import { toast } from "sonner";
 import {
   ArrowLeft, ArrowRight, Sparkles, Loader2, AlertCircle,
@@ -18,6 +20,7 @@ import {
 } from "lucide-react";
 import StepCalendarForm from "./StepCalendarForm";
 import StepCalendarOutput from "./StepCalendarOutput";
+import { ReferenceFileUpload } from "@/components/ReferenceFileUpload";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 
 // ─── Step Indicator ───────────────────────────────────────────────────────────
@@ -114,46 +117,50 @@ function StepSelectBrand({ initialBrandId, onNext }) {
   }
 
   return (
-    <div className="space-y-6 max-w-lg">
-      <div>
-        <Label>Brand</Label>
-        <p className="text-xs text-muted-foreground mt-0.5 mb-2">Choose the brand this calendar is for.</p>
-        {loading ? (
-          <p className="text-sm text-muted-foreground">Loading brands…</p>
-        ) : brands.length === 0 ? (
-          <div className="rounded-lg border border-border p-4 text-center space-y-2">
-            <p className="text-sm text-muted-foreground">No brands yet.</p>
-            <Button asChild size="sm"><Link href="/brands/new">Create a Brand</Link></Button>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {brands.map(b => (
-              <button
-                key={b.id}
-                type="button"
-                onClick={() => selectBrand(b.id)}
-                className={`w-full text-left rounded-lg border px-4 py-3 transition-colors ${
-                  selectedId === b.id ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">{b.name}</p>
-                    {b.businessType && <p className="text-xs text-muted-foreground">{b.businessType}</p>}
-                  </div>
-                  {selectedId === b.id && <Check className="w-4 h-4 text-primary" />}
+    <PageContainer className="max-w-lg space-y-4">
+      <PageHeader
+        eyebrow="Content Calendar"
+        title="Select Brand"
+        description="Choose the brand this content calendar is for."
+      />
+
+      {loading ? (
+        <p className="text-sm text-muted-foreground">Loading brands…</p>
+      ) : brands.length === 0 ? (
+        <div className="border border-sketch-line bg-[var(--sketch-paper-bright)] text-center px-[18px] py-4">
+          <p className="text-sm text-muted-foreground mb-2">No brands yet.</p>
+          <Button asChild size="sm"><Link href="/brands/new">Create a Brand</Link></Button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {brands.map(b => (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => selectBrand(b.id)}
+              className={`w-full text-left bg-[var(--sketch-paper-bright)] border transition-colors ${
+                selectedId === b.id
+                  ? "border-accent-vermilion"
+                  : "border-sketch-line hover:border-foreground/30"
+              }`}
+            >
+              <div className="px-[18px] py-[14px] flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">{b.name}</p>
+                  {b.businessType && <p className="text-xs text-muted-foreground">{b.businessType}</p>}
                 </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+                {selectedId === b.id && <Check className="w-4 h-4 text-accent-vermilion" />}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Identity status */}
       {selectedId && (
-        <div className={`rounded-lg border px-4 py-3 flex items-start gap-3 ${
-          checkingIdentity ? "border-border" :
-          identity ? "border-green-500/30 bg-green-500/5" : "border-amber-400/40 bg-amber-50/5"
+        <div className={`flex items-start gap-3 bg-[var(--sketch-paper-bright)] border px-[18px] py-4 ${
+          checkingIdentity ? "border-sketch-line" :
+          identity ? "border-green-500/30" : "border-amber-400/40"
         }`}>
           {checkingIdentity ? (
             <Loader2 className="w-4 h-4 animate-spin text-muted-foreground mt-0.5 shrink-0" />
@@ -202,7 +209,7 @@ function StepSelectBrand({ initialBrandId, onNext }) {
           Continue <ArrowRight className="w-4 h-4" />
         </Button>
       </div>
-    </div>
+    </PageContainer>
   );
 }
 
@@ -320,9 +327,57 @@ async function safeParseJsonResponse(response) {
   }
 }
 
+// Returns a normalised hook for duplicate detection — lowercased alphanumeric
+// with whitespace collapsed, so "5 Ways to Improve…" and "5 ways to improve…"
+// are recognised as the same hook regardless of casing or punctuation.
+function normaliseHook(hook) {
+  return (hook || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+}
+
+// Checks whether a post's hook is a near-duplicate of any already-seen hook.
+// Uses exact match + bidirectional containment to catch rephrased variants.
+// Very short hooks (< 15 chars normalised) only match on exact equality to
+// avoid false positives on terse phrases like "Try This Tip".
+function isDuplicateHook(hook, seenHooks) {
+  const normalised = normaliseHook(hook);
+  if (!normalised) return false;
+  return seenHooks.some((existing) => {
+    if (existing === normalised) return true;
+    if (normalised.length >= 15 || existing.length >= 15) {
+      if (existing.includes(normalised) || normalised.includes(existing)) return true;
+    }
+    return false;
+  });
+}
+
+// Maps backend error messages to user-facing actionable guidance.
+function toActionableLinkedInError(message) {
+  if (/took too long|timed out|timeout/i.test(message)) {
+    return {
+      userMessage: "This site took too long to respond. Try a specific blog/article URL from the same site.",
+      isTemplateError: false,
+    };
+  }
+  if (/no article links could be found|could not fetch content from any candidate/i.test(message)) {
+    return {
+      userMessage: "We could not read article content from this page. Try pasting a direct blog/article URL.",
+      isTemplateError: false,
+    };
+  }
+  if (/template not found|linkedin-post-from-reference/i.test(message)) {
+    return {
+      userMessage: "LinkedIn prompt template is missing. Add linkedin-post-from-reference in Prompt Templates.",
+      isTemplateError: true,
+    };
+  }
+  return { userMessage: null, isTemplateError: false };
+}
+
 // Calls the single-resource LinkedIn suggest-posts endpoint once per resource URL,
 // splitting the requested count across resources, and merges the results.
-async function fetchLinkedInSuggestions({ brandId, resourceUrls, numberOfPosts }) {
+// When some resources fail, retries the shortfall against the successful ones so
+// the final count stays as close to the requested number as possible.
+async function fetchLinkedInSuggestions({ brandId, resourceUrls, numberOfPosts, attachmentIds = [] }) {
   const counts = splitCountAcrossResources(numberOfPosts, resourceUrls.length);
   const pairs = resourceUrls.map((url, i) => ({ url, count: counts[i] })).filter(p => p.count > 0);
 
@@ -331,7 +386,7 @@ async function fetchLinkedInSuggestions({ brandId, resourceUrls, numberOfPosts }
       fetch("/api/content-calendar/linkedin/suggest-posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ brandId, resourceUrl: url, numberOfPosts: count }),
+        body: JSON.stringify({ brandId, resourceUrl: url, numberOfPosts: count, attachmentIds }),
       }).then(async (res) => {
         const data = await safeParseJsonResponse(res);
         if (!res.ok || data.success === false) {
@@ -342,7 +397,7 @@ async function fetchLinkedInSuggestions({ brandId, resourceUrls, numberOfPosts }
           const message = data.details && data.details !== base ? `${base} ${data.details}` : base;
           throw new Error(message);
         }
-        return data;
+        return { ...data, _requestUrl: url };
       })
     )
   );
@@ -351,24 +406,105 @@ async function fetchLinkedInSuggestions({ brandId, resourceUrls, numberOfPosts }
   const failed = [];
   results.forEach((r, i) => {
     if (r.status === "fulfilled") succeeded.push(r.value);
-    else failed.push({ url: pairs[i].url, message: r.reason?.message ?? "Request failed." });
+    else {
+      const rawMessage = r.reason?.message ?? "Request failed.";
+      const { userMessage, isTemplateError } = toActionableLinkedInError(rawMessage);
+      const duplicateTemplate = isTemplateError && failed.some(f => f._isTemplateError);
+      failed.push({
+        url: pairs[i].url,
+        message: duplicateTemplate ? "LinkedIn prompt template is missing." : (userMessage || rawMessage),
+        _technical: (userMessage || duplicateTemplate) ? rawMessage : undefined,
+        _isTemplateError: isTemplateError,
+      });
+    }
   });
 
-  const posts = [];
+  // ── Merge posts from first pass, deduplicating hooks ─────────────────────
+  const allPosts = [];
   const articlesUsed = [];
+  const seenHooks = [];
+
   succeeded.forEach((data) => {
-    (data.posts ?? []).forEach(p => posts.push(p));
-    (data.articlesUsed ?? []).forEach(a => {
-      if (!articlesUsed.some(existing => existing.url === a.url)) articlesUsed.push(a);
+    (data.posts ?? []).forEach((p) => {
+      if (!isDuplicateHook(p.suggestedHook, seenHooks)) {
+        seenHooks.push(normaliseHook(p.suggestedHook));
+        allPosts.push(p);
+      }
+    });
+    (data.articlesUsed ?? []).forEach((a) => {
+      if (!articlesUsed.some((existing) => existing.url === a.url)) articlesUsed.push(a);
     });
   });
 
+  // ── Retry shortfall with successful resource URLs ─────────────────────────
+  // If some resources failed and we're below the requested count, reuse the
+  // URLs that did work to request the remaining ideas. Each retry distributes
+  // the shortfall across all known-good URLs.
+  const MAX_RETRIES = 2;
+  let retryAttempt = 0;
+
+  while (allPosts.length < numberOfPosts && succeeded.length > 0 && retryAttempt < MAX_RETRIES) {
+    const shortfall = numberOfPosts - allPosts.length;
+    const successUrls = succeeded.map((s) => s._requestUrl);
+    const retryCounts = splitCountAcrossResources(shortfall, successUrls.length);
+    const retryPairs = successUrls.map((url, i) => ({ url, count: retryCounts[i] })).filter((p) => p.count > 0);
+
+    retryAttempt++;
+
+    const retryResults = await Promise.allSettled(
+      retryPairs.map(({ url, count }) =>
+        fetch("/api/content-calendar/linkedin/suggest-posts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ brandId, resourceUrl: url, numberOfPosts: count, attachmentIds }),
+        }).then(async (res) => {
+          const data = await safeParseJsonResponse(res);
+          if (!res.ok || data.success === false) {
+            const base = data.error ?? `Failed to generate posts for ${url}`;
+            const message = data.details && data.details !== base ? `${base} ${data.details}` : base;
+            throw new Error(message);
+          }
+          return data;
+        })
+      )
+    );
+
+    retryResults.forEach((r) => {
+      if (r.status === "fulfilled") {
+        const data = r.value;
+        (data.posts ?? []).forEach((p) => {
+          if (!isDuplicateHook(p.suggestedHook, seenHooks)) {
+            seenHooks.push(normaliseHook(p.suggestedHook));
+            allPosts.push(p);
+          }
+        });
+        (data.articlesUsed ?? []).forEach((a) => {
+          if (!articlesUsed.some((existing) => existing.url === a.url)) articlesUsed.push(a);
+        });
+      }
+    });
+  }
+
+  const shortfall = allPosts.length < numberOfPosts;
+
+  if (shortfall) {
+    console.warn(
+      `[Suggestor] SHORTFALL: got ${allPosts.length} / ${numberOfPosts} after ${MAX_RETRIES} frontend retries` +
+      (succeeded.length ? ` (${succeeded.length} succeeded)` : "") +
+      (failed.length ? `, ${failed.length} failed` : "")
+    );
+  }
+
   return {
-    posts: posts.slice(0, numberOfPosts).map((p, i) => ({ ...p, postNumber: i + 1 })),
+    posts: allPosts.slice(0, numberOfPosts).map((p, i) => ({ ...p, postNumber: i + 1 })),
     articlesUsed,
     model: succeeded[0]?.model,
     usage: succeeded[0]?.usage,
     failed,
+    shortfall,
+    shortfallMessage: shortfall
+      ? `Only ${allPosts.length} of ${numberOfPosts} post ideas could be generated. Try adding more resources or reducing the requested count.`
+      : undefined,
   };
 }
 
@@ -470,7 +606,7 @@ function SuggestField({ id, label, hint, value, onChange, suggestions, rows, pla
   );
 }
 
-function StepSuggestorForm({ brand, brandIdentity, form, setForm, onBack, onGenerated }) {
+function StepSuggestorForm({ brand, brandIdentity, form, setForm, onBack, onGenerated, referenceAttachments, setReferenceAttachments }) {
   const [showIdentity, setShowIdentity] = useState(false);
   const [generating, setGenerating] = useState(false);
 
@@ -543,13 +679,21 @@ function StepSuggestorForm({ brand, brandIdentity, form, setForm, onBack, onGene
     setLinkedInLoading(true);
     setLinkedInErrors([]);
     try {
-      const result = await fetchLinkedInSuggestions({ brandId: brand.id, resourceUrls: nonEmpty, numberOfPosts: count });
+      const attachmentIds = referenceAttachments.map(a => a.id);
+      const result = await fetchLinkedInSuggestions({ brandId: brand.id, resourceUrls: nonEmpty, numberOfPosts: count, attachmentIds });
       if (result.failed.length) {
         setLinkedInErrors(result.failed);
-        result.failed.forEach(f => toast.error(`${f.url}: ${f.message}`));
+        result.failed.forEach(f => {
+          console.error(`[Suggestor] LinkedIn resource error for ${f.url}: ${f._technical || f.message}`);
+          toast.error(`${f.url}: ${f.message}`);
+        });
       }
       if (!result.posts.length) {
         throw new Error("No post ideas were returned from the provided resources.");
+      }
+      if (result.shortfall) {
+        setLinkedInErrors(prev => [...prev, { url: "(overall)", message: result.shortfallMessage }]);
+        throw new Error(result.shortfallMessage);
       }
       onGenerated({
         posts: result.posts,
@@ -589,16 +733,19 @@ function StepSuggestorForm({ brand, brandIdentity, form, setForm, onBack, onGene
     setGenerating(true);
     try {
       const calendarPeriod = formatPeriod(form.calendarPeriodStart, form.calendarPeriodEnd);
+      const attachmentIds = referenceAttachments.map(a => a.id);
+      const body = {
+        brandId: brand.id,
+        ...form,
+        calendarPeriod,
+        calendarPeriodStart: form.calendarPeriodStart,
+        calendarPeriodEnd: form.calendarPeriodEnd,
+      };
+      if (attachmentIds.length > 0) body.attachmentIds = attachmentIds;
       const res = await fetch("/api/content-calendar/suggest-posts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brandId: brand.id,
-          ...form,
-          calendarPeriod,
-          calendarPeriodStart: form.calendarPeriodStart,
-          calendarPeriodEnd: form.calendarPeriodEnd,
-        }),
+        body: JSON.stringify(body),
       });
 
       const data = await safeParseJsonResponse(res);
@@ -635,9 +782,15 @@ function StepSuggestorForm({ brand, brandIdentity, form, setForm, onBack, onGene
   }
 
   return (
-    <div className="space-y-5 max-w-2xl">
+    <PageContainer className="max-w-2xl space-y-4">
+      <PageHeader
+        eyebrow="Content Calendar"
+        title="Post Suggestor"
+        description="Set the source inputs and context used to generate post ideas."
+      />
+
       {/* Brand info */}
-      <div className="rounded-lg border border-border px-4 py-3 space-y-1">
+      <div className="border border-sketch-line bg-[var(--sketch-paper-bright)] px-[18px] py-4 space-y-1">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium">{brand.name}</p>
@@ -663,73 +816,95 @@ function StepSuggestorForm({ brand, brandIdentity, form, setForm, onBack, onGene
       </div>
 
       {/* Platform */}
-      <div className="space-y-1.5">
-        <Label>Platform *</Label>
-        <div className="flex flex-wrap gap-1.5">
-          {PLATFORMS.map(p => (
-            <Badge
-              key={p}
-              variant={form.platform === p ? "default" : "outline"}
-              className="cursor-pointer"
-              onClick={() => selectPlatform(p)}
-            >{p}</Badge>
-          ))}
+      <div className="border border-sketch-line bg-[var(--sketch-paper-bright)]">
+        <div className="px-[18px] py-[12px] border-b border-[var(--sketch-line-soft)]">
+          <span className="label-sketch">Platform *</span>
+        </div>
+        <div className="px-[18px] py-4">
+          <div className="flex flex-wrap gap-1.5">
+            {PLATFORMS.map(p => (
+              <Badge
+                key={p}
+                variant={form.platform === p ? "default" : "outline"}
+                className="cursor-pointer"
+                onClick={() => selectPlatform(p)}
+              >{p}</Badge>
+            ))}
+          </div>
         </div>
       </div>
 
       {isLinkedIn ? (
         <>
           {/* LinkedIn resource-based fields */}
-          <div className="space-y-2">
-            <Label>Resource URLs *</Label>
-            <p className="text-xs text-muted-foreground">
-              Blog posts, articles, or pages to draw LinkedIn post ideas from — every generated post will be based on one of these resources.
-            </p>
-            {linkedInResources.length === 0 && (
-              <p className="text-xs text-muted-foreground">No resources added yet.</p>
-            )}
-            <div className="space-y-2">
-              {linkedInResources.map((url, idx) => (
-                <div key={idx} className="flex gap-2">
-                  <Input
-                    type="url"
-                    value={url}
-                    onChange={e => updateLinkedInResource(idx, e.target.value)}
-                    placeholder="https://example.com/blog/some-article"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => removeLinkedInResource(idx)}
-                    aria-label="Remove resource"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              ))}
+          <div className="border border-sketch-line bg-[var(--sketch-paper-bright)]">
+            <div className="px-[18px] py-[12px] border-b border-[var(--sketch-line-soft)]">
+              <span className="label-sketch">Resource URLs *</span>
             </div>
-            <Button type="button" variant="outline" size="sm" onClick={addLinkedInResource} className="gap-1.5">
-              <Plus className="w-3.5 h-3.5" />Add resource
-            </Button>
+            <div className="px-[18px] py-4 space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Blog posts, articles, or pages to draw LinkedIn post ideas from — every generated post will be based on one of these resources.
+              </p>
+              {linkedInResources.length === 0 && (
+                <p className="text-xs text-muted-foreground">No resources added yet.</p>
+              )}
+              <div className="space-y-2">
+                {linkedInResources.map((url, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <Input
+                      type="url"
+                      value={url}
+                      onChange={e => updateLinkedInResource(idx, e.target.value)}
+                      placeholder="https://example.com/blog/some-article"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => removeLinkedInResource(idx)}
+                      aria-label="Remove resource"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={addLinkedInResource} className="gap-1.5">
+                <Plus className="w-3.5 h-3.5" />Add resource
+              </Button>
+            </div>
           </div>
 
-          <div className="space-y-1.5 max-w-xs">
-            <Label htmlFor="linkedInNumberOfPosts">Number of Posts</Label>
-            <Input
-              id="linkedInNumberOfPosts"
-              type="number"
-              min={1}
-              max={LINKEDIN_MAX_POSTS}
-              value={linkedInNumberOfPosts}
-              onChange={e => changeLinkedInNumberOfPosts(e.target.value)}
-            />
+          <div className="border border-sketch-line bg-[var(--sketch-paper-bright)] px-[18px] py-4">
+            <div className="space-y-1.5 max-w-xs">
+              <Label htmlFor="linkedInNumberOfPosts">Number of Posts</Label>
+              <Input
+                id="linkedInNumberOfPosts"
+                type="number"
+                min={1}
+                max={LINKEDIN_MAX_POSTS}
+                value={linkedInNumberOfPosts}
+                onChange={e => changeLinkedInNumberOfPosts(e.target.value)}
+              />
+            </div>
           </div>
+
+          <ReferenceFileUpload
+            brandId={brand.id}
+            attachments={referenceAttachments}
+            onAttachmentsChange={setReferenceAttachments}
+            disabled={linkedInLoading}
+          />
 
           {linkedInErrors.length > 0 && (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 space-y-1">
               {linkedInErrors.map((f, i) => (
-                <p key={i} className="text-xs text-destructive">{f.url}: {f.message}</p>
+                <p key={i} className="text-xs text-destructive">
+                  <span className="font-medium">{f.url}</span>: {f.message}
+                  {f._technical && (
+                    <span className="block text-muted-foreground mt-0.5 font-normal">{f._technical}</span>
+                  )}
+                </p>
               ))}
             </div>
           )}
@@ -747,109 +922,146 @@ function StepSuggestorForm({ brand, brandIdentity, form, setForm, onBack, onGene
         </>
       ) : (
         <>
-          {/* Primary fields */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <SuggestField
-              id="monthlyObjective"
-              label="Monthly Objective *"
-              value={form.monthlyObjective}
-              onChange={v => set("monthlyObjective", v)}
-              suggestions={OBJECTIVE_SUGGESTIONS}
-              placeholder="e.g. Increase brand awareness"
-            />
+          {/* Primary Fields */}
+          <div className="border border-sketch-line bg-[var(--sketch-paper-bright)]">
+            <div className="px-[18px] py-[12px] border-b border-[var(--sketch-line-soft)]">
+              <span className="label-sketch">Primary Fields</span>
+            </div>
+            <div className="px-[18px] py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <SuggestField
+                  id="monthlyObjective"
+                  label="Monthly Objective *"
+                  value={form.monthlyObjective}
+                  onChange={v => set("monthlyObjective", v)}
+                  suggestions={OBJECTIVE_SUGGESTIONS}
+                  placeholder="e.g. Increase brand awareness"
+                />
 
-            {/* Calendar period — date range picker */}
-            <div className="space-y-1.5">
-              <Label>Calendar Period</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="space-y-1">
-                  <span className="text-xs text-muted-foreground">Start</span>
-                  <Input
-                    type="date"
-                    value={form.calendarPeriodStart}
-                    onChange={e => set("calendarPeriodStart", e.target.value)}
-                    className="text-sm"
-                  />
+                {/* Calendar period — date range picker */}
+                <div className="space-y-1.5">
+                  <Label>Calendar Period</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground">Start</span>
+                      <Input
+                        type="date"
+                        value={form.calendarPeriodStart}
+                        onChange={e => set("calendarPeriodStart", e.target.value)}
+                        className="text-sm"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-muted-foreground">End</span>
+                      <Input
+                        type="date"
+                        value={form.calendarPeriodEnd}
+                        onChange={e => set("calendarPeriodEnd", e.target.value)}
+                        min={form.calendarPeriodStart || undefined}
+                        className="text-sm"
+                      />
+                    </div>
+                  </div>
+                  {(form.calendarPeriodStart || form.calendarPeriodEnd) && (
+                    <p className="text-xs text-muted-foreground">
+                      {formatPeriod(form.calendarPeriodStart, form.calendarPeriodEnd)}
+                    </p>
+                  )}
                 </div>
-                <div className="space-y-1">
-                  <span className="text-xs text-muted-foreground">End</span>
-                  <Input
-                    type="date"
-                    value={form.calendarPeriodEnd}
-                    onChange={e => set("calendarPeriodEnd", e.target.value)}
-                    min={form.calendarPeriodStart || undefined}
-                    className="text-sm"
-                  />
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="numberOfPosts">Number of Posts</Label>
+                  <Input id="numberOfPosts" type="number" min={1} max={60} value={form.numberOfPosts} onChange={e => set("numberOfPosts", e.target.value)} />
+                </div>
+
+                <SuggestField
+                  id="offers"
+                  label="Current Offers / Promotions"
+                  value={form.offers}
+                  onChange={v => set("offers", v)}
+                  suggestions={OFFERS_SUGGESTIONS}
+                  placeholder="e.g. Free brand audit in June"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Industry Research */}
+          <div className="border border-sketch-line bg-[var(--sketch-paper-bright)]">
+            <div className="px-[18px] py-[12px] border-b border-[var(--sketch-line-soft)]">
+              <span className="label-sketch">Industry Research</span>
+            </div>
+            <div className="px-[18px] py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <SuggestField
+                  id="popularIndustryPosts"
+                  label="Popular Industry Post Types"
+                  value={form.popularIndustryPosts}
+                  onChange={v => set("popularIndustryPosts", v)}
+                  suggestions={POPULAR_INDUSTRY_POST_TYPES_SUGGESTIONS}
+                  rows={2}
+                  placeholder="Before and after transformations, tips series, client stories…"
+                  append
+                />
+                <div className="space-y-1.5">
+                  <Label htmlFor="importantIndustryWebsites">Key Industry Websites / Blogs</Label>
+                  <Textarea id="importantIndustryWebsites" value={form.importantIndustryWebsites} onChange={e => set("importantIndustryWebsites", e.target.value)} placeholder="designmilk.com, creativebloq.com…" rows={2} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="competitorPages">Competitor Pages to Reference</Label>
+                  <Textarea id="competitorPages" value={form.competitorPages} onChange={e => set("competitorPages", e.target.value)} placeholder="@competitor1, @competitor2…" rows={2} />
                 </div>
               </div>
-              {(form.calendarPeriodStart || form.calendarPeriodEnd) && (
-                <p className="text-xs text-muted-foreground">
-                  {formatPeriod(form.calendarPeriodStart, form.calendarPeriodEnd)}
-                </p>
-              )}
             </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="numberOfPosts">Number of Posts</Label>
-              <Input id="numberOfPosts" type="number" min={1} max={60} value={form.numberOfPosts} onChange={e => set("numberOfPosts", e.target.value)} />
-            </div>
-
-            <SuggestField
-              id="offers"
-              label="Current Offers / Promotions"
-              value={form.offers}
-              onChange={v => set("offers", v)}
-              suggestions={OFFERS_SUGGESTIONS}
-              placeholder="e.g. Free brand audit in June"
-            />
           </div>
 
-          {/* Industry research */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <SuggestField
-              id="popularIndustryPosts"
-              label="Popular Industry Post Types"
-              value={form.popularIndustryPosts}
-              onChange={v => set("popularIndustryPosts", v)}
-              suggestions={POPULAR_INDUSTRY_POST_TYPES_SUGGESTIONS}
-              rows={2}
-              placeholder="Before and after transformations, tips series, client stories…"
-              append
-            />
-            <div className="space-y-1.5">
-              <Label htmlFor="importantIndustryWebsites">Key Industry Websites / Blogs</Label>
-              <Textarea id="importantIndustryWebsites" value={form.importantIndustryWebsites} onChange={e => set("importantIndustryWebsites", e.target.value)} placeholder="designmilk.com, creativebloq.com…" rows={2} />
+          {/* Campaign Context */}
+          <div className="border border-sketch-line bg-[var(--sketch-paper-bright)]">
+            <div className="px-[18px] py-[12px] border-b border-[var(--sketch-line-soft)]">
+              <span className="label-sketch">Campaign Context</span>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="competitorPages">Competitor Pages to Reference</Label>
-              <Textarea id="competitorPages" value={form.competitorPages} onChange={e => set("competitorPages", e.target.value)} placeholder="@competitor1, @competitor2…" rows={2} />
+            <div className="px-[18px] py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="campaignEvents">Campaign Events</Label>
+                  <Textarea id="campaignEvents" value={form.campaignEvents} onChange={e => set("campaignEvents", e.target.value)} placeholder="Brand awareness week June 10–14…" rows={2} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Seasonal / Important Dates</Label>
+                  <p className="text-xs text-muted-foreground">
+                    The app will automatically detect relevant seasonal dates from your calendar period and location — they&apos;ll appear as a separate table in the next step for you to select.
+                  </p>
+                </div>
+                <SuggestField
+                  id="contentLimitations"
+                  label="Content Limitations / Restrictions"
+                  value={form.contentLimitations}
+                  onChange={v => set("contentLimitations", v)}
+                  suggestions={LIMITATIONS_SUGGESTIONS}
+                  rows={2}
+                  placeholder="No stock photos, avoid competitor mentions…"
+                  append
+                />
+              </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="campaignEvents">Campaign Events</Label>
-              <Textarea id="campaignEvents" value={form.campaignEvents} onChange={e => set("campaignEvents", e.target.value)} placeholder="Brand awareness week June 10–14…" rows={2} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Seasonal / Important Dates</Label>
-              <p className="text-xs text-muted-foreground">
-                The app will automatically detect relevant seasonal dates from your calendar period and location — they&apos;ll appear as a separate table in the next step for you to select.
-              </p>
-            </div>
-            <SuggestField
-              id="contentLimitations"
-              label="Content Limitations / Restrictions"
-              value={form.contentLimitations}
-              onChange={v => set("contentLimitations", v)}
-              suggestions={LIMITATIONS_SUGGESTIONS}
-              rows={2}
-              placeholder="No stock photos, avoid competitor mentions…"
-              append
-            />
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="additionalNotes">Additional Notes</Label>
-            <Textarea id="additionalNotes" value={form.additionalNotes} onChange={e => set("additionalNotes", e.target.value)} placeholder="Any other context or special instructions for the AI…" rows={3} />
+          {/* Additional Notes */}
+          <div className="border border-sketch-line bg-[var(--sketch-paper-bright)]">
+            <div className="px-[18px] py-[12px] border-b border-[var(--sketch-line-soft)]">
+              <span className="label-sketch">Additional Notes</span>
+            </div>
+            <div className="px-[18px] py-4">
+              <Textarea id="additionalNotes" value={form.additionalNotes} onChange={e => set("additionalNotes", e.target.value)} placeholder="Any other context or special instructions for the AI…" rows={3} />
+            </div>
           </div>
+
+          <ReferenceFileUpload
+            brandId={brand.id}
+            attachments={referenceAttachments}
+            onAttachmentsChange={setReferenceAttachments}
+            disabled={generating}
+          />
 
           <div className="flex gap-3">
             <Button variant="outline" onClick={onBack}>
@@ -863,7 +1075,7 @@ function StepSuggestorForm({ brand, brandIdentity, form, setForm, onBack, onGene
           </div>
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }
 
@@ -1050,10 +1262,16 @@ function StepReviewAndSave({ brand, formData, initialPosts, seasonalDates = [], 
         const result = await fetchLinkedInSuggestions({
           brandId: brand.id,
           resourceUrls: formData.resourceUrls ?? [],
-          numberOfPosts: 6,
+          numberOfPosts: requestedCount || 6,
         });
         if (result.failed.length) {
-          result.failed.forEach(f => toast.error(`${f.url}: ${f.message}`));
+          result.failed.forEach(f => {
+            console.error(`[Suggestor] LinkedIn resource error for ${f.url}: ${f._technical || f.message}`);
+            toast.error(`${f.url}: ${f.message}`);
+          });
+        }
+        if (result.shortfall) {
+          throw new Error(result.shortfallMessage);
         }
         rawPosts = result.posts;
       } else {
@@ -1101,7 +1319,7 @@ function StepReviewAndSave({ brand, formData, initialPosts, seasonalDates = [], 
           platform: formData.platform,
           timePeriod: formData.calendarPeriod,
           mainGoal: formData.monthlyObjective,
-          mainMonthlySubject: formData.monthlyObjective,
+          mainOfferOrMessage: formData.offers ?? "",
           posts: selectedPosts.map(({ _id, ...p }) => p),
         }),
       });
@@ -1333,6 +1551,7 @@ function CreateCalendarInner() {
   const [generatedPosts, setGeneratedPosts] = useState(null);
   const [seasonalDates, setSeasonalDates] = useState([]);
   const [suggestionMeta, setSuggestionMeta] = useState(null);
+  const [referenceAttachments, setReferenceAttachments] = useState([]);
   // Step 3 → selected post ideas passed forward
   const [selectedPostIdeas, setSelectedPostIdeas] = useState([]);
   const [prefillCampaignEvents, setPrefillCampaignEvents] = useState("");
@@ -1355,6 +1574,7 @@ function CreateCalendarInner() {
     contentStrategyRules: "",
     audienceLanguageRules: "",
     writingStyleRules: "",
+    targetAudience: "",
   });
   // Step 4 → calendar generator output
   const [calendarPosts, setCalendarPosts] = useState([]);
@@ -1378,6 +1598,9 @@ function CreateCalendarInner() {
         <StepSelectBrand
           initialBrandId={initialBrandId}
           onNext={({ brand: b, brandIdentity: bi }) => {
+            if (brand && brand.id !== b.id) {
+              setReferenceAttachments([]);
+            }
             setBrand(b);
           setBrandIdentity(bi);
           try {
@@ -1389,6 +1612,19 @@ function CreateCalendarInner() {
                 popularIndustryPosts:      defaults.popularIndustryPosts      ?? prev.popularIndustryPosts,
                 importantIndustryWebsites: defaults.importantIndustryWebsites ?? prev.importantIndustryWebsites,
                 competitorPages:           defaults.competitorPages            ?? prev.competitorPages,
+              }));
+            }
+          } catch {}
+          try {
+            const saved = localStorage.getItem(`calendarSetupDefaults:${b.id}`);
+            if (saved) {
+              const defaults = JSON.parse(saved);
+              setCalendarForm(prev => ({
+                ...prev,
+                importantDetailsToInclude: defaults.importantDetailsToInclude ?? prev.importantDetailsToInclude,
+                detailsNotToInvent:        defaults.detailsNotToInvent        ?? prev.detailsNotToInvent,
+                sourceMaterial:            defaults.sourceMaterial            ?? prev.sourceMaterial,
+                targetAudience:            defaults.targetAudience            ?? prev.targetAudience,
               }));
             }
           } catch {}
@@ -1404,6 +1640,8 @@ function CreateCalendarInner() {
           brandIdentity={brandIdentity}
           form={suggestorForm}
           setForm={setSuggestorForm}
+          referenceAttachments={referenceAttachments}
+          setReferenceAttachments={setReferenceAttachments}
           onBack={() => setStep(0)}
           onGenerated={({ posts, seasonalDates: sd, formData, model, usage, requestedCount }) => {
             setSuggestorFormData(formData);
@@ -1460,7 +1698,8 @@ function CreateCalendarInner() {
           brandIdentity={brandIdentity}
           selectedPosts={selectedPostIdeas}
           prefillCampaignEvents={prefillCampaignEvents}
-          prefillMonthlySubject={suggestorFormData?.monthlyObjective ?? ""}
+          prefillMainGoal={suggestorFormData?.monthlyObjective ?? ""}
+          prefillMainOfferOrMessage={suggestorFormData?.offers ?? ""}
           calendarPeriod={suggestorFormData?.calendarPeriod ?? ""}
           calendarPeriodStart={suggestorFormData?.calendarPeriodStart ?? ""}
           calendarPeriodEnd={suggestorFormData?.calendarPeriodEnd ?? ""}
@@ -1468,13 +1707,13 @@ function CreateCalendarInner() {
           form={calendarForm}
           setForm={setCalendarForm}
           onBack={() => setStep(2)}
-          onGenerated={({ posts, tables, raw, usage, model, formData }) => {
-            setCalendarPosts(posts);
-            setCalendarRaw(raw);
-            setCalendarFormData(formData);
-            setCalendarMeta({ model, usage });
+          onGenerated={(data) => {
+            setGeneratedCalendar(data);
             setStep(4);
           }}
+          brandId={brand.id}
+          referenceAttachments={referenceAttachments}
+          onReferenceAttachmentsChange={setReferenceAttachments}
         />
       )}
 

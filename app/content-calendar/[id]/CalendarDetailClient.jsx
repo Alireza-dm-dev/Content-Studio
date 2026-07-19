@@ -249,6 +249,7 @@ function RegeneratePanel({ postId, calendarId, brandId, onDone, onCancel, allPos
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               scope, brandId, calendarId, customInstruction: customInstruction.trim(),
+              currentPost: p,
               ...(scope === "image_text_only" && { guidedReasons, guidedFeatures, imageTextInstruction }),
             }),
           });
@@ -278,11 +279,13 @@ function RegeneratePanel({ postId, calendarId, brandId, onDone, onCancel, allPos
 
     setLoading(true);
     try {
+      const currentPost = allPosts?.find(p => p.id === postId) || null;
       const res = await fetch(`/api/calendar-posts/${postId}/regenerate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           scope, brandId, calendarId, customInstruction: customInstruction.trim(),
+          currentPost,
           ...(scope === "image_text_only" && { guidedReasons, guidedFeatures, imageTextInstruction }),
         }),
       });
@@ -686,7 +689,7 @@ function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete })
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function CalendarDetailClient({ calendar }) {
+export default function CalendarDetailClient({ calendar, isAdmin = false }) {
   const [posts, setPosts] = useState(calendar.posts);
   const [activeView, setActiveView] = useState("schedule");
   const [showExport, setShowExport] = useState(false);
@@ -701,11 +704,28 @@ export default function CalendarDetailClient({ calendar }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "approved" }),
       });
-      if (!res.ok) throw new Error("Failed to approve calendar.");
+
+      if (!res.ok) {
+        let message = `Approval failed (HTTP ${res.status}).`;
+        try {
+          const data = await res.json();
+          if (data?.error) message = data.error;
+        } catch {
+          // response was not JSON — leave the generic HTTP-status message
+        }
+        throw new Error(message);
+      }
+
       setCalStatus("approved");
       toast.success("Calendar approved.");
     } catch (err) {
-      toast.error(err.message ?? "Could not approve calendar.");
+      if (err instanceof TypeError) {
+        // Network-level failure: the browser received no HTTP response
+        // (e.g. request blocked/aborted before reaching the server).
+        toast.error("Could not reach the server. Check that the app is running and retry.");
+      } else {
+        toast.error(err.message || "Could not approve calendar.");
+      }
     } finally {
       setApproving(false);
     }
@@ -742,7 +762,7 @@ export default function CalendarDetailClient({ calendar }) {
             <span className="text-xs text-muted-foreground">{posts.length} posts</span>
           </div>
         </div>
-        {calStatus !== "approved" && (
+        {isAdmin && calStatus !== "approved" && (
           <Button size="sm" onClick={handleApprove} disabled={approving} className="gap-1.5 shrink-0">
             {approving
               ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Approving…</>

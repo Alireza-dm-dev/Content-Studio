@@ -16,9 +16,45 @@ import {
   CALENDAR_TABLE_VIEWS, normalizePost, serializePostForSave,
 } from "@/lib/calendar-post-utils";
 
+// ─── Date sorting helper ───────────────────────────────────────────────────────
+// Sorts posts by ascending date/time while keeping a stable relative order for
+// posts with identical or missing/invalid dates.
+function parsePostDateTime(value) {
+  if (!value || typeof value !== "string") return Number.POSITIVE_INFINITY;
+  const time = Date.parse(value.trim().replace(" ", "T"));
+  return Number.isNaN(time) ? Number.POSITIVE_INFINITY : time;
+}
+
+function sortPostsByDateTime(posts) {
+  return [...posts]
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => {
+      const diff = parsePostDateTime(a.p.date) - parsePostDateTime(b.p.date);
+      return diff !== 0 ? diff : a.i - b.i;
+    })
+    .map(({ p }) => p);
+}
+
 // ─── Cell value renderer ──────────────────────────────────────────────────────
 
 function renderValue(key, value) {
+  if (key === "referenceLink") {
+    if (!value || typeof value !== "string") return null;
+    const displayText = value.length > 45 ? value.slice(0, 42) + "…" : value;
+    try {
+      const url = new URL(value);
+      const label = url.hostname + (url.pathname.length > 25 ? url.pathname.slice(0, 22) + "…" : url.pathname);
+      return (
+        <a href={value} target="_blank" rel="noopener noreferrer"
+          className="underline hover:text-primary truncate block max-w-[140px]"
+          title={value}>
+          {label}
+        </a>
+      );
+    } catch {
+      return <span className="truncate block max-w-[140px]" title={value}>{displayText}</span>;
+    }
+  }
   if (key === "hashtags") {
     const arr = Array.isArray(value) ? value :
       (typeof value === "string" && value.trim() ? value.split(/\s+/).filter(Boolean) : []);
@@ -667,7 +703,9 @@ export default function StepCalendarOutput({
 
   const [posts, setPosts] = useState(() =>
     initialPosts.length > 0
-      ? initialPosts.map((p, i) => ({ ...p, _id: p._id ?? `cal-${Date.now()}-${i}` }))
+      ? sortPostsByDateTime(
+          initialPosts.map((p, i) => ({ ...p, _id: p._id ?? `cal-${Date.now()}-${i}` }))
+        )
       : []
   );
   const [activeView, setActiveView] = useState("schedule");
@@ -678,7 +716,7 @@ export default function StepCalendarOutput({
   const [saving, setSaving] = useState(false);
 
   function updatePost(id, updated) {
-    setPosts(prev => prev.map(p => p._id === id ? { ...p, ...updated, _id: p._id } : p));
+    setPosts(prev => sortPostsByDateTime(prev.map(p => p._id === id ? { ...p, ...updated, _id: p._id } : p)));
   }
 
   function removePost(id) {
@@ -693,10 +731,10 @@ export default function StepCalendarOutput({
   }
 
   function handleParsed(arr) {
-    setPosts(arr.map((p, i) => ({
+    setPosts(sortPostsByDateTime(arr.map((p, i) => ({
       ...normalizePost(p, i),
       _id: `parsed-${Date.now()}-${i}`,
-    })));
+    }))));
     setShowRaw(false);
   }
 

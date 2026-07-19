@@ -18,10 +18,13 @@ import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import HiggsfieldImageGenerationCard from "@/components/HiggsfieldImageGenerationCard";
 import OpenAIImageGenerationCard from "@/components/OpenAIImageGenerationCard";
+import GenerationReferenceImageInput from "@/components/GenerationReferenceImageInput";
+import ImageVisualProductionControls from "@/components/ImageVisualProductionControls";
 import {
   normalizeBrandIdentityOutput,
   createCompactBrandVisualIdentitySummaryForImagePrompt,
 } from "@/lib/brand-identity-utils";
+import { defaultVisualControls } from "@/lib/image-visual-controls";
 import {
   ArrowLeft,
   Briefcase,
@@ -122,11 +125,17 @@ export default function FromBrandClient({ brands }) {
   const [customVisualStyleDirection, setCustomVisualStyleDirection] = useState("");
   const [textDensity, setTextDensity] = useState("Headline plus short supporting text");
 
+  // Visual Production Controls — kept across idea edits, target-tool switches,
+  // review, and regeneration. Reset only on brand change or full workflow reset.
+  const [visualControls, setVisualControls] = useState(defaultVisualControls());
+
   // Generation state
   const [running, setRunning] = useState(false);
   const [output, setOutput] = useState("");
   const [savedId, setSavedId] = useState(null);
   const [genError, setGenError] = useState("");
+  const [referenceImageUrl, setReferenceImageUrl] = useState(null);
+  const [referenceImageDescription, setReferenceImageDescription] = useState("");
   const [copied, setCopied] = useState(false);
 
   async function handleSelectBrand(brand) {
@@ -136,6 +145,7 @@ export default function FromBrandClient({ brands }) {
     setOutput("");
     setGenError("");
     setSavedId(null);
+    setVisualControls(defaultVisualControls());
 
     try {
       const res = await fetch(`/api/brands/${brand.id}/identity`);
@@ -184,6 +194,7 @@ export default function FromBrandClient({ brands }) {
           creativeGoal: finalCreativeGoal,
           visualStyleDirection: finalVisualStyleDirection,
           textDensity,
+          visualControls,
         }),
       });
 
@@ -645,6 +656,24 @@ export default function FromBrandClient({ brands }) {
           </Card>
         </div>
 
+        {/* Visual Production Controls */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Visual Production Controls</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Optional production direction. Leave on AI decides to let the brand
+              identity lead. Selections become explicit constraints for the prompt.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <ImageVisualProductionControls
+              value={visualControls}
+              onChange={setVisualControls}
+              disabled={running}
+            />
+          </CardContent>
+        </Card>
+
         {/* Generate button */}
         <Button
           onClick={handleGenerate}
@@ -736,12 +765,24 @@ export default function FromBrandClient({ brands }) {
           </>
         )}
 
+        {/* Reference Image for Generation */}
+        {output && (
+          <GenerationReferenceImageInput
+            referenceImageUrl={referenceImageUrl}
+            setReferenceImageUrl={setReferenceImageUrl}
+            referenceImageDescription={referenceImageDescription}
+            setReferenceImageDescription={setReferenceImageDescription}
+          />
+        )}
+
         {/* Generate with Higgsfield */}
         <HiggsfieldImageGenerationCard
           finalPrompt={output}
           brandId={selectedBrand?.id}
           generatedPromptId={savedId}
           calendarPostId={null}
+          referenceImageDescription={referenceImageDescription}
+          referenceImageUrl={referenceImageUrl}
         />
 
         {/* Generate with OpenAI */}
@@ -750,6 +791,8 @@ export default function FromBrandClient({ brands }) {
           brandId={selectedBrand?.id}
           calendarPostId={null}
           generatedPromptId={savedId}
+          referenceImageUrl={referenceImageUrl}
+          referenceImageDescription={referenceImageDescription}
         />
       </div>
     </div>

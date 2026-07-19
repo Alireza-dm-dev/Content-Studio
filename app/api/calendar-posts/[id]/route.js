@@ -1,9 +1,23 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeOutputImageTextRequirementsStructured } from "@/lib/calendar-post-utils";
+import { getBrandCalendarAccess } from "@/lib/auth";
 
 export async function PATCH(request, { params }) {
   const { id } = await params;
+
+  const post = await prisma.calendarPost.findUnique({
+    where: { id },
+    select: { id: true, calendar: { select: { brandId: true, status: true } } },
+  });
+  if (!post) return NextResponse.json({ error: "Post not found" }, { status: 404 });
+
+  const access = await getBrandCalendarAccess(post.calendar.brandId);
+  if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+
+  if (!access.isAdmin && post.calendar.status !== "draft") {
+    return NextResponse.json({ error: "Only draft calendars can be edited" }, { status: 403 });
+  }
 
   let body;
   try { body = await request.json(); }
@@ -93,6 +107,19 @@ export async function PATCH(request, { params }) {
 export async function DELETE(request, { params }) {
   const { id } = await params;
   try {
+    const post = await prisma.calendarPost.findUnique({
+      where: { id },
+      select: { id: true, calendar: { select: { brandId: true, status: true } } },
+    });
+    if (!post) return NextResponse.json({ error: "Post not found" }, { status: 404 });
+
+    const access = await getBrandCalendarAccess(post.calendar.brandId);
+    if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+
+    if (!access.isAdmin && post.calendar.status !== "draft") {
+      return NextResponse.json({ error: "Only draft calendars can be edited" }, { status: 403 });
+    }
+
     await prisma.calendarPost.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (err) {

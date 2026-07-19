@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 
@@ -16,6 +17,11 @@ function parseAiJson(raw) {
 
 // ── GET: reference-flow history (latest 10 per brand) ───────────────────────
 export async function GET(request) {
+  const access = await getAdminAccess();
+  if (!access.user) {
+    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  }
+
   const { searchParams } = new URL(request.url);
   const history = searchParams.get("history");
 
@@ -73,6 +79,11 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
+  const access = await getAdminAccess();
+  if (!access.user) {
+    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  }
+
   console.log("[CombinedVisualDir] POST /api/image/combined-visual-direction");
 
   try {

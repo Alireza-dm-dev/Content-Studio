@@ -23,11 +23,17 @@ function classifyFetchError(err) {
   if (/timed out/i.test(message)) {
     return { status: 504, error: "The resource URL took too long to respond.", details: message };
   }
+  if (/blocked|rate limited/i.test(message)) {
+    return { status: 403, error: "The resource URL was blocked or rate limited.", details: message };
+  }
   if (/could not fetch/i.test(message)) {
     return { status: 502, error: "Could not reach that URL.", details: message };
   }
   if (/failed with status/i.test(message)) {
     return { status: 502, error: "The resource URL returned an error.", details: message };
+  }
+  if (/too many redirects/i.test(message)) {
+    return { status: 502, error: "The resource URL redirected too many times.", details: message };
   }
   if (/unsupported content type/i.test(message)) {
     return { status: 422, error: "That URL doesn't point to an HTML page.", details: message };

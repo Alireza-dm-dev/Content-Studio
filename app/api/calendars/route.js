@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
+import { getBrandCalendarAccess, getCurrentUser, getUserBrandIds } from "@/lib/auth";
 
 // ── Date helper ────────────────────────────────────────────────────────────────
 function parseDate(d) {
@@ -100,10 +101,22 @@ function mapPost(p, i, calendarPlatform) {
 // ── GET /api/calendars ─────────────────────────────────────────────────────────
 export async function GET(request) {
   try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+
     const { searchParams } = new URL(request.url);
     const brandId = searchParams.get("brandId");
+
+    if (brandId) {
+      const access = await getBrandCalendarAccess(brandId);
+      if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+
+    const accessibleBrandIds = await getUserBrandIds(user);
     const calendars = await prisma.contentCalendar.findMany({
-      where: brandId ? { brandId } : undefined,
+      where: {
+        brandId: brandId ? brandId : { in: accessibleBrandIds },
+      },
       include: { brand: true, _count: { select: { posts: true } } },
       orderBy: { createdAt: "desc" },
     });
@@ -138,8 +151,19 @@ export async function POST(request) {
       posts,
     } = body;
 
-    const VALID_STATUSES = ["draft", "approved", "active", "completed"];
-    const status = VALID_STATUSES.includes(rawStatus) ? rawStatus : "draft";
+    const VALID_STATUSES = ["draft", "ready_for_review", "approved", "active", "completed"];
+    const normalizedStatus = typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : "draft";
+
+    if (!VALID_STATUSES.includes(normalizedStatus)) {
+      return NextResponse.json({ error: "Invalid calendar status" }, { status: 400 });
+    }
+
+    if (!access.isAdmin && normalizedStatus !== "draft") {
+      return NextResponse.json(
+        { error: "Calendar Editors must create calendars as drafts" },
+        { status: 403 }
+      );
+    }
 
     console.log("[SaveCalendar] brandId:", brandId, "| posts count:", posts?.length);
     if (posts?.[0]) console.log("[SaveCalendar] first post sample:", JSON.stringify(posts[0]).slice(0, 300));
@@ -156,6 +180,9 @@ export async function POST(request) {
         { status: 400 }
       );
     }
+
+    const access = await getBrandCalendarAccess(brandId);
+    if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
     if (!Array.isArray(posts) || posts.length === 0) {
       return NextResponse.json(
         { success: false, error: "There are no posts to save." },
@@ -176,7 +203,7 @@ export async function POST(request) {
         mainGoal: mainGoal || null,
         mainOfferOrMessage: mainOfferOrMessage || null,
         sourceMaterial: sourceMaterial || null,
-        status,
+        status: normalizedStatus,
         posts: {
           create: postCreateData,
         },

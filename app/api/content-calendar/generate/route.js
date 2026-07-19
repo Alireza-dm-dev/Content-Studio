@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import {
   validateOutputImageTextRequirements,
@@ -8,6 +9,7 @@ import {
   formatOutputImageTextRequirementsForDisplay,
 } from "@/lib/calendar-post-utils";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
+import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
 
 // ─── JSON output parser ────────────────────────────────────────────────────────
 // Handles: direct JSON, markdown-fenced JSON, JSON embedded in surrounding text.
@@ -160,14 +162,14 @@ function normalisePost(p, idx, defaultPlatform) {
 }
 
 // ─── Fallback date/time assignment ─────────────────────────────────────────────
-// When publishingFrequency is empty and the AI didn't assign a date to a post,
-// distribute a date across the selected calendar period — using any chosen
-// seasonal/event dates as preferred anchors where they fall inside that period —
-// and attach a default practical time of day. Posts that already have a date,
-// or requests where publishingFrequency is set, are returned unchanged.
+// Distribute dates across the selected calendar period for posts that are missing
+// or have an invalid/out-of-range date — using any chosen seasonal/event dates as
+// preferred anchors where they fall inside that period — and attach a default
+// practical time of day. Valid AI-provided dates inside the range are preserved.
+// Runs whenever a valid date range exists, regardless of publishingFrequency.
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const DEFAULT_FALLBACK_TIME = "10:00";
+const DEFAULT_FALLBACK_TIMES = ["10:00", "12:00", "15:00", "18:00"];
 
 // Parses "YYYY-MM-DD" (calendar period inputs) or "Month DD, YYYY" (seasonal
 // dates) into a UTC midnight Date, or null if unparseable.
@@ -185,23 +187,34 @@ function parseToUtcDate(value) {
   return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
 }
 
-function formatFallbackDate(date) {
+function formatFallbackDate(date, time) {
   const y = date.getUTCFullYear();
   const m = String(date.getUTCMonth() + 1).padStart(2, "0");
   const d = String(date.getUTCDate()).padStart(2, "0");
-  return `${y}-${m}-${d} ${DEFAULT_FALLBACK_TIME}`;
+  return `${y}-${m}-${d} ${time}`;
+}
+
+// Returns true if the post has a valid date string that falls on or after start
+// and on or before end (inclusive). Returns false if date is missing, unparseable,
+// or outside the range.
+function isValidDateInRange(dateStr, start, end) {
+  if (!dateStr) return false;
+  const d = parseToUtcDate(dateStr);
+  return d !== null && d >= start && d <= end;
 }
 
 function applyFallbackDates(posts, { calendarPeriodStart, calendarPeriodEnd, publishingFrequency, seasonalDates = [] }) {
-  // User-entered publishing frequency has priority — leave dates as the AI returned them.
-  if ((publishingFrequency ?? "").trim()) return posts;
-
   const start = parseToUtcDate(calendarPeriodStart);
   const end = parseToUtcDate(calendarPeriodEnd);
   if (!start || !end || end < start) return posts;
 
-  const missingCount = posts.filter(p => !p.date).length;
-  if (missingCount === 0) return posts;
+  const candidates = posts.map(p => ({
+    post: p,
+    hasValidDate: isValidDateInRange(p.date, start, end),
+  }));
+
+  const toFill = candidates.filter(c => !c.hasValidDate);
+  if (toFill.length === 0) return posts;
 
   const totalDays = Math.floor((end - start) / MS_PER_DAY) + 1;
 
@@ -211,17 +224,19 @@ function applyFallbackDates(posts, { calendarPeriodStart, calendarPeriodEnd, pub
     .sort((a, b) => a - b);
 
   let anchorIdx = 0;
-  let missingIdx = 0;
+  let fillIdx = 0;
 
-  return posts.map(p => {
-    if (p.date) return p; // AI-provided date preserved as-is
+  return posts.map((p, i) => {
+    if (candidates[i].hasValidDate) return p;
+
+    const time = DEFAULT_FALLBACK_TIMES[fillIdx % DEFAULT_FALLBACK_TIMES.length];
 
     const target = anchorIdx < anchors.length
       ? anchors[anchorIdx++]
-      : new Date(start.getTime() + Math.min(totalDays - 1, Math.floor((missingIdx * totalDays) / missingCount)) * MS_PER_DAY);
+      : new Date(start.getTime() + Math.min(totalDays - 1, Math.floor((fillIdx * totalDays) / toFill.length)) * MS_PER_DAY);
 
-    missingIdx++;
-    return { ...p, date: formatFallbackDate(target) };
+    fillIdx++;
+    return { ...p, date: formatFallbackDate(target, time) };
   });
 }
 
@@ -297,13 +312,198 @@ function deepFindPostArrays(obj, path = "", results = []) {
   return results;
 }
 
+// ─── Keyword helpers for reference relevance ─────────────────────────────────────
+// Returns true when the source reference clearly supports the generated post
+// topic. Uses keyword overlap — no AI calls, no schema changes.
+
+const STOP_WORDS = new Set([
+  "the", "this", "that", "and", "for", "are", "was", "has", "had", "but",
+  "not", "you", "all", "can", "its", "also", "just", "our", "your", "how",
+  "why", "who", "what", "when", "where", "which", "with", "from", "they",
+  "them", "their", "will", "would", "could", "should", "about", "into",
+  "over", "than", "then", "now", "get", "got", "way", "use", "used", "using",
+  "new", "one", "two", "more", "much", "many", "some", "each", "every",
+  "well", "very", "make", "made", "like", "take", "need", "work", "help",
+]);
+
+const GENERIC_MARKETING_WORDS = new Set([
+  "business", "service", "services", "expert", "professional", "solution",
+  "solutions", "trusted", "quality", "today", "learn", "guide", "tips",
+  "strategy", "strategies", "brand", "digital", "online", "marketing",
+  "content", "social", "media", "value", "growth", "results", "success",
+]);
+
+function normalizeKeywordText(value) {
+  if (!value) return "";
+  return String(value)
+    .toLowerCase()
+    .replace(/https?:\/\/[^\s]+/g, "")
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractSignificantKeywords(value) {
+  const text = normalizeKeywordText(value);
+  if (!text) return [];
+  const tokens = text.split(/\s+/).filter(w => w.length >= 3);
+  const multiWord = [];
+  for (let i = 0; i < tokens.length - 1; i++) {
+    multiWord.push(tokens[i] + "_" + tokens[i + 1]);
+  }
+  return tokens
+    .concat(multiWord)
+    .filter(w => !STOP_WORDS.has(w) && !GENERIC_MARKETING_WORDS.has(w));
+}
+
+function isReferenceRelevant(post, source) {
+  const refLink = (source?.referenceLink || "").trim();
+  if (!refLink) return false;
+
+  const postFields = [
+    post.hookTitle, post.coreMessage, post.caption,
+    post.mainAngle, post.contentStructure, post.imageText,
+  ];
+  const postText = postFields.filter(Boolean).join(" ");
+  if (!postText.trim()) return false;
+
+  const postKeywords = extractSignificantKeywords(postText);
+
+  const sourceText = [
+    source.inspirationSource, source.inspiration,
+    source.contentOrigin, source.referenceLink,
+  ].filter(Boolean).join(" ");
+  const sourceKeywords = extractSignificantKeywords(sourceText);
+
+  if (!postKeywords.length || !sourceKeywords.length) return false;
+
+  // Check single-word overlap (must have at least 2 shared significant words)
+  const postWords = new Set(postKeywords.filter(w => !w.includes("_")));
+  const sourceWords = sourceKeywords.filter(w => !w.includes("_"));
+  const sharedWords = sourceWords.filter(w => postWords.has(w));
+  const singleWordOverlap = sharedWords.length >= 2;
+
+  // Check multi-word phrase overlap (one matching phrase is strong signal)
+  const postPhrases = new Set(postKeywords.filter(w => w.includes("_")));
+  const sourcePhrases = sourceKeywords.filter(w => w.includes("_"));
+  const sharedPhrases = sourcePhrases.filter(w => postPhrases.has(w));
+  const phraseOverlap = sharedPhrases.length >= 1;
+
+  return singleWordOverlap || phraseOverlap;
+}
+
+// ─── Source field merger ─────────────────────────────────────────────────────────
+// After AI generation, copy source fields (referenceLink, contentOrigin,
+// inspiration) from selectedPosts into generated posts deterministically by
+// index mapping — the AI is never asked to preserve these fields, avoiding
+// ambiguous "substantially derived" instructions that cause error responses.
+//
+// Mapping strategy:
+//   - LinkedIn (resource-based): build a deduplicated pool of sources with
+//     distinct referenceLinks, then cycle through it by modulo so duplicate
+//     article URLs are only used as often as necessary. Existing referenceLink
+//     values the AI may have set on a post are preserved.
+//   - Other platforms:    1:1 mapping; posts beyond selectedPosts length
+//                           keep their existing field values unchanged
+//
+// Reference relevance:
+//   A referenceLink is only attached when the source clearly supports the
+//   generated post topic, determined by keyword overlap. Unrelated references
+//   are skipped — the post keeps an empty referenceLink.
+
+function mergeSourceFields(generatedPosts, selectedPosts, platforms) {
+  if (!selectedPosts || selectedPosts.length === 0) return generatedPosts;
+
+  const isLinkedIn = (platforms || "").toLowerCase().includes("linkedin");
+  const hasAnySource = selectedPosts.some(
+    p => p.referenceLink || p.contentOrigin || p.inspirationSource || p.inspiration
+  );
+  if (!hasAnySource) return generatedPosts;
+
+  // For LinkedIn, collect sources that have a referenceLink, deduplicated by
+  // URL — so the round-robin cycles through distinct article URLs before
+  // wrapping. Entries without a referenceLink are excluded from the pool;
+  // if no source has one, the pool falls back to all selectedPosts.
+  const linkedInPool = isLinkedIn
+    ? (() => {
+        const seen = new Set();
+        return selectedPosts.filter(p => {
+          const ref = (p.referenceLink || "").trim();
+          if (!ref) return false;
+          if (seen.has(ref)) return false;
+          seen.add(ref);
+          return true;
+        });
+      })()
+    : [];
+
+  return generatedPosts.map((post, idx) => {
+    // ── Non-LinkedIn — 1:1 mapping with relevance check ──────────────────────
+    if (!isLinkedIn) {
+      if (idx >= selectedPosts.length) return post;
+      const src = selectedPosts[idx];
+      const refRelevant = isReferenceRelevant(post, src);
+      const refLink = refRelevant ? (src.referenceLink || "") : "";
+      if (src.referenceLink && !refRelevant) {
+        console.log("[CalendarGenerate] skipped unrelated reference", {
+          postTitle: (post.hookTitle || "").slice(0, 60),
+          referenceLink: src.referenceLink,
+          sourceTitleOrSummary: (src.inspirationSource || src.inspiration || "").slice(0, 60),
+        });
+      }
+      return {
+        ...post,
+        referenceLink: refLink,
+        contentOrigin: refLink ? (src.contentOrigin || "original") : "original",
+        inspiration: src.inspiration || src.inspirationSource || post.inspiration || "",
+      };
+    }
+
+    // ── LinkedIn — cycle through the deduplicated pool with relevance check ───
+    const pool = linkedInPool.length > 0 ? linkedInPool : selectedPosts;
+    const srcIdx = idx % pool.length;
+    const src = pool[srcIdx];
+
+    // Preserve any referenceLink the AI already assigned on this post; only
+    // fall back to the cycled source when the post has none AND the source is
+    // relevant to the post topic.
+    const existingRef = (post.referenceLink || "").trim();
+    const fallbackRef = (src?.referenceLink || "").trim();
+    const refRelevant = fallbackRef && isReferenceRelevant(post, src);
+    const finalRef = existingRef || (refRelevant ? fallbackRef : "");
+
+    if (fallbackRef && !refRelevant) {
+      console.log("[CalendarGenerate] skipped unrelated reference", {
+        postTitle: (post.hookTitle || "").slice(0, 60),
+        referenceLink: fallbackRef,
+        sourceTitleOrSummary: (src?.inspirationSource || src?.inspiration || "").slice(0, 60),
+      });
+    }
+
+    return {
+      ...post,
+      referenceLink: finalRef,
+      contentOrigin: finalRef
+        ? (src?.contentOrigin || "reference")
+        : (src?.contentOrigin || "original"),
+      inspiration: post.inspiration || src?.inspiration || src?.inspirationSource || "",
+    };
+  });
+}
+
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request) {
   console.log("[ContentCalendar] POST /api/content-calendar/generate");
 
+  // ── 1. Authenticate ────────────────────────────────────────────────────────
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 });
+  }
+
   try {
-    // ── 1. Parse request body ────────────────────────────────────────────────
+    // ── 2. Parse request body ────────────────────────────────────────────────
     let body;
     try {
       body = await request.json();
@@ -316,7 +516,7 @@ export async function POST(request) {
 
     console.log("[ContentCalendar] brandId:", body.brandId, "| posts requested:", body.numberOfPostsNeeded);
 
-    const { brandId, selectedPosts = [], calendarPeriodStart, calendarPeriodEnd, chosenSeasonalDates = [], ...formFields } = body;
+    const { brandId, attachmentIds, selectedPosts = [], calendarPeriodStart, calendarPeriodEnd, chosenSeasonalDates = [], ...formFields } = body;
 
     if (!brandId) {
       return NextResponse.json(
@@ -325,7 +525,27 @@ export async function POST(request) {
       );
     }
 
-    // ── 2. Load brand + identity ─────────────────────────────────────────────
+    // ── 3. Authorize brand access ────────────────────────────────────────────
+    const access = await getBrandCalendarAccess(brandId);
+    if (!access.allowed) {
+      return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+    }
+
+    // ── 3b. Resolve attachment context (creation mode) ───────────────────────
+    const attachmentContext = await resolveCalendarAttachmentContext({
+      attachmentIds,
+      brandId,
+      mode: "creation",
+    });
+
+    if (!attachmentContext.ok) {
+      return NextResponse.json(
+        { success: false, error: attachmentContext.error },
+        { status: attachmentContext.status }
+      );
+    }
+
+    // ── 4. Load brand + identity ─────────────────────────────────────────────
     const [brand, identity] = await Promise.all([
       prisma.brand.findUnique({ where: { id: brandId } }),
       prisma.brandIdentity.findFirst({ where: { brandId }, orderBy: { createdAt: "desc" } }),
@@ -339,8 +559,33 @@ export async function POST(request) {
     }
 
     // ── 3. Derive safe post count ────────────────────────────────────────────
-    const rawCount = parseInt(String(formFields.numberOfPostsNeeded ?? 12), 10);
-    const safeCount = isNaN(rawCount) || rawCount < 1 ? 12 : Math.min(rawCount, 60);
+    // Source of truth: Calendar Setup numberOfPostsNeeded from the user.
+    // Selected post ideas are inspiration inputs, not a hard cap.
+    const rawCount = parseInt(String(formFields.numberOfPostsNeeded ?? ""), 10);
+    let safeCount;
+    let countSource;
+
+    if (!isNaN(rawCount) && rawCount >= 1) {
+      safeCount = Math.min(rawCount, 60);
+      countSource = "formFields.numberOfPostsNeeded";
+    } else if (selectedPosts.length > 0) {
+      // Fallback: use selectedPosts count only when numberOfPostsNeeded is
+      // missing or invalid — this protects against stale/default values
+      // without letting selectedPosts.length override the user's request.
+      safeCount = Math.min(selectedPosts.length, 60);
+      countSource = "fallback-selectedPosts";
+    } else {
+      safeCount = 12;
+      countSource = "fallback-default-12";
+    }
+
+    console.log("[CalendarGenerate] count resolution", {
+      platform: formFields.platforms,
+      requestedCount: formFields.numberOfPostsNeeded,
+      selectedPostsCount: selectedPosts.length,
+      safeCount,
+      countSource,
+    });
 
     // ── 4. Build context strings ─────────────────────────────────────────────
     const identitySummary = buildIdentitySummary(identity, brand);
@@ -350,7 +595,8 @@ export async function POST(request) {
           `${i + 1}. Hook: "${p.suggestedHook ?? ""}"` +
           (p.mainAngleAndCoreMessage ? ` | Core: "${p.mainAngleAndCoreMessage}"` : "") +
           (p.platform ? ` | Platform: ${p.platform}` : "") +
-          (p.format ? ` | Format: ${p.format}` : "")
+          (p.format ? ` | Format: ${p.format}` : "") +
+          (p.inspirationSource ? ` | Source: "${p.inspirationSource}"` : (p.inspiration ? ` | Source: "${p.inspiration}"` : ""))
         ).join("\n")
       : "None provided.";
 
@@ -371,6 +617,7 @@ export async function POST(request) {
       detailsNotToInvent:     formFields.detailsNotToInvent     ?? "",
       sourceMaterial:         formFields.sourceMaterial         ?? "",
       priorityContentIdeas:   formFields.priorityContentIdeas   ?? "",
+      targetAudience:         formFields.targetAudience         ?? "",
       platforms:              formFields.platforms              ?? "",
       numberOfPostsNeeded:    String(safeCount),
       publishingFrequency:    formFields.publishingFrequency    ?? "",
@@ -397,13 +644,21 @@ export async function POST(request) {
       row("Instagram",         brand.instagramPage),
       row("Brand Tone",        brand.brandTone),
       row("Target Audience",   brand.targetAudience),
+      row("Campaign Target Audience", formFields.targetAudience),
       row("Services/Products", brand.mainServicesOrProducts),
       row("Visual Style",      brand.brandVisualStyle),
+      "",
+      "When Campaign Target Audience is provided, use it as the primary audience for THIS calendar and adapt tone, hooks, captions, CTAs, image text, and content angles specifically to that group. Do not confuse it with the brand's general audience listed above.",
       "",
       "=== BRAND IDENTITY ===",
       identitySummary || "Not extracted yet.",
       "",
-      "=== SELECTED POST IDEAS (use as inspiration) ===",
+      "=== SELECTED POST IDEAS (INSPIRATION ONLY — NOT A HARD CAP) ===",
+      `You must generate exactly ${safeCount} posts. Selected ideas below are inspiration inputs only — they do not limit the final count.`,
+      selectedPosts.length < safeCount
+        ? `If fewer ideas than needed (${selectedPosts.length} selected, ${safeCount} required), expand their themes into additional distinct posts to reach ${safeCount}. Do not duplicate posts.`
+        : `If more ideas than needed (${selectedPosts.length} selected, ${safeCount} required), use only the most relevant ones.`,
+      "",
       selectedPostIdeasText,
       "",
       "=== CAMPAIGN & CALENDAR DETAILS ===",
@@ -415,7 +670,14 @@ export async function POST(request) {
       row("Do NOT Invent",               formFields.detailsNotToInvent),
       row("Source Material",             formFields.sourceMaterial),
       row("Priority Content Ideas",      formFields.priorityContentIdeas),
-      "",
+      ...(attachmentContext.block
+        ? [
+            "",
+            "=== INTERPRETED UPLOADED REFERENCE MATERIAL ===",
+            attachmentContext.block,
+            "",
+          ]
+        : []),
       "=== POSTING SCHEDULE ===",
       row("Platforms",                   formFields.platforms),
       row("Number of Posts",             String(safeCount)),
@@ -446,14 +708,14 @@ export async function POST(request) {
       "",
       "Rules:",
       "1. Return a structured object: { type: 'static' | 'carousel' | 'video', items: [...] } for static/video, or { type: 'carousel', slides: [...] } for carousel.",
-      "2. Every item/slide has a `fields` object using ONLY these 10 keys (omit any that don't apply): main_headline, subheadline, supporting_text, call_to_action, badge_or_label, offer_or_promotion, date_or_time, website_or_contact, logo_text, additional_text_notes.",
+      "2. Every item/slide has a `fields` object using ONLY these 12 keys (omit any that don't apply): main_headline, subheadline, supporting_text, sub_supporting_text_1, sub_supporting_text_2, call_to_action, badge_or_label, offer_or_promotion, date_or_time, website_or_contact, logo_text, additional_text_notes.",
       "3. For Carousel, the number of generated slides MUST exactly match the Content Structure slide count — never fewer, never more, never skipped (a 6-slide structure needs Slide 1 through Slide 6 — not just Slide 1 and Slide 4).",
       "4. Slide numbers must be sequential starting at 1 (slideNumber: 1, 2, 3 ... N) with no gaps and no duplicates.",
       "5. Slide 1's main_headline is drawn from hookTitle — but sharpen or rephrase it into the strongest on-image claim rather than copying it verbatim. If hookTitle is a question, convert it to a specific answer or benefit. If it is generic, pull a concrete detail from contentStructure or the caption.",
       "6. Each middle slide must reflect its OWN topic from its OWN Content Structure entry — specific, not interchangeable with other slides. Every middle slide MUST include both main_headline AND at least one of supporting_text or subheadline — never return main_headline alone. The supporting_text or subheadline must surface a specific detail, benefit, step, stat, or concrete claim from that slide's Content Structure entry, not a vague restatement.",
       "7. The final slide should usually carry the call_to_action, pulled from the caption's actual CTA — never invented.",
       "8. Do not repeat the same headline (or near-identical phrasing) across multiple slides or items.",
-      "9. Do not use the full caption as slide text — on-image text is short, punchy, and scannable; the caption is a separate field entirely.",
+      "9. Do not use the full caption as slide text — on-image text is substantive and stands on its own; the caption is a separate field entirely.",
       "10. Do not invent offers, dates, contact info, or promotions that are not present in the brand identity, campaign details, or caption.",
       "11. Only include keys that hold useful, specific content for that slide/item — never fill a key with a generic placeholder like 'N/A' or a repeated label.",
       "12. Omit blank or empty keys entirely — never return a key with an empty string.",
@@ -468,11 +730,77 @@ export async function POST(request) {
       "6. Testimonial / proof / case-study posts: use a short, concrete quote, result, or proof point pulled from the caption or brand details — never invented.",
       "7. Carousel posts: each slide's text must be the specific on-slide copy for THAT slide's own topic — a designer should be able to place it directly with no further writing.",
       "8. Reel/video posts that need on-screen text: give the actual thumbnail headline and any specific on-screen text moments — not a generic 'watch to learn more'.",
-      "9. Keep on-image text concise and design-ready: main_headline around 60 characters or fewer, subheadline / supporting_text around 90 characters or fewer, while staying specific.",
+      "9. Keep on-image text design-ready and substantive: main_headline should make a complete, specific claim; subheadline / supporting_text must add concrete value beyond the headline — use the space to be useful rather than artificially brief.",
+      "",
+      "=== FORBIDDEN PATTERNS IN IMAGE TEXT (CRITICAL) ===",
+      "Every field value in outputImageTextRequirementsStructured must be FINAL VISIBLE COPY — the exact text a viewer reads on the image, not a description of what the image is about.",
+      "Forbidden in all fields:",
+      "- Meta-descriptive phrases: 'Emphasis on...', 'Highlight...', 'Focus on...', 'Overview of...', 'A look at...', 'Discussion about...', 'Explore the concept of...'",
+      "- Instruction-style text: 'Provide useful tips on...', 'Explain how to...', 'Describe the benefits of...', 'Share examples of...'",
+      "- Section labels used as visible content: 'Call to Action', 'Value Proposition', 'Key Benefit', 'Main Point' — unless that exact text is genuinely the intended on-image copy",
+      "",
+      "Every field must read as if it is printed on the image:",
+      "- main_headline: a complete, specific claim, promise, question, or CTA — not a topic label",
+      "- subheadline / supporting_text: a concrete detail, step, statistic, benefit, or proof point — not a vague restatement of the headline",
+      "- sub_supporting_text_1 / sub_supporting_text_2: additional depth when a slide needs more explanation — add a why, a proof point, a practical detail, or audience-specific context. Never repeat the headline or supporting_text. Never generic filler. Never designer instructions.",
+      "- call_to_action: an actual next step for the viewer — not the generic label 'Call to Action'",
+      "- badge_or_label: a real category name or callout — not the raw Main Angle value",
+      "",
+      "=== SUB-SUPPORTING TEXT DEPTH RULES ===",
+      "sub_supporting_text_1 and sub_supporting_text_2 are OPTIONAL deeper copy fields for slides that need more explanation, proof, or context beyond the headline and supporting_text.",
+      "",
+      "WHEN TO USE THEM (carousel posts):",
+      "- Educational, technical, service, B2B, trust-building, myth/truth, mistake/fix, checklist, diagnostic, and comparison slides should USUALLY include at least sub_supporting_text_1.",
+      "- For a 5-slide carousel on an educational, technical, or service-based topic, at least 2\u20133 slides should include sub_supporting_text_1.",
+      "- Use sub_supporting_text_2 when a slide needs a second concrete detail, proof point, example, warning, or audience-specific clarification.",
+      "",
+      "Use them for:",
+      "- explaining WHY the headline matters or why the viewer should care",
+      "- adding a practical detail, example, or concrete step that supports supporting_text",
+      "- adding a specific benefit, result, or proof point from the brand info or source material",
+      "- making a complex or technical topic clearer with plain-language context",
+      "- surfacing audience-specific relevance (e.g. 'For security teams managing multiple sites')",
+      "",
+      "Do NOT use them for:",
+      "- repeating the headline or supporting_text in different words",
+      "- generic claims that could apply to any slide ('Learn more', 'Contact us today', 'Find out how')",
+      "- instructions to a designer ('Explain the benefit here', 'Add a stat about this')",
+      "- long paragraphs \u2014 keep each sub-supporting line short enough to fit on a slide",
+      "- filling them in on every slide \u2014 simple hook slides and short CTA slides should omit them",
+      "",
+      "CAROUSEL DEPTH EXAMPLES (strongly prefer this richer style for non-trivial slides):",
+      "",
+      "Slide 2 (educational/technical \u2014 GOOD use of both sub-supporting fields):",
+      "  main_headline: 'Why Cheap CCTV Misses Key Details'",
+      "  supporting_text: 'Low-quality cameras often fail when lighting changes.'",
+      "  sub_supporting_text_1: 'Poor night vision can hide faces and number plates.'",
+      "  sub_supporting_text_2: 'Weak placement can leave blind spots near entrances.'",
+      "",
+      "Slide 3 (service/trust-building \u2014 GOOD use of sub_supporting_text_1):",
+      "  main_headline: 'Professional Setup Covers the Risk Zones'",
+      "  supporting_text: 'A proper survey maps entrances, tills, stock rooms, and blind spots.'",
+      "  sub_supporting_text_1: 'Camera angle matters as much as camera quality.'",
+      "",
+      "Simple slide (hook \u2014 correctly omits sub-supporting fields):",
+      "  main_headline: '6 Things Your Business Needs Before World Cup Season'",
+      "  badge_or_label: 'Checklist'",
+      "",
+      "Simple slide (CTA \u2014 correctly omits sub-supporting fields):",
+      "  main_headline: 'Ready for World Cup Season?'",
+      "  call_to_action: 'Book a free consultation today'",
+      "  badge_or_label: 'Limited Spots'",
+      "",
+      "BAD vs GOOD examples:",
+      "",
+      "BAD: main_headline: 'Emphasis on tailored safety solutions', supporting_text: 'Highlight the importance of professional installation'",
+      "GOOD: main_headline: 'Safer Homes Start With Expert Installation', supporting_text: 'CCTV, alarms, and access control fitted by British Engineers.'",
+      "",
+      "BAD: main_headline: 'Call to Action', call_to_action: 'Encourage viewers to book a consultation'",
+      "GOOD: main_headline: 'Book Your Security Consultation', call_to_action: 'Get expert support for CCTV, alarms, and access control.'",
       "",
       "=== FORMAT-SPECIFIC RULES ===",
-      "STATIC: Return { type: 'static', items: [ { ...fields } ] } with exactly ONE item. main_headline is the strongest on-image hook (often derived from hookTitle, but rephrase if a more specific angle fits better); subheadline/supporting_text is a SPECIFIC detail, step, stat, or benefit that goes beyond Core Message — never a restatement of it; badge_or_label is a meaningful on-image label/callout relevant to THIS post — never the raw Main Angle value; call_to_action ONLY if the caption has a clear, specific CTA.",
-      "CAROUSEL: Return { type: 'carousel', slides: [ { slideNumber, slideRole, fields } ] }. Parse the slide count from Content Structure, cross-check against Visual Direction, and generate exactly one slide entry per Content Structure slide, in order. `slideRole` is a short label for that slide's role in the flow (e.g. 'Hook', 'Problem', 'Tip 1', 'Proof', 'Offer', 'CTA'). Every middle slide (not Slide 1 or the final CTA slide) MUST include both main_headline AND at least one of supporting_text or subheadline — the supporting detail must pull the specific fact, step, benefit, or claim from that slide's own Content Structure entry. The final output must be complete and sequential from Slide 1 to Slide N. Omit blank keys.",
+      "STATIC: Return { type: 'static', items: [ { ...fields } ] } with exactly ONE item. main_headline is the strongest on-image hook (often derived from hookTitle, but rephrase if a more specific angle fits better); subheadline/supporting_text is a SPECIFIC detail, step, stat, or benefit that goes beyond Core Message — never a restatement of it; sub_supporting_text_1/sub_supporting_text_2 optionally add depth for complex topics; badge_or_label is a meaningful on-image label/callout relevant to THIS post — never the raw Main Angle value; call_to_action ONLY if the caption has a clear, specific CTA.",
+      "CAROUSEL: Return { type: 'carousel', slides: [ { slideNumber, slideRole, fields } ] }. Parse the slide count from Content Structure, cross-check against Visual Direction, and generate exactly one slide entry per Content Structure slide, in order. `slideRole` is a short label for that slide's role in the flow (e.g. 'Hook', 'Problem', 'Tip 1', 'Proof', 'Offer', 'CTA'). Every middle slide (not Slide 1 or the final CTA slide) MUST include both main_headline AND at least one of supporting_text or subheadline — the supporting detail must pull the specific fact, step, benefit, or claim from that slide's own Content Structure entry. Educational, technical, service, and trust-building slides SHOULD also include sub_supporting_text_1 and sometimes sub_supporting_text_2 for richer on-image depth. The final output must be complete and sequential from Slide 1 to Slide N. Omit blank keys.",
       "VIDEO/REEL: Return { type: 'video', items: [] } unless a thumbnail or end card needs on-screen text. If it does, return ONE item using only main_headline, subheadline, supporting_text, call_to_action, badge_or_label, website_or_contact, logo_text, additional_text_notes — and set additional_text_notes to 'Use as thumbnail, cover, or end card only.'",
       "",
       "=== QUALITY REFERENCE EXAMPLE (World Cup marketing checklist — 6-slide carousel) ===",
@@ -502,6 +830,21 @@ export async function POST(request) {
       "{ \"type\": \"static\", \"items\": [ { \"main_headline\": \"3 Checks Before We Recommend Any Security System\", \"subheadline\": \"Entry points, existing risks, and the right upgrade path for your property\", \"badge_or_label\": \"Consultation Checklist\" } ] }",
       "Why BETTER wins: main_headline turns the question into a numbered, concrete promise; subheadline lists the actual three things from contentStructure rather than restating coreMessage; badge_or_label names the format, not the angle category.",
       "",
+      "=== CAPTION GENERATION RULES ===",
+      "Captions must be substantive multi-paragraph content:",
+      "  - At least 5 visible lines of substantive content per post",
+      "  - Maximum 3 paragraphs, separated by natural blank line breaks",
+      "  - Always include a clear call-to-action in the final paragraph",
+      "  - Do not artificially shorten captions to a fixed character limit — let the content and depth dictate the length",
+      "  - Use natural line breaks between paragraphs to improve readability",
+      "  - Write for the platform's audience: LinkedIn posts should be professional and value-rich; other platforms can match their respective tone",
+      "",
+      "CAPTION DEPTH BY POST TYPE:",
+      "  - Educational posts (mainAngle: education): captions must be more detailed than regular posts. Use longer explanations, practical examples, steps, reasons, mini-frameworks, or key takeaways. Aim for at least 2 substantial paragraphs when the content supports it. Do not add filler — useful depth only.",
+      "  - Static posts: Since a static post has only one visual, the caption must carry more explanation and context. Include a hook/opening, explanation/context, practical value or proof, and a CTA. Aim for at least 2 substantial paragraphs when the content supports it.",
+      "  - Educational static posts: Receive the richest captions — usually 2-3 substantial paragraphs with explanation, practical value, and a clear next step.",
+      "  - Other posts: Follow the base rules above (at least 5 visible lines, max 3 paragraphs, ending with CTA).",
+      "",
       // ── Video narration/dialogue generation rules ──────────────────────────
       "=== VIDEO NARRATION & DIALOGUE GENERATION RULES ===",
       "For Reels and video posts, narrationOrDialogueOfCharacterOrCharacters must be a complete, usable script — not a one-line placeholder.",
@@ -522,6 +865,76 @@ export async function POST(request) {
       "  Narrator: \"A smoother morning does not need a complicated routine. Start with five small steps: prepare your essentials the night before, choose one priority for the day, keep your workspace clear, block your first focused task before checking messages, and do a quick plan review before the day gets busy. Small habits make the whole day easier to manage.\"",
       "Do not use unfinished dialogue, ellipsis, or placeholder text.",
       "Empty string is allowed ONLY for non-video and non-Reel posts where narration or dialogue is genuinely not needed.",
+      "",
+      "=== STORYTELLING STRUCTURE REQUIREMENT (CRITICAL) ===",
+      "Before creating carousel slides or reel narration/dialogues, select ONE storytelling structure that best fits the post goal, audience, and content type. The selected structure must guide the entire sequence. Do not mix multiple storytelling structures in one post. The output should feel like one connected story, not separate tips or scenes.",
+      "",
+      "Available storytelling structures:",
+      "",
+      "1. Problem → Agitation → Solution → CTA",
+      "   Best for: lead generation, service posts, objection handling",
+      "   Carousel: Slide 1 problem → Slide 2 why it matters → Slide 3 solution → Slide 4 benefit → Slide 5 CTA",
+      "   Reel: Start with visible problem → create tension → reveal solution → end with action",
+      "",
+      "2. Hook → Context → Insight → Action",
+      "   Best for: educational posts, expert positioning",
+      "   Carousel: Hook → context → insight → practical advice → CTA",
+      "   Reel: Question/bold statement → explanation → useful takeaway → CTA",
+      "",
+      "3. Before → After → Bridge",
+      "   Best for: transformation, training, service value",
+      "   Carousel: Before → pain/friction → bridge/process → after → CTA",
+      "   Reel: Show old situation → improved situation → what creates the change",
+      "",
+      "4. Myth → Truth → Explanation → CTA",
+      "   Best for: awareness, trust building, misconception correction",
+      "",
+      "5. Mistake → Consequence → Fix → Result",
+      "   Best for: educational, warning, local service, B2B",
+      "",
+      "6. Question → Answer → Example → CTA",
+      "   Best for: FAQ, simple educational content",
+      "",
+      "7. Checklist / Step-by-step",
+      "   Best for: processes, tutorials, course/service breakdowns",
+      "",
+      "8. Objection → Reframe → Proof → Next Step",
+      "   Best for: sales resistance, trust building",
+      "",
+      "9. Situation → Action → Outcome → Lesson",
+      "   Best for: case studies, testimonials, proof content. Use only factual proof from source material.",
+      "",
+      "10. Old Way → New Way → Why It Works",
+      "    Best for: innovation, AI, modern positioning",
+      "",
+      "11. Symptom → Root Cause → Fix",
+      "    Best for: diagnostic/service explanation",
+      "",
+      "12. Story Character → Goal → Obstacle → Resolution",
+      "    Best for: emotional storytelling, human-centered campaigns",
+      "",
+      "13. Reveal / Curiosity Gap",
+      "    Best for: high-retention content",
+      "",
+      "14. Do This / Not That",
+      "    Best for: practical comparisons",
+      "",
+      "15. Mini Framework",
+      "    Best for: expert content, B2B, strategy",
+      "",
+      "For carousel image text:",
+      "- Each slide must contain final visible copy only",
+      "- The slide sequence must clearly follow the selected storytelling structure",
+      "- Do not create disconnected educational points, repeated headlines, generic descriptions, or instructions for designers",
+      "- Each slide should advance the story",
+      "",
+      "For reels:",
+      "- Narration and dialogues must follow the chosen structure",
+      "- Scene 1 must create attention and hook the viewer",
+      "- Middle scenes must develop the story and build toward the conclusion",
+      "- Final scene must provide resolution and clear next step or CTA",
+      "- Dialogue must sound like spoken words, not production notes or camera directions",
+      "- Do not write camera directions inside narration or dialogue fields",
       "",
       // ── Planning-to-output consistency: ensure the output delivers what the
       // planning fields promise. Without this block the AI often names a
@@ -596,11 +1009,11 @@ export async function POST(request) {
       '      "mainAngle": "strategic angle: education | trust | promotion | engagement | behind the scenes | objection handling | case study",',
       '      "coreMessage": "the single key message the audience must remember",',
       '      "hookTitle": "opening hook or first-slide headline",',
-      '      "caption": "full caption text with CTA",',
+      '      "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA. Educational and static posts get richer, more explanatory captions (see CAPTION DEPTH BY POST TYPE above).",',
       '      "hashtags": ["#tag1", "#tag2", "#tag3"],',
       '      "contentStructure": "slide-by-slide or scene-by-scene breakdown",',
       '      "visualDirection": "Creative direction for the designer. Static posts: describe layout, colors, composition, branding, CTA placement. Carousel posts: write Overall carousel visual system: [...] then Slide 1: [...] Slide 2: [...] etc. Video/Reel posts: describe thumbnail look, key visual frames, cover frame direction.",',
-      '      "outputImageTextRequirementsStructured": <object — FOLLOW THE OUTPUT IMAGE TEXT REQUIREMENTS GENERATION RULES AND FORMAT-SPECIFIC RULES ABOVE EXACTLY. Return a real nested JSON object (not a string): { "type": "static"|"video", "items": [ { "main_headline": "...", ... } ] } OR { "type": "carousel", "slides": [ { "slideNumber": 1, "slideRole": "Hook", "fields": { "main_headline": "sharpened hook", "badge_or_label": "label" } }, { "slideNumber": 2, "slideRole": "Tip 1", "fields": { "main_headline": "specific claim from this slide in contentStructure", "supporting_text": "concrete detail or benefit — REQUIRED for every middle slide" } }, ... one entry per Content Structure slide — every middle slide MUST have main_headline + supporting_text or subheadline ] }. Use ONLY the 10 allowed field keys. Omit blank keys entirely. Carousel slide count MUST equal the Content Structure slide count.>,',
+      '      "outputImageTextRequirementsStructured": <object — FOLLOW THE OUTPUT IMAGE TEXT REQUIREMENTS GENERATION RULES AND FORMAT-SPECIFIC RULES ABOVE EXACTLY. Return a real nested JSON object (not a string): { "type": "static"|"video", "items": [ { "main_headline": "...", ... } ] } OR { "type": "carousel", "slides": [ { "slideNumber": 1, "slideRole": "Hook", "fields": { "main_headline": "sharpened hook", "badge_or_label": "label" } }, { "slideNumber": 2, "slideRole": "Tip 1", "fields": { "main_headline": "specific claim from this slide in contentStructure", "supporting_text": "concrete detail or benefit — REQUIRED for every middle slide" } }, ... one entry per Content Structure slide — every middle slide MUST have main_headline + supporting_text or subheadline ] }. Use ONLY the 12 allowed field keys. Omit blank keys entirely. Carousel slide count MUST equal the Content Structure slide count.>,',
       '      "imageText": "short legacy image text note if needed; leave empty if outputImageTextRequirementsStructured is filled",',
       '      "structure": "carousel sequence | reel sequence | static layout | story sequence | video flow",',
       '      "inspiration": "where this idea comes from: selected post idea | brand strategy | audience pain point | seasonal event",',
@@ -631,6 +1044,8 @@ export async function POST(request) {
       "- outputImageTextRequirementsStructured must be a real nested JSON object/array (NOT a stringified JSON, NOT plain text) following the schema and rules given above.",
       "- postNumber starts at 1 and increments by 1.",
       "- Every field must be present. Use empty string \"\" for fields that do not apply.",
+      "- Never return an error object. Always return the {\\\"posts\\\": [...]} structure shown above.",
+      "- If any field is missing or not applicable, use an empty string and continue.",
       "- Return only the JSON object. Nothing before or after it.",
     ].filter(v => v !== null).join("\n");
 
@@ -641,7 +1056,7 @@ export async function POST(request) {
       templateSlug: "content-calendar-generator",
       variables,
       userInput,
-      maxTokens: 16384, // Use the highest practical output budget — detailed calendars include long narration and visual production fields. Very large calendars may still need chunked generation.
+      maxTokens: 16384, // gpt-4o max output budget — detailed calendars include long narration, visual production fields, and structured output image text objects. 6 posts × ~30 fields each can exceed 8k tokens when truncated mid-JSON causes parseAiJsonOutput to return only 1 post.
     });
 
     console.log("[ContentCalendar] Raw AI output length:", result.raw?.length ?? 0, "chars");
@@ -658,6 +1073,12 @@ export async function POST(request) {
 
     // ── 9. Extract posts array from whatever shape the AI returned ───────────
     let rawPosts = [];
+
+    if (!parsed || typeof parsed !== "object") {
+      const rawPreview = String(result.raw ?? "").slice(0, 500).replace(/[\x00-\x1f]/g, " ");
+      console.error(`[ContentCalendar] parsed is null/not-object. finish=${result.finishReason} rawPreview=${rawPreview}`);
+      throw new Error("AI response could not be parsed as a valid post structure. Try again or reduce the number of posts.");
+    }
 
     if (Array.isArray(parsed)) {
       rawPosts = parsed;
@@ -682,9 +1103,21 @@ export async function POST(request) {
 
     console.log("[ContentCalendar] Parsed posts count:", rawPosts.length, "| requested:", safeCount);
 
+    if (rawPosts.length < safeCount) {
+      const truncated = result.finishReason === "length";
+      const rawPreview = String(result.raw ?? "").slice(0, 800).replace(/[\x00-\x1f]/g, " ");
+      const usageStr = result.usage ? `prompt=${result.usage.prompt_tokens} completion=${result.usage.completion_tokens} total=${result.usage.total_tokens}` : "usage=N/A";
+      console.error(`[ContentCalendar] rawPosts=${rawPosts.length} safeCount=${safeCount} finish=${result.finishReason} ${usageStr}`);
+      console.error(`[ContentCalendar] rawPreview: ${rawPreview}`);
+      const msg = truncated
+        ? `Only ${rawPosts.length} of ${safeCount} posts were generated. The AI response was truncated. Try generating fewer posts or reducing very long caption/video/script requirements.`
+        : `Only ${rawPosts.length} of ${safeCount} posts were generated. Try generating fewer posts or reducing very long caption/video/script requirements.`;
+      throw new Error(msg);
+    }
+
     const normalized = rawPosts.map((p, i) => normalisePost(p, i, formFields.platforms));
 
-    // ── 9b. Fallback date/time assignment for posts missing a date ───────────
+    // ── 9b. Fallback date/time assignment for posts missing or invalid dates ─
     const datedPosts = applyFallbackDates(normalized, {
       calendarPeriodStart,
       calendarPeriodEnd,
@@ -711,10 +1144,17 @@ export async function POST(request) {
       return p;
     });
 
+    // ── 10b. Merge source fields from selectedPosts ─────────────────────────
+    // The AI is no longer asked to preserve referenceLink, contentOrigin, or
+    // inspirationSource — instead we copy them deterministically from the
+    // selected post ideas the user chose in the Review step. This avoids the
+    // ambiguous "substantially derived" instruction that caused error responses.
+    const finalPosts = mergeSourceFields(posts, selectedPosts, formFields.platforms);
+
     // ── 11. Return ───────────────────────────────────────────────────────────
     return NextResponse.json({
       success: true,
-      posts,
+      posts: finalPosts,
       tables: null,
       raw: result.raw,
       usage: result.usage,

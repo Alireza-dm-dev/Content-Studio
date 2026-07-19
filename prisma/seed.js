@@ -2,6 +2,7 @@ import { PrismaClient } from "../lib/generated/prisma/client.ts";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import { IMAGE_PROMPT_BOOSTER_RAW_IDEA_TEXT } from "../lib/default-prompt-templates.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbUrl = "file:" + path.join(__dirname, "../dev.db");
@@ -274,6 +275,8 @@ async function main() {
       ? VIDEO_PROMPT_REVISION_TEXT
       : tpl.slug === "linkedin-post-from-reference"
       ? LINKEDIN_POST_FROM_REFERENCE_TEXT
+      : tpl.slug === "image-prompt-booster-raw-idea"
+      ? IMAGE_PROMPT_BOOSTER_RAW_IDEA_TEXT
       : placeholder(tpl.name);
     await prisma.promptTemplate.upsert({
       where: { slug: tpl.slug },

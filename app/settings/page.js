@@ -346,6 +346,19 @@ export default function SettingsPage() {
         <HiggsfieldApiKeyCard />
         <HiggsfieldTokenManagementCard />
         <AiTestCard />
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">User Management</CardTitle>
+            <CardDescription className="text-xs">
+              Create and manage user accounts and brand access for the Calendar Portal.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild size="sm" variant="outline">
+              <a href="/settings/users">Manage Users</a>
+            </Button>
+          </CardContent>
+        </Card>
         <Separator />
         <Card>
           <CardHeader>

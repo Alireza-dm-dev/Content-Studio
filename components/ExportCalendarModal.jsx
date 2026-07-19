@@ -23,7 +23,7 @@ const EXPORT_OPTIONS = [
   {
     id: "pdf",
     label: "Download PDF",
-    desc: "Professional PDF calendar export with all 4 content sections",
+    desc: "Professional PDF calendar export with schedule, visual, and video sections",
     icon: FileDown,
   },
   {
@@ -41,8 +41,8 @@ function extractFilename(headers, fallback) {
   return match?.[1]?.trim() || fallback;
 }
 
-async function triggerDownload(calendarId, format) {
-  const res = await fetch(`/api/content-calendar/${calendarId}/export?format=${format}`);
+async function triggerDownload(calendarId, format, audience) {
+  const res = await fetch(`/api/content-calendar/${calendarId}/export?format=${format}&audience=${audience}`);
   if (!res.ok) {
     const text = await res.text();
     let msg = "Export failed.";
@@ -64,6 +64,7 @@ async function triggerDownload(calendarId, format) {
 
 export default function ExportCalendarModal({ calendar, onClose }) {
   const [selected,    setSelected]    = useState("csv");
+  const [audience,    setAudience]    = useState("creator");
   const [loading,     setLoading]     = useState(false);
   const [driveResult, setDriveResult] = useState(null); // { fileName, driveFileUrl }
   const [driveError,  setDriveError]  = useState(null);
@@ -76,6 +77,12 @@ export default function ExportCalendarModal({ calendar, onClose }) {
     setDriveError(null);
   }
 
+  function handleAudienceChange(value) {
+    setAudience(value);
+    setDriveResult(null);
+    setDriveError(null);
+  }
+
   async function handleExport() {
     setLoading(true);
     setDriveResult(null);
@@ -83,7 +90,7 @@ export default function ExportCalendarModal({ calendar, onClose }) {
 
     try {
       if (selected === "csv" || selected === "xlsx" || selected === "pdf") {
-        await triggerDownload(calendar.id, selected);
+        await triggerDownload(calendar.id, selected, audience);
         const label = selected === "xlsx" ? "Excel" : selected === "pdf" ? "PDF" : "CSV";
         toast.success(`${label} downloaded successfully.`);
         onClose();
@@ -94,7 +101,7 @@ export default function ExportCalendarModal({ calendar, onClose }) {
         const res  = await fetch(`/api/content-calendar/${calendar.id}/export/google-drive`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ format: "xlsx" }),
+          body: JSON.stringify({ format: "xlsx", audience }),
         });
         const data = await res.json();
 
@@ -140,6 +147,44 @@ export default function ExportCalendarModal({ calendar, onClose }) {
           <p className="text-sm text-muted-foreground">
             Choose how you want to export this content calendar.
           </p>
+
+          {/* Audience toggle */}
+          <div className="flex rounded-lg border border-border overflow-hidden">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleAudienceChange("creator")}
+              className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                audience === "creator"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-background text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              For Creator
+            </button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleAudienceChange("client")}
+              className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
+                audience === "client"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-background text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              For Client
+            </button>
+          </div>
+          {audience === "creator" && (
+            <p className="text-xs text-muted-foreground">
+              Full production calendar with all fields.
+            </p>
+          )}
+          {audience === "client" && (
+            <p className="text-xs text-muted-foreground">
+              Simplified approval export with schedule, image text, and video script essentials.
+            </p>
+          )}
 
           {/* Option cards */}
           <div className="space-y-2">
