@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
+import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { MAX_ATTACHMENT_FILES } from "@/lib/calendar-attachment-utils";
 import {
   validateOutputImageTextRequirements,
   buildFallbackOutputImageTextRequirements,
@@ -340,7 +342,45 @@ export async function POST(request, { params }) {
       );
     }
 
-    // ── 5. Parse request body ────────────────────────────────────────────
+    // ── 5. Load permanent calendar attachment IDs ────────────────────────
+    const permanentAttachments = await prisma.uploadedFile.findMany({
+      where: {
+        brandId: post.calendar.brandId,
+        calendarId: post.calendarId,
+        calendarPostId: null,
+        purpose: "calendar_reference",
+        interpretationStatus: "complete",
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: new Date() } },
+        ],
+      },
+      orderBy: [
+        { createdAt: "asc" },
+        { id: "asc" },
+      ],
+      select: { id: true },
+      take: MAX_ATTACHMENT_FILES,
+    });
+
+    const calendarAttachmentIds = permanentAttachments.map(a => a.id);
+
+    // ── 6. Resolve interpreted attachment context (calendar mode) ─────────
+    const attachmentContext = await resolveCalendarAttachmentContext({
+      attachmentIds: calendarAttachmentIds,
+      brandId: post.calendar.brandId,
+      mode: "calendar",
+      calendarId: post.calendarId,
+    });
+
+    if (!attachmentContext.ok) {
+      return NextResponse.json(
+        { success: false, error: attachmentContext.error },
+        { status: attachmentContext.status }
+      );
+    }
+
+    // ── 7. Parse request body ────────────────────────────────────────────
     let body;
     try { body = await request.json(); }
     catch (e) {
@@ -438,6 +478,10 @@ export async function POST(request, { params }) {
     const isVideo    = /reel|story|video|live/.test(fmtLower);
 
     // ── Build AI prompt ───────────────────────────────────────────────────────
+    const attachmentBlock = attachmentContext.block
+      ? `\n=== INTERPRETED UPLOADED REFERENCE MATERIAL ===\n${attachmentContext.block}`
+      : null;
+
     let userInput;
 
     if (scope === "custom_instruction") {
@@ -452,6 +496,8 @@ export async function POST(request, { params }) {
         calendar?.mainMonthlySubject ? `Monthly subject: ${calendar.mainMonthlySubject}` : null,
         calendar?.mainGoal           ? `Main goal: ${calendar.mainGoal}` : null,
         calendar?.mainOfferOrMessage ? `Offer / message: ${calendar.mainOfferOrMessage}` : null,
+        "",
+        attachmentBlock,
         "",
         "=== CURRENT POST ===",
         `Post #${current.postNumber || "?"}`,
@@ -527,6 +573,8 @@ export async function POST(request, { params }) {
         "=== BRAND ===",
         brandSummary,
         "",
+        attachmentBlock,
+        "",
         "=== CURRENT POST (READ-ONLY CONTEXT — do NOT change these fields) ===",
         `Post #${current.postNumber || "?"}`,
         `Platform: ${current.platform || ""}`,
@@ -592,6 +640,8 @@ export async function POST(request, { params }) {
         calendar?.mainMonthlySubject ? `Monthly subject: ${calendar.mainMonthlySubject}` : null,
         calendar?.mainGoal           ? `Main goal: ${calendar.mainGoal}` : null,
         calendar?.mainOfferOrMessage ? `Offer / message: ${calendar.mainOfferOrMessage}` : null,
+        "",
+        attachmentBlock,
         "",
         `=== TASK: ${scopeLabel} ===`,
         isVisualScope
