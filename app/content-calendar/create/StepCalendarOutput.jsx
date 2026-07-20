@@ -244,7 +244,7 @@ function buildSummaryText(scope, customInstruction) {
   }
 }
 
-function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCancel, allPosts, onUpdatePost }) {
+function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCancel, allPosts, onUpdatePost, referenceAttachments }) {
   const [scope, setScope] = useState("visual_only");
   const [customInstruction, setCustomInstruction] = useState("");
   const [instructionError, setInstructionError] = useState("");
@@ -267,6 +267,10 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
   }
 
   async function handleRegenerate() {
+    const attachmentIds = (referenceAttachments || [])
+      .map((attachment) => attachment.id)
+      .filter(Boolean);
+
     if (scope === "custom_instruction") {
       if (!customInstruction.trim() || customInstruction.trim().length < 5) {
         setInstructionError("Please write what you want AI to change.");
@@ -288,6 +292,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               post: p, brandId, calendarContext, scope, customInstruction: customInstruction.trim(),
+              attachmentIds,
               ...(scope === "image_text_only" && { guidedReasons, guidedFeatures, imageTextInstruction }),
             }),
           });
@@ -322,6 +327,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           post, brandId, calendarContext, scope, customInstruction: customInstruction.trim(),
+          attachmentIds,
           ...(scope === "image_text_only" && { guidedReasons, guidedFeatures, imageTextInstruction }),
         }),
       });
@@ -503,7 +509,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
 
 // ─── Calendar table ───────────────────────────────────────────────────────────
 
-function CalendarTable({ posts, view, onUpdatePost, onRemovePost, brandId, calendarContext }) {
+function CalendarTable({ posts, view, onUpdatePost, onRemovePost, brandId, calendarContext, referenceAttachments }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState(null);
   const [regenId, setRegenId] = useState(null);
@@ -631,6 +637,7 @@ function CalendarTable({ posts, view, onUpdatePost, onRemovePost, brandId, calen
           onUpdatePost={onUpdatePost}
           onDone={regeneratedPost => { onUpdatePost(regenId, regeneratedPost); setRegenId(null); }}
           onCancel={() => setRegenId(null)}
+          referenceAttachments={referenceAttachments}
         />
       )}
     </div>
@@ -697,7 +704,7 @@ function emptyPost(n) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function StepCalendarOutput({
-  brand, formData, initialPosts, rawOutput, model, usage, onBack,
+  brand, formData, initialPosts, rawOutput, model, usage, onBack, referenceAttachments,
 }) {
   const router = useRouter();
 
@@ -850,6 +857,7 @@ export default function StepCalendarOutput({
               mainGoal: formData.mainGoal,
               mainOfferOrMessage: formData.mainOfferOrMessage,
             }}
+            referenceAttachments={referenceAttachments}
           />
         </>
       )}

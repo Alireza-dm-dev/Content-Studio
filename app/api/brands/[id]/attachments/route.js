@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getCurrentUser, getBrandCalendarAccess } from '@/lib/auth';
-import { validateCalendarAttachmentFile, extractCalendarAttachmentText } from '@/lib/calendar-attachment-utils';
+import { validateCalendarAttachmentFile, extractCalendarAttachmentText, MAX_ATTACHMENT_FILES } from '@/lib/calendar-attachment-utils';
 import { interpretCalendarAttachment } from '@/lib/calendar-attachment-interpreter';
 import { writeFile, mkdir, unlink } from 'fs/promises';
 import crypto from 'crypto';
@@ -238,4 +238,96 @@ export async function POST(request, { params }) {
     },
     { status: 201 },
   );
+}
+
+export async function GET(request, { params }) {
+  const { id: routeBrandId } = await params;
+
+  // ── 1. Authenticate ────────────────────────────────────────────────────────
+  const user = await getCurrentUser();
+  if (!user) return safeError('Authentication required', 401);
+
+  // ── 2. Brand access ───────────────────────────────────────────────────────
+  const access = await getBrandCalendarAccess(routeBrandId);
+  if (!access.allowed) return safeError(access.error || 'Brand access required', access.status || 403);
+
+  // ── 3. Parse query parameters ─────────────────────────────────────────────
+  const { searchParams } = new URL(request.url);
+  const calendarId = searchParams.get('calendarId');
+  const calendarPostId = searchParams.get('calendarPostId');
+
+  if (!calendarId || !calendarPostId) {
+    return NextResponse.json(
+      { success: false, error: 'calendarId and calendarPostId are required' },
+      { status: 400 }
+    );
+  }
+
+  // ── 4. Validate CalendarPost hierarchy ────────────────────────────────────
+  const post = await prisma.calendarPost.findUnique({
+    where: { id: calendarPostId },
+    select: {
+      calendarId: true,
+      calendar: { select: { brandId: true } },
+    },
+  });
+
+  if (!post || post.calendar.brandId !== routeBrandId || post.calendarId !== calendarId) {
+    return NextResponse.json(
+      { success: false, error: 'Calendar post not found' },
+      { status: 404 }
+    );
+  }
+
+  // ── 5. Query usable post-specific attachments ─────────────────────────────
+  const records = await prisma.uploadedFile.findMany({
+    where: {
+      brandId: routeBrandId,
+      calendarId,
+      calendarPostId,
+      purpose: 'calendar_post_regeneration_reference',
+      interpretationStatus: 'complete',
+      OR: [
+        { expiresAt: null },
+        { expiresAt: { gt: new Date() } },
+      ],
+    },
+    orderBy: [
+      { createdAt: 'asc' },
+      { id: 'asc' },
+    ],
+    take: MAX_ATTACHMENT_FILES,
+    select: {
+      id: true,
+      fileName: true,
+      fileType: true,
+      sizeBytes: true,
+      extractionStatus: true,
+      interpretationStatus: true,
+      wasTruncated: true,
+      interpretationJson: true,
+      expiresAt: true,
+      createdAt: true,
+    },
+  });
+
+  // ── 6. Shape safe response ────────────────────────────────────────────────
+  const attachments = records.map(r => {
+    const ij = r.interpretationJson || {};
+    return {
+      id: r.id,
+      name: r.fileName,
+      mimeType: r.fileType,
+      sizeBytes: r.sizeBytes,
+      extractionStatus: r.extractionStatus,
+      interpretationStatus: r.interpretationStatus,
+      wasTruncated: r.wasTruncated,
+      documentType: (ij.documentType && typeof ij.documentType === 'string') ? ij.documentType : null,
+      summary: (ij.summary && typeof ij.summary === 'string') ? ij.summary : null,
+      expiresAt: r.expiresAt,
+      createdAt: r.createdAt,
+    };
+  });
+
+  return NextResponse.json({ success: true, attachments });
 }

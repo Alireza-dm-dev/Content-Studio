@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
+import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
 import {
   validateOutputImageTextRequirements,
   buildFallbackOutputImageTextRequirements,
@@ -294,7 +295,7 @@ export async function POST(request) {
     }
 
     // ── 3. Validate required fields ──────────────────────────────────────────
-    const { post, brandId, calendarContext, scope = "visual_only", customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction } = body;
+    const { post, brandId, calendarContext, scope = "visual_only", customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, attachmentIds } = body;
 
     if (!post || typeof post !== "object") {
       return NextResponse.json(
@@ -313,6 +314,20 @@ export async function POST(request) {
     const access = await getBrandCalendarAccess(brandId);
     if (!access.allowed) {
       return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+    }
+
+    // ── 5. Resolve calendar attachment context (creation mode) ───────────────
+    const attachmentContext = await resolveCalendarAttachmentContext({
+      attachmentIds,
+      brandId,
+      mode: "creation",
+    });
+
+    if (!attachmentContext.ok) {
+      return NextResponse.json(
+        { success: false, error: attachmentContext.error },
+        { status: attachmentContext.status }
+      );
     }
 
     const validScopes = ["visual_only", "visual_ideas_only", "entire_post", "custom_instruction", "image_text_only"];
@@ -353,6 +368,10 @@ export async function POST(request) {
     const isVideo    = /reel|story|video|live/.test(fmtLower);
 
     // ── Build AI prompt ───────────────────────────────────────────────────────
+    const attachmentBlock = attachmentContext.block
+      ? `\n=== INTERPRETED UPLOADED REFERENCE MATERIAL ===\n${attachmentContext.block}`
+      : null;
+
     let userInput;
 
     if (scope === "custom_instruction") {
@@ -367,6 +386,8 @@ export async function POST(request) {
         calendarContext?.mainMonthlySubject ? `Monthly subject: ${calendarContext.mainMonthlySubject}` : null,
         calendarContext?.mainGoal           ? `Main goal: ${calendarContext.mainGoal}` : null,
         calendarContext?.mainOfferOrMessage ? `Offer / message: ${calendarContext.mainOfferOrMessage}` : null,
+        "",
+        attachmentBlock,
         "",
         "=== CURRENT POST ===",
         `Post #${current.postNumber || "?"}`,
@@ -442,6 +463,8 @@ export async function POST(request) {
         "=== BRAND ===",
         brandSummary,
         "",
+        attachmentBlock,
+        "",
         "=== CURRENT POST (READ-ONLY CONTEXT — do NOT change these fields) ===",
         `Post #${current.postNumber || "?"}`,
         `Platform: ${current.platform || ""}`,
@@ -505,6 +528,8 @@ export async function POST(request) {
         calendarContext?.mainMonthlySubject ? `Monthly subject: ${calendarContext.mainMonthlySubject}` : null,
         calendarContext?.mainGoal           ? `Main goal: ${calendarContext.mainGoal}` : null,
         calendarContext?.mainOfferOrMessage ? `Offer / message: ${calendarContext.mainOfferOrMessage}` : null,
+        "",
+        attachmentBlock,
         "",
         `=== TASK: ${scopeLabel} ===`,
         isVisualScope

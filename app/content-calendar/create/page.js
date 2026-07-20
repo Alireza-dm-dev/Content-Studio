@@ -1727,6 +1727,7 @@ function CreateCalendarInner() {
           model={calendarMeta?.model}
           usage={calendarMeta?.usage}
           onBack={() => setStep(3)}
+          referenceAttachments={referenceAttachments}
         />
       )}
     </div>
