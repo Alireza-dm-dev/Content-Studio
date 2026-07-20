@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Pencil, Trash2, Check, X, ImageIcon, Video, Sparkles, Loader2, Download,
+  ArrowLeft, Pencil, Trash2, Check, X, ImageIcon, Video, Sparkles, Loader2, Download, AlertCircle,
 } from "lucide-react";
 import {
   CALENDAR_TABLE_VIEWS, normalizePost,
@@ -14,6 +14,7 @@ import {
 import ImagePromptModal from "@/components/ImagePromptModal";
 import VideoStoryboardModal from "@/components/VideoStoryboardModal";
 import ExportCalendarModal from "@/components/ExportCalendarModal";
+import { ReferenceFileUpload } from "@/components/ReferenceFileUpload";
 
 // ─── Cell value renderer (shared) ─────────────────────────────────────────────
 
@@ -216,6 +217,41 @@ function RegeneratePanel({ postId, calendarId, brandId, onDone, onCancel, allPos
   const [bulkProgress, setBulkProgress] = useState("");
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState(null);
+  const [postReferenceAttachments, setPostReferenceAttachments] = useState([]);
+  const [loadingPostReferences, setLoadingPostReferences] = useState(false);
+  const [postReferenceError, setPostReferenceError] = useState(null);
+  const [retryKey, setRetryKey] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    async function load() {
+      setLoadingPostReferences(true);
+      setPostReferenceError(null);
+      try {
+        const url = `/api/brands/${encodeURIComponent(brandId)}/attachments?calendarId=${encodeURIComponent(calendarId)}&calendarPostId=${encodeURIComponent(postId)}`;
+        const res = await fetch(url, { signal: controller.signal });
+        const data = await res.json();
+        if (controller.signal.aborted) return;
+        if (data.success === true) {
+          setPostReferenceAttachments(Array.isArray(data.attachments) ? data.attachments : []);
+        } else {
+          setPostReferenceError(data.error || "Post reference files could not be loaded.");
+        }
+      } catch (err) {
+        if (err.name === "AbortError" || controller.signal.aborted) return;
+        setPostReferenceError("Post reference files could not be loaded.");
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoadingPostReferences(false);
+        }
+      }
+    }
+
+    load();
+
+    return () => controller.abort();
+  }, [postId, calendarId, brandId, retryKey]);
 
   function handleScopeChange(value) {
     setScope(value);
@@ -448,6 +484,43 @@ function RegeneratePanel({ postId, calendarId, brandId, onDone, onCancel, allPos
           <Loader2 className="w-3 h-3 animate-spin" />{bulkProgress}
         </p>
       )}
+
+      {/* Post-specific reference files */}
+      <div className="space-y-2">
+        {loadingPostReferences && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground py-2" aria-live="polite">
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>Loading post reference files…</span>
+          </div>
+        )}
+        {postReferenceError && (
+          <div className="flex items-center gap-2 text-xs text-destructive py-1" role="alert" aria-live="polite">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            <span>{postReferenceError}</span>
+            <button
+              type="button"
+              onClick={() => setRetryKey(k => k + 1)}
+              className="underline hover:no-underline ml-1"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {!loadingPostReferences && (
+          <ReferenceFileUpload
+            brandId={brandId}
+            calendarId={calendarId}
+            calendarPostId={postId}
+            attachments={postReferenceAttachments}
+            onAttachmentsChange={setPostReferenceAttachments}
+            allowRemove={false}
+            disabled={loading || loadingPostReferences}
+            maxFiles={5}
+            title="Post-specific reference files"
+            description="Upload supporting files for this post's AI regeneration. These temporary references apply only to this saved post. Calendar-level references are also used automatically."
+          />
+        )}
+      </div>
 
       {/* Actions / summary */}
       {summary ? (

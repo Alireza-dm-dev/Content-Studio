@@ -42,6 +42,9 @@ function ReferenceFileUpload({
   maxFiles = MAX_FILES_DEFAULT,
   title = "Reference Files",
   description = "Upload campaign briefs, content guidelines, or reference documents to help the AI generate more relevant post ideas.",
+  calendarId = null,
+  calendarPostId = null,
+  allowRemove = true,
 }) {
   const [uploads, setUploads] = useState([]);
   const [dropActive, setDropActive] = useState(false);
@@ -73,6 +76,11 @@ function ReferenceFileUpload({
 
     if (!brandId) {
       errors.push("Select a Brand before uploading files.");
+      return { valid: [], errors };
+    }
+
+    if ((calendarId && !calendarPostId) || (!calendarId && calendarPostId)) {
+      errors.push("Calendar and post information are required for this upload.");
       return { valid: [], errors };
     }
 
@@ -152,6 +160,10 @@ function ReferenceFileUpload({
 
     const formData = new FormData();
     formData.append("file", entry.file);
+    if (calendarId && calendarPostId) {
+      formData.append("calendarId", calendarId);
+      formData.append("calendarPostId", calendarPostId);
+    }
 
     try {
       const res = await fetch(
@@ -196,7 +208,7 @@ function ReferenceFileUpload({
   }
 
   function handleRemove(attachmentId, fileName) {
-    if (disabled) return;
+    if (disabled || !allowRemove) return;
     onAttachmentsChange(attachments.filter(a => a.id !== attachmentId));
   }
 
@@ -377,17 +389,24 @@ function ReferenceFileUpload({
                         Truncated
                       </span>
                     )}
+                    {att.expiresAt && (
+                      <span className="text-xs text-muted-foreground">
+                        Temporary reference · available until {new Date(att.expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                      </span>
+                    )}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleRemove(att.id, att.name)}
-                  disabled={disabled}
-                  className="shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-30 disabled:cursor-not-allowed"
-                  aria-label={`Remove ${att.name}`}
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                {allowRemove && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemove(att.id, att.name)}
+                    disabled={disabled}
+                    className="shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label={`Remove ${att.name}`}
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             ))}
           </div>
