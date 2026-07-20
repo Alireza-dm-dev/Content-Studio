@@ -342,13 +342,13 @@ export async function POST(request, { params }) {
       );
     }
 
-    // ── 5. Load permanent calendar attachment IDs ────────────────────────
-    const permanentAttachments = await prisma.uploadedFile.findMany({
+    // ── 5. Load post-specific attachment IDs ─────────────────────────────
+    const postSpecificAttachments = await prisma.uploadedFile.findMany({
       where: {
         brandId: post.calendar.brandId,
         calendarId: post.calendarId,
-        calendarPostId: null,
-        purpose: "calendar_reference",
+        calendarPostId: id,
+        purpose: "calendar_post_regeneration_reference",
         interpretationStatus: "complete",
         OR: [
           { expiresAt: null },
@@ -363,14 +363,53 @@ export async function POST(request, { params }) {
       take: MAX_ATTACHMENT_FILES,
     });
 
-    const calendarAttachmentIds = permanentAttachments.map(a => a.id);
+    const postSpecificAttachmentIds = postSpecificAttachments.map(a => a.id);
 
-    // ── 6. Resolve interpreted attachment context (calendar mode) ─────────
+    // ── 6. Load calendar-level attachment IDs (remaining capacity) ───────
+    const remainingCalendarSlots =
+      MAX_ATTACHMENT_FILES - postSpecificAttachmentIds.length;
+
+    let calendarAttachmentIds = [];
+    if (remainingCalendarSlots > 0) {
+      const calendarAttachments = await prisma.uploadedFile.findMany({
+        where: {
+          brandId: post.calendar.brandId,
+          calendarId: post.calendarId,
+          calendarPostId: null,
+          purpose: "calendar_reference",
+          interpretationStatus: "complete",
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: new Date() } },
+          ],
+        },
+        orderBy: [
+          { createdAt: "asc" },
+          { id: "asc" },
+        ],
+        select: { id: true },
+        take: remainingCalendarSlots,
+      });
+      calendarAttachmentIds = calendarAttachments.map(a => a.id);
+    }
+
+    // ── 7. Combine with post-specific priority ───────────────────────────
+    const seenIds = new Set();
+    const combinedAttachmentIds = [];
+    for (const attId of [...postSpecificAttachmentIds, ...calendarAttachmentIds]) {
+      if (!seenIds.has(attId)) {
+        seenIds.add(attId);
+        combinedAttachmentIds.push(attId);
+      }
+    }
+
+    // ── 8. Resolve interpreted attachment context (post mode) ────────────
     const attachmentContext = await resolveCalendarAttachmentContext({
-      attachmentIds: calendarAttachmentIds,
+      attachmentIds: combinedAttachmentIds,
       brandId: post.calendar.brandId,
-      mode: "calendar",
+      mode: "post",
       calendarId: post.calendarId,
+      calendarPostId: id,
     });
 
     if (!attachmentContext.ok) {
@@ -380,7 +419,7 @@ export async function POST(request, { params }) {
       );
     }
 
-    // ── 7. Parse request body ────────────────────────────────────────────
+    // ── 9. Parse request body ────────────────────────────────────────────
     let body;
     try { body = await request.json(); }
     catch (e) {
