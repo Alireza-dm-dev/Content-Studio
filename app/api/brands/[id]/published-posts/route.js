@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, rm } from "fs/promises";
 import path from "path";
+import { randomUUID } from "node:crypto";
 import {
   isValidStatus,
   normalizePostType,
@@ -260,28 +261,17 @@ export async function POST(request, { params }) {
   });
   const nextPostNumber = (lastPost?.postNumber ?? 0) + 1;
 
-  // ── Create post + media in transaction ───────────────────────────────────────
-  const result = await prisma.$transaction(async (tx) => {
-    const post = await tx.publishedPost.create({
-      data: {
-        brandId: id,
-        postType,
-        caption: caption || null,
-        platform,
-        status,
-        scheduledDate,
-        notes: notes || null,
-        postNumber: nextPostNumber,
-      },
-    });
+  // ── Generate post ID before any filesystem work ────────────────────────────
+  const postId = randomUUID();
+  const uploadDir = path.join(process.cwd(), "public", "uploads", id, "published-posts", postId);
 
-    // Create upload directory
-    const uploadDir = path.join(
-      process.cwd(), "public", "uploads", id, "published-posts", post.id,
-    );
+  // ── Prepare media outside transaction ──────────────────────────────────────
+  const mediaRecordsData = [];
+  let thumbnailUrl = null;
 
-    // Save each media file
-    const mediaRecords = [];
+  try {
+    await mkdir(uploadDir, { recursive: true });
+
     for (let i = 0; i < validatedMedia.length; i++) {
       const { file, mediaType } = validatedMedia[i];
       const ext = path.extname(file.name) || "";
@@ -289,61 +279,93 @@ export async function POST(request, { params }) {
       const fileName = `${Date.now()}-${i}-${safeBase}${ext}`;
       const absPath = path.join(uploadDir, fileName);
 
-      await mkdir(uploadDir, { recursive: true });
       const bytes = await file.arrayBuffer();
       await writeFile(absPath, Buffer.from(bytes));
 
-      const url = `/uploads/${id}/published-posts/${post.id}/${fileName}`;
-      const rec = await tx.publishedPostMedia.create({
-        data: {
-          publishedPostId: post.id,
-          url,
-          mediaType,
-          order: i + 1,
-          fileType: file.type,
-          fileName: file.name,
-        },
+      mediaRecordsData.push({
+        url: `/uploads/${id}/published-posts/${postId}/${fileName}`,
+        mediaType,
+        order: i + 1,
+        fileType: file.type,
+        fileName: file.name,
       });
-      mediaRecords.push(rec);
     }
 
     // Save thumbnail if provided
-    let thumbnailUrl = null;
     if (thumbnailFile && typeof thumbnailFile !== "string") {
       const thumbMediaType = getMediaTypeFromMime(thumbnailFile.type);
       if (thumbMediaType === "IMAGE") {
         if (thumbnailFile.size > MAX_FILE_SIZE) {
-          // Thumbnail too large — skip, don't fail
           console.warn(`[PublishedPost] Thumbnail exceeds limit, skipping.`);
         } else {
           const thumbExt = path.extname(thumbnailFile.name) || ".jpg";
           const thumbName = `thumbnail${thumbExt}`;
           const thumbPath = path.join(uploadDir, thumbName);
-          await mkdir(uploadDir, { recursive: true });
           const thumbBytes = await thumbnailFile.arrayBuffer();
           await writeFile(thumbPath, Buffer.from(thumbBytes));
-          thumbnailUrl = `/uploads/${id}/published-posts/${post.id}/${thumbName}`;
+          thumbnailUrl = `/uploads/${id}/published-posts/${postId}/${thumbName}`;
         }
       }
     }
+  } catch (fileError) {
+    await rm(uploadDir, { recursive: true, force: true }).catch(() => {});
+    console.error("[PublishedPosts] file write failed", fileError);
+    return NextResponse.json({ error: "File upload failed. Please try again." }, { status: 500 });
+  }
 
-    // Build and save n8n payload
-    const payload = buildN8nPayload(
-      { ...post, thumbnailUrl },
-      mediaRecords,
-    );
-    const payloadJson = payload ? JSON.stringify(payload, null, 2) : null;
+  // ── Create post + media in transaction (DB only) ───────────────────────────
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const post = await tx.publishedPost.create({
+        data: {
+          id: postId,
+          brandId: id,
+          postType,
+          caption: caption || null,
+          platform,
+          status,
+          scheduledDate,
+          notes: notes || null,
+          postNumber: nextPostNumber,
+        },
+      });
 
-    const updated = await tx.publishedPost.update({
-      where: { id: post.id },
-      data: {
-        jsonPayload: payloadJson,
-        thumbnailUrl,
-      },
+      const mediaRecords = [];
+      for (const md of mediaRecordsData) {
+        const rec = await tx.publishedPostMedia.create({
+          data: {
+            publishedPostId: post.id,
+            url: md.url,
+            mediaType: md.mediaType,
+            order: md.order,
+            fileType: md.fileType,
+            fileName: md.fileName,
+          },
+        });
+        mediaRecords.push(rec);
+      }
+
+      const payload = buildN8nPayload(
+        { ...post, thumbnailUrl },
+        mediaRecords,
+      );
+      const payloadJson = payload ? JSON.stringify(payload, null, 2) : null;
+
+      const updated = await tx.publishedPost.update({
+        where: { id: post.id },
+        data: {
+          jsonPayload: payloadJson,
+          thumbnailUrl,
+        },
+      });
+
+      return { ...updated, media: mediaRecords };
     });
-
-    return { ...updated, media: mediaRecords };
-  });
+  } catch (dbError) {
+    await rm(uploadDir, { recursive: true, force: true }).catch(() => {});
+    throw dbError;
+  }
 
   // ── Remote media upload (best-effort) ──────────────────────────────────────
   let remoteResult;
