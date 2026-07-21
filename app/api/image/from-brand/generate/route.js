@@ -153,6 +153,13 @@ export async function POST(request) {
     });
   } catch (err) {
     console.error("[image/from-brand/generate]", err);
+    if (err.message?.includes("not configured")) {
+      return NextResponse.json({
+        success: false,
+        code: "OPENAI_NOT_CONFIGURED",
+        error: "OpenAI is not configured. Ask an administrator to add the API key in Settings.",
+      }, { status: 503 });
+    }
     return NextResponse.json({
       success: false,
       error: err.message ?? "Generation failed.",

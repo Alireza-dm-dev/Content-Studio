@@ -60,6 +60,13 @@ export async function POST(request) {
     });
     return NextResponse.json(result);
   } catch (err) {
+    if (err.message?.includes("not configured")) {
+      return NextResponse.json({
+        success: false,
+        code: "OPENAI_NOT_CONFIGURED",
+        error: "OpenAI is not configured. Ask an administrator to add the API key in Settings.",
+      }, { status: 503 });
+    }
     return NextResponse.json(
       { error: err.message ?? "Generation failed" },
       { status: 500 }
