@@ -600,6 +600,24 @@ function BrandBasedView({ onBack }) {
               </div>
             </div>
 
+            {/* ── AI-generated parameter guide ──────────────────────── */}
+            <div className="rounded-lg border border-border/50 bg-muted/10 px-4 py-3 space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">
+                The AI will structure your idea into these nine production parameters
+              </p>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                <span className="text-foreground/70">scene</span> ·{' '}
+                <span className="text-foreground/70">main action</span> ·{' '}
+                <span className="text-foreground/70">motion</span> ·{' '}
+                <span className="text-foreground/70">camera movement</span> ·{' '}
+                <span className="text-foreground/70">shot type</span> ·{' '}
+                <span className="text-foreground/70">visual style</span> ·{' '}
+                <span className="text-foreground/70">mood / vibe</span> ·{' '}
+                <span className="text-foreground/70">video quality</span> ·{' '}
+                <span className="text-foreground/70">avoid items</span>
+              </p>
+            </div>
+
             {/* Generate button */}
             <Button
               onClick={handleGenerate}
@@ -858,6 +876,23 @@ function RawIdeaView({ onBack }) {
               </select>
             </div>
           </div>
+        </div>
+
+        {/* ── AI-generated parameter guide ────────────────────────── */}
+        <div className="rounded-lg border border-border/50 bg-muted/10 px-4 py-3 space-y-1.5">
+          <p className="text-xs font-medium text-muted-foreground">
+            The AI will structure your idea into these nine production parameters
+          </p>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            <span className="text-foreground/70">scene</span> · <span className="text-foreground/70">main action</span> ·{' '}
+            <span className="text-foreground/70">motion</span> ·{' '}
+            <span className="text-foreground/70">camera movement</span> ·{' '}
+            <span className="text-foreground/70">shot type</span> ·{' '}
+            <span className="text-foreground/70">visual style</span> ·{' '}
+            <span className="text-foreground/70">mood / vibe</span> ·{' '}
+            <span className="text-foreground/70">video quality</span> ·{' '}
+            <span className="text-foreground/70">avoid items</span>
+          </p>
         </div>
 
         <Button
