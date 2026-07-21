@@ -149,6 +149,15 @@ async function safeParseJsonResponse(response) {
   }
 }
 
+// ── Extract a human-readable message from an API error response ──────────────
+
+function getServerErrorMessage(data) {
+  if (typeof data?.error === "string" && data.error.trim()) return data.error.trim();
+  if (typeof data?.message === "string" && data.message.trim()) return data.message.trim();
+  if (typeof data?.details === "string" && data.details.trim()) return data.details.trim();
+  return null;
+}
+
 // ── Output section (shared between both modes) ───────────────────────────────
 
 function OutputSection({ output, setOutput, model, savedId, mode }) {
@@ -336,6 +345,17 @@ function BrandBasedView({ onBack }) {
   const [duration, setDuration]               = useState("15 seconds");
   const [aspectRatio, setAspectRatio]         = useState("9:16");
 
+  // Cinematic controls
+  const [speedRamp, setSpeedRamp]                       = useState("Auto");
+  const [customSpeedRamp, setCustomSpeedRamp]           = useState("");
+  const [cameraMovement, setCameraMovement]             = useState("Auto");
+  const [customCameraMovement, setCustomCameraMovement] = useState("");
+  const [camera, setCamera]                             = useState("Auto");
+  const [lens, setLens]                                 = useState("Auto");
+  const [focalLength, setFocalLength]                   = useState("50");
+  const [aperture, setAperture]                         = useState("f/4 moderate");
+  const [cinematicPreset, setCinematicPreset]           = useState("manual");
+
   // Generation
   const [generating, setGenerating] = useState(false);
   const [output, setOutput]         = useState("");
@@ -345,6 +365,21 @@ function BrandBasedView({ onBack }) {
   const resolvedFormat   = videoFormat === "Other" ? customVideoFormat.trim(): videoFormat;
   const resolvedGoal     = videoGoal === "Other"   ? customGoal.trim()      : videoGoal;
   const resolvedModel    = model === "Other"       ? customModel.trim()     : model;
+  const resolvedSpeedRamp      = speedRamp === "Custom" ? customSpeedRamp.trim() : speedRamp;
+  const resolvedCameraMovement = cameraMovement === "Custom" ? customCameraMovement.trim() : cameraMovement;
+
+  // Applying a preset sets all six cinematic controls together
+  function applyCinematicPreset(key) {
+    setCinematicPreset(key);
+    const preset = CINEMATIC_PRESETS.find(p => p.key === key);
+    if (!preset?.values) return;
+    setCamera(preset.values.camera);
+    setLens(preset.values.lens);
+    setCameraMovement(preset.values.cameraMovement);
+    setSpeedRamp(preset.values.speedRamp);
+    setFocalLength(preset.values.focalLength);
+    setAperture(preset.values.aperture);
+  }
 
   // Load all brands
   useEffect(() => {
@@ -380,6 +415,8 @@ function BrandBasedView({ onBack }) {
     if (videoFormat === "Other" && !customVideoFormat.trim()) { toast.error("Please enter a custom video format."); return; }
     if (videoGoal === "Other" && !customGoal.trim())       { toast.error("Please enter a custom video goal."); return; }
     if (model === "Other" && !customModel.trim())          { toast.error("Please enter a custom model name."); return; }
+    if (speedRamp === "Custom" && !customSpeedRamp.trim())             { toast.error("Please enter a custom speed ramp value."); return; }
+    if (cameraMovement === "Custom" && !customCameraMovement.trim())   { toast.error("Please enter a custom camera movement value."); return; }
 
     setGenerating(true);
     setOutput("");
@@ -398,14 +435,23 @@ function BrandBasedView({ onBack }) {
           targetVideoCreatorModel: resolvedModel,
           duration,
           aspectRatio,
+          speedRamp:              resolvedSpeedRamp,
+          cameraMovement:         resolvedCameraMovement,
+          camera,
+          lens,
+          focalLength,
+          aperture,
         }),
       });
 
       const data = await safeParseJsonResponse(res);
 
       if (!data.success) {
-        console.error("[BrandBasedView] Server error:", data.details);
-        toast.error(data.error ?? "Brand based video prompt generation failed. Please check your inputs and try again.");
+        const msg = getServerErrorMessage(data);
+        if (res.status >= 500) {
+          console.error("[BrandBasedView] Server error:", msg ?? "Unknown server error");
+        }
+        toast.error(msg ?? "Brand based video prompt generation failed. Please check your inputs and try again.");
         return;
       }
 
@@ -413,8 +459,15 @@ function BrandBasedView({ onBack }) {
       setSavedId(data.generatedPrompt.id);
       toast.success("Brand based video prompt generated.");
     } catch (err) {
-      console.error("[BrandBasedView] error:", err);
-      toast.error("Brand based video prompt generation failed. Please check your inputs and try again.");
+      const errMsg = err.message || "";
+      if (errMsg.includes("Empty response") || errMsg.includes("invalid JSON")) {
+        toast.error("Video prompt generation failed. The server returned an invalid response.");
+      } else if (/fetch|Failed to fetch|NetworkError|network|connect/i.test(errMsg)) {
+        toast.error("Could not reach the server. Check that the app is running and retry.");
+      } else {
+        console.error("[BrandBasedView] error:", err);
+        toast.error("Brand based video prompt generation failed. Please check your inputs and try again.");
+      }
     } finally {
       setGenerating(false);
     }
@@ -600,6 +653,79 @@ function BrandBasedView({ onBack }) {
               </div>
             </div>
 
+            {/* ── Cinematic preset ────────────────────────────────── */}
+            <div className="space-y-1.5">
+              <Label htmlFor="bb-cinematicPreset">Cinematic preset</Label>
+              <select
+                id="bb-cinematicPreset"
+                value={cinematicPreset}
+                onChange={e => applyCinematicPreset(e.target.value)}
+                disabled={generating}
+                className={SELECT_CLASS}
+              >
+                {CINEMATIC_PRESETS.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Presets auto-fill the speed ramp, camera movement, camera, lens, focal length, and
+                aperture controls below. You can still adjust any of them manually afterward —
+                doing so switches this back to &quot;Custom / Manual&quot;.
+              </p>
+            </div>
+
+            {/* ── Cinematic controls ───────────────────────────────── */}
+            <div className="space-y-1.5">
+              <Label className="text-xs uppercase tracking-wide text-muted-foreground">Cinematic controls</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="bb-speedRamp">Speed ramp</Label>
+                  <select id="bb-speedRamp" value={speedRamp} onChange={e => { setSpeedRamp(e.target.value); setCinematicPreset("manual"); }} disabled={generating} className={SELECT_CLASS}>
+                    {SPEED_RAMP_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  {speedRamp === "Custom" && (
+                    <input className={INPUT_CLASS + " mt-1.5"} placeholder="Enter custom speed ramp" value={customSpeedRamp} onChange={e => setCustomSpeedRamp(e.target.value)} disabled={generating} />
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="bb-cameraMovement">Camera movement</Label>
+                  <select id="bb-cameraMovement" value={cameraMovement} onChange={e => { setCameraMovement(e.target.value); setCinematicPreset("manual"); }} disabled={generating} className={SELECT_CLASS}>
+                    {CAMERA_MOVEMENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  {cameraMovement === "Custom" && (
+                    <input className={INPUT_CLASS + " mt-1.5"} placeholder="Enter custom camera movement" value={customCameraMovement} onChange={e => setCustomCameraMovement(e.target.value)} disabled={generating} />
+                  )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="bb-camera">Camera</Label>
+                  <select id="bb-camera" value={camera} onChange={e => { setCamera(e.target.value); setCinematicPreset("manual"); }} disabled={generating} className={SELECT_CLASS}>
+                    {CAMERA_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="bb-lens">Lens</Label>
+                  <select id="bb-lens" value={lens} onChange={e => { setLens(e.target.value); setCinematicPreset("manual"); }} disabled={generating} className={SELECT_CLASS}>
+                    {LENS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="bb-focalLength">Focal length</Label>
+                  <select id="bb-focalLength" value={focalLength} onChange={e => { setFocalLength(e.target.value); setCinematicPreset("manual"); }} disabled={generating} className={SELECT_CLASS}>
+                    {FOCAL_LENGTH_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="bb-aperture">Aperture</Label>
+                  <select id="bb-aperture" value={aperture} onChange={e => { setAperture(e.target.value); setCinematicPreset("manual"); }} disabled={generating} className={SELECT_CLASS}>
+                    {APERTURE_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+
             {/* ── AI-generated parameter guide ──────────────────────── */}
             <div className="rounded-lg border border-border/50 bg-muted/10 px-4 py-3 space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground">
@@ -726,8 +852,11 @@ function RawIdeaView({ onBack }) {
       const data = await safeParseJsonResponse(res);
 
       if (!data.success) {
-        console.error("[RawIdeaView] Server error:", data.details);
-        toast.error(data.error ?? "Video prompt generation failed. Please check your inputs and try again.");
+        const msg = getServerErrorMessage(data);
+        if (res.status >= 500) {
+          console.error("[RawIdeaView] Server error:", msg ?? "Unknown server error");
+        }
+        toast.error(msg ?? "Video prompt generation failed. Please check your inputs and try again.");
         return;
       }
 
@@ -735,8 +864,15 @@ function RawIdeaView({ onBack }) {
       setSavedId(data.generatedPrompt.id);
       toast.success("Video prompt generated.");
     } catch (err) {
-      console.error("[RawIdeaView] error:", err);
-      toast.error("Video prompt generation failed. Please check your inputs and try again.");
+      const errMsg = err.message || "";
+      if (errMsg.includes("Empty response") || errMsg.includes("invalid JSON")) {
+        toast.error("Video prompt generation failed. The server returned an invalid response.");
+      } else if (/fetch|Failed to fetch|NetworkError|network|connect/i.test(errMsg)) {
+        toast.error("Could not reach the server. Check that the app is running and retry.");
+      } else {
+        console.error("[RawIdeaView] error:", err);
+        toast.error("Video prompt generation failed. Please check your inputs and try again.");
+      }
     } finally {
       setGenerating(false);
     }

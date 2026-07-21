@@ -258,6 +258,13 @@ export async function POST(request) {
       }
     } catch (aiErr) {
       console.error("[VideoBrandBased] AI error:", aiErr.message);
+      if (aiErr.message?.includes("not configured")) {
+        return NextResponse.json({
+          success: false,
+          code: "OPENAI_NOT_CONFIGURED",
+          error: "OpenAI is not configured. Ask an administrator to add the API key in Settings.",
+        }, { status: 503 });
+      }
       if (aiErr.message?.includes("not found")) {
         return NextResponse.json({
           success: false,
