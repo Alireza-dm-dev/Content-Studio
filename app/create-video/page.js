@@ -144,7 +144,6 @@ async function safeParseJsonResponse(response) {
   if (!text || !text.trim()) throw new Error(`Empty response from server. Status: ${response.status}`);
   try { return JSON.parse(text); }
   catch {
-    console.error("[CreateVideo] Invalid JSON response:", text.slice(0, 300));
     throw new Error("Server returned invalid JSON. Check API logs.");
   }
 }
