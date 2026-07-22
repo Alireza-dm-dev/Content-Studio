@@ -349,6 +349,7 @@ export async function POST(request, { params }) {
       const payload = buildN8nPayload(
         { ...post, thumbnailUrl },
         mediaRecords,
+        brand.name,
       );
       const payloadJson = payload ? JSON.stringify(payload, null, 2) : null;
 
@@ -408,6 +409,7 @@ export async function POST(request, { params }) {
       const remotePayload = buildN8nPayload(
         { ...result, thumbnailUrl: updatedThumbnailUrl },
         updatedMedia,
+        brand.name,
       );
       const remotePayloadJson = remotePayload
         ? JSON.stringify(remotePayload, null, 2)
@@ -435,6 +437,7 @@ export async function POST(request, { params }) {
     webhookResult = await sendPublishedPostToN8n({
       post: result,
       media: result.media || [],
+      brandName: brand.name,
     });
   } catch {
     webhookResult = { success: false, error: "Failed to send to n8n webhook." };

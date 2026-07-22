@@ -287,6 +287,7 @@ export async function PATCH(request, { params }) {
         fromSmartcc: existingPayload?.from_smartcc,
       },
       remoteAwareMedia,
+      brand.name,
     );
     const payloadJson = payload ? JSON.stringify(payload, null, 2) : null;
 

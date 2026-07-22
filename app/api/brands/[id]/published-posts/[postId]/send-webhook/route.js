@@ -17,9 +17,15 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: "Published post not found." }, { status: 404 });
     }
 
+    const brand = await prisma.brand.findUnique({ where: { id: post.brandId } });
+    if (!brand) {
+      return NextResponse.json({ error: "Brand not found" }, { status: 404 });
+    }
+
     const result = await sendPublishedPostToN8n({
       post,
       media: post.media || [],
+      brandName: brand.name,
     });
 
     if (!result.success) {
