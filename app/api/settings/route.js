@@ -9,7 +9,14 @@ export async function GET() {
   }
 
   const settings = await prisma.settings.findMany();
-  const result = Object.fromEntries(settings.map((s) => [s.key, s.value]));
+  const result = Object.fromEntries(
+    settings.map((s) => {
+      if (s.key === "N8N_PUBLISHED_POST_WEBHOOK_URL") {
+        return [s.key, s.value ? "configured" : ""];
+      }
+      return [s.key, s.value];
+    })
+  );
   return NextResponse.json(result);
 }
 

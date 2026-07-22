@@ -29,8 +29,12 @@ export async function POST(request, { params }) {
     });
 
     if (!result.success) {
-      const status =
-        result.error === "n8n webhook URL is not configured." ? 500 : 502;
+      const STATUS_MAP = {
+        N8N_WEBHOOK_NOT_CONFIGURED: 503,
+        N8N_WEBHOOK_TIMEOUT: 504,
+        N8N_WEBHOOK_FAILED: 502,
+      };
+      const status = STATUS_MAP[result.code] ?? 502;
       return NextResponse.json(result, { status });
     }
 
