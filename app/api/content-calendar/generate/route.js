@@ -1163,19 +1163,30 @@ export async function POST(request) {
 
   } catch (err) {
     console.error("[ContentCalendar] Unhandled error:", err);
-    // A connection failure to the AI service isn't an input problem — telling
-    // the user to "check the inputs" sends them down the wrong path. Surface
-    // an accurate, actionable message instead (see lib/ai.js retry handling).
-    const isConnectionError = err?.code === "AI_CONNECTION_ERROR";
+    const code = err?.code;
+    const isConnectionError = code === "AI_CONNECTION_ERROR";
+    const isNotConfigured = code === "AI_NOT_CONFIGURED";
+
+    let status = 500;
+    let error;
+
+    if (isConnectionError) {
+      status = 503;
+      error = "Couldn't reach the AI service. Please check your connection and try again — your inputs are fine.";
+    } else if (isNotConfigured) {
+      status = 503;
+      error = "OpenAI API key is not configured. Go to Settings and add your OpenAI API key, then restart the server.";
+    } else {
+      error = "Content calendar generation failed. Please check the inputs and try again.";
+    }
+
     return NextResponse.json(
       {
         success: false,
-        error: isConnectionError
-          ? "Couldn't reach the AI service. Please check your connection and try again — your inputs are fine."
-          : "Content calendar generation failed. Please check the inputs and try again.",
+        error,
         details: err instanceof Error ? err.message : String(err),
       },
-      { status: isConnectionError ? 503 : 500 }
+      { status }
     );
   }
 }
