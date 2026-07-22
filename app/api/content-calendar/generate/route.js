@@ -11,6 +11,10 @@ import {
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
 
+// ─── Batching constants ──────────────────────────────────────────────────────
+const BATCH_SIZE = 4;
+const MAX_RETRIES_PER_BATCH = 2;
+
 // ─── JSON output parser ────────────────────────────────────────────────────────
 // Handles: direct JSON, markdown-fenced JSON, JSON embedded in surrounding text.
 
@@ -629,67 +633,84 @@ export async function POST(request) {
       writingStyleRules:      formFields.writingStyleRules      ?? "",
     };
 
-    // ── 6. Build userInput block ─────────────────────────────────────────────
+    // ── 6. Build userInput block (parameterized function) ───────────────────
     const row = (label, value) => value ? `${label}: ${value}` : null;
 
-    const userInput = [
-      "IMPORTANT: Use the campaign details below as the primary source.",
-      "Proceed directly to generating the calendar. Do not report conflicts.",
-      "",
-      "=== BRAND INFORMATION ===",
-      row("Brand Name",        brand.name),
-      row("Business Type",     brand.businessType),
-      row("Location",          brand.businessLocation),
-      row("Website",           brand.website),
-      row("Instagram",         brand.instagramPage),
-      row("Brand Tone",        brand.brandTone),
-      row("Target Audience",   brand.targetAudience),
-      row("Campaign Target Audience", formFields.targetAudience),
-      row("Services/Products", brand.mainServicesOrProducts),
-      row("Visual Style",      brand.brandVisualStyle),
-      "",
-      "When Campaign Target Audience is provided, use it as the primary audience for THIS calendar and adapt tone, hooks, captions, CTAs, image text, and content angles specifically to that group. Do not confuse it with the brand's general audience listed above.",
-      "",
-      "=== BRAND IDENTITY ===",
-      identitySummary || "Not extracted yet.",
-      "",
-      "=== SELECTED POST IDEAS (INSPIRATION ONLY — NOT A HARD CAP) ===",
-      `You must generate exactly ${safeCount} posts. Selected ideas below are inspiration inputs only — they do not limit the final count.`,
-      selectedPosts.length < safeCount
-        ? `If fewer ideas than needed (${selectedPosts.length} selected, ${safeCount} required), expand their themes into additional distinct posts to reach ${safeCount}. Do not duplicate posts.`
-        : `If more ideas than needed (${selectedPosts.length} selected, ${safeCount} required), use only the most relevant ones.`,
-      "",
-      selectedPostIdeasText,
-      "",
-      "=== CAMPAIGN & CALENDAR DETAILS ===",
-      row("Monthly Subject",             formFields.mainMonthlySubject),
-      row("Landing / Service Page",      formFields.mainLandingPageOrServicePage),
-      row("Main Goal",                   formFields.mainGoal),
-      row("Offer / Key Message",         formFields.mainOfferOrMessage),
-      row("Important Details",           formFields.importantDetailsToInclude),
-      row("Do NOT Invent",               formFields.detailsNotToInvent),
-      row("Source Material",             formFields.sourceMaterial),
-      row("Priority Content Ideas",      formFields.priorityContentIdeas),
-      ...(attachmentContext.block
-        ? [
-            "",
-            "=== INTERPRETED UPLOADED REFERENCE MATERIAL ===",
-            attachmentContext.block,
-            "",
-          ]
-        : []),
-      "=== POSTING SCHEDULE ===",
-      row("Platforms",                   formFields.platforms),
-      row("Number of Posts",             String(safeCount)),
-      row("Publishing Frequency",        formFields.publishingFrequency),
-      row("Required Formats",            formFields.requiredPostFormats),
-      row("Video Creation Tool",         formFields.videoCreationTool),
-      row("Video Production Limits",     formFields.videoProductionLimitation),
-      "",
-      "=== CONTENT RULES ===",
-      row("Content Strategy Rules",      formFields.contentStrategyRules),
-      row("Audience Language Rules",     formFields.audienceLanguageRules),
-      row("Writing Style Rules",         formFields.writingStyleRules),
+    function buildUserInput({ count, batchContext, acceptedSummaries }) {
+      return [
+        "IMPORTANT: Use the campaign details below as the primary source.",
+        "Proceed directly to generating the calendar. Do not report conflicts.",
+        "",
+        ...(batchContext
+          ? [
+              `=== BATCH CONTEXT ===`,
+              `This is batch ${batchContext.current} of ${batchContext.total}.`,
+              `Total requested: ${safeCount} posts across ${formFields.platforms}.`,
+              `This batch: generate ${count} posts.`,
+              batchContext.formats
+                ? `Formats for this batch: ${batchContext.formats}.`
+                : null,
+              acceptedSummaries && acceptedSummaries.length > 0
+                ? `Already generated (DO NOT duplicate these hooks/titles): ${acceptedSummaries.slice(0, 6).map(s => `"${s}"`).join(", ")}`
+                : null,
+              "",
+            ].filter(Boolean)
+          : []),
+        "=== BRAND INFORMATION ===",
+        row("Brand Name",        brand.name),
+        row("Business Type",     brand.businessType),
+        row("Location",          brand.businessLocation),
+        row("Website",           brand.website),
+        row("Instagram",         brand.instagramPage),
+        row("Brand Tone",        brand.brandTone),
+        row("Target Audience",   brand.targetAudience),
+        row("Campaign Target Audience", formFields.targetAudience),
+        row("Services/Products", brand.mainServicesOrProducts),
+        row("Visual Style",      brand.brandVisualStyle),
+        "",
+        "When Campaign Target Audience is provided, use it as the primary audience for THIS calendar and adapt tone, hooks, captions, CTAs, image text, and content angles specifically to that group. Do not confuse it with the brand's general audience listed above.",
+        "",
+        "=== BRAND IDENTITY ===",
+        identitySummary || "Not extracted yet.",
+        "",
+        "=== SELECTED POST IDEAS (INSPIRATION ONLY — NOT A HARD CAP) ===",
+        `You must generate exactly ${count} posts in this batch. The overall calendar needs ${safeCount} posts. Selected ideas below are inspiration inputs only — they do not limit the final count.`,
+        selectedPosts.length < safeCount
+          ? `If fewer ideas than needed (${selectedPosts.length} selected, ${safeCount} required), expand their themes into additional distinct posts to reach ${safeCount}. Do not duplicate posts.`
+          : `If more ideas than needed (${selectedPosts.length} selected, ${safeCount} required), use only the most relevant ones.`,
+        "",
+        selectedPostIdeasText,
+        "",
+        "=== CAMPAIGN & CALENDAR DETAILS ===",
+        row("Monthly Subject",             formFields.mainMonthlySubject),
+        row("Landing / Service Page",      formFields.mainLandingPageOrServicePage),
+        row("Main Goal",                   formFields.mainGoal),
+        row("Offer / Key Message",         formFields.mainOfferOrMessage),
+        row("Important Details",           formFields.importantDetailsToInclude),
+        row("Do NOT Invent",               formFields.detailsNotToInvent),
+        row("Source Material",             formFields.sourceMaterial),
+        row("Priority Content Ideas",      formFields.priorityContentIdeas),
+        ...(attachmentContext.block
+          ? [
+              "",
+              "=== INTERPRETED UPLOADED REFERENCE MATERIAL ===",
+              attachmentContext.block,
+              "",
+            ]
+          : []),
+        "=== POSTING SCHEDULE ===",
+        row("Platforms",                   formFields.platforms),
+        row("Number of Posts (this batch)", String(count)),
+        row("Total Calendar Posts",        String(safeCount)),
+        row("Publishing Frequency",        formFields.publishingFrequency),
+        row("Required Formats",            formFields.requiredPostFormats),
+        row("Video Creation Tool",         formFields.videoCreationTool),
+        row("Video Production Limits",     formFields.videoProductionLimitation),
+        "",
+        "=== CONTENT RULES ===",
+        row("Content Strategy Rules",      formFields.contentStrategyRules),
+        row("Audience Language Rules",     formFields.audienceLanguageRules),
+        row("Writing Style Rules",         formFields.writingStyleRules),
       "",
       // ── Output Image Text Requirements: dedicated rules section ─────────────
       // These rules appear BEFORE the JSON schema so the AI has context when
@@ -996,7 +1017,7 @@ export async function POST(request) {
       "=== REQUIRED JSON OUTPUT FORMAT ===",
       "Return ONLY valid JSON. No markdown. No code blocks. No explanations.",
       "Do not return tables. Do not return a text acknowledgment.",
-      `Generate exactly ${safeCount} posts in the "posts" array.`,
+      `Generate exactly ${count} posts in the "posts" array.`,
       "",
       "Each post must follow this EXACT JSON structure (all fields required, use empty string if not applicable):",
       "{",
@@ -1039,7 +1060,7 @@ export async function POST(request) {
       "}",
       "",
       "Strict rules:",
-      `- posts array must contain exactly ${safeCount} complete objects.`,
+      `- posts array must contain exactly ${count} complete objects.`,
       "- hashtags must always be a JSON array of strings starting with #.",
       "- outputImageTextRequirementsStructured must be a real nested JSON object/array (NOT a stringified JSON, NOT plain text) following the schema and rules given above.",
       "- postNumber starts at 1 and increments by 1.",
@@ -1048,89 +1069,222 @@ export async function POST(request) {
       "- If any field is missing or not applicable, use an empty string and continue.",
       "- Return only the JSON object. Nothing before or after it.",
     ].filter(v => v !== null).join("\n");
-
-    console.log("[ContentCalendar] userInput length:", userInput.length, "chars");
-
-    // ── 7. Call AI ───────────────────────────────────────────────────────────
-    const result = await generateWithPromptTemplate({
-      templateSlug: "content-calendar-generator",
-      variables,
-      userInput,
-      maxTokens: 16384, // gpt-4o max output budget — detailed calendars include long narration, visual production fields, and structured output image text objects. 6 posts × ~30 fields each can exceed 8k tokens when truncated mid-JSON causes parseAiJsonOutput to return only 1 post.
-    });
-
-    console.log("[ContentCalendar] Raw AI output length:", result.raw?.length ?? 0, "chars");
-
-    // ── 8. Parse output ──────────────────────────────────────────────────────
-    let parsed;
-    if (result.content && typeof result.content === "object") {
-      // ai.js already parsed it into an object
-      parsed = result.content;
-    } else {
-      // ai.js returned raw string (JSON.parse failed inside ai.js, or not JSON mode)
-      parsed = parseAiJsonOutput(result.raw);
     }
 
-    // ── 9. Extract posts array from whatever shape the AI returned ───────────
-    let rawPosts = [];
-
-    if (!parsed || typeof parsed !== "object") {
-      const rawPreview = String(result.raw ?? "").slice(0, 500).replace(/[\x00-\x1f]/g, " ");
-      console.error(`[ContentCalendar] parsed is null/not-object. finish=${result.finishReason} rawPreview=${rawPreview}`);
-      throw new Error("AI response could not be parsed as a valid post structure. Try again or reduce the number of posts.");
+    // ── 7. Format distribution across batches ────────────────────────────────
+    function parseFormats(raw) {
+      if (!raw || !raw.trim()) return [];
+      const parts = raw.split(",").map(s => s.trim()).filter(Boolean);
+      return parts.reduce((acc, p) => {
+        const m = p.match(/^(\d+)\s+(.+)/);
+        if (m) {
+          const n = parseInt(m[1], 10);
+          for (let i = 0; i < n; i++) acc.push(m[2]);
+        } else {
+          acc.push(p);
+        }
+        return acc;
+      }, []);
     }
 
-    if (Array.isArray(parsed)) {
-      rawPosts = parsed;
-    } else if (parsed && typeof parsed === "object") {
-      // Standard key names first
+    function distributeFormats(total, formatList) {
+      if (formatList.length === 0) return [];
+      const result = [];
+      for (let i = 0; i < total; i++) {
+        result.push(formatList[i % formatList.length]);
+      }
+      return result;
+    }
+
+    const parsedFormats = parseFormats(formFields.requiredPostFormats);
+    const distributedFormats = distributeFormats(safeCount, parsedFormats);
+
+    // ── 8. Batch loop ────────────────────────────────────────────────────────
+    function extractPostsFromResult(result) {
+      let parsed;
+      if (result.content && typeof result.content === "object") {
+        parsed = result.content;
+      } else {
+        parsed = parseAiJsonOutput(result.raw);
+      }
+
+      if (!parsed || typeof parsed !== "object") {
+        const preview = String(result.raw ?? "").slice(0, 300).replace(/[\x00-\x1f]/g, " ");
+        console.error(`[ContentCalendar] parsed fail. finish=${result.finishReason} preview=${preview}`);
+        return [];
+      }
+
+      if (Array.isArray(parsed)) return parsed;
+
       const topLevel =
         parsed.posts ?? parsed.calendar ?? parsed.postIdeas ??
         parsed.calendarPosts ?? parsed.entries ?? parsed.content_calendar ??
         parsed.schedule ?? null;
 
-      if (Array.isArray(topLevel) && topLevel.length > 0) {
-        rawPosts = topLevel;
-      } else {
-        // Deep-search
-        const found = deepFindPostArrays(parsed);
-        if (found.length > 0) {
-          found.sort((a, b) => b.arr.length - a.arr.length);
-          rawPosts = found[0].arr;
+      if (Array.isArray(topLevel) && topLevel.length > 0) return topLevel;
+
+      const found = deepFindPostArrays(parsed);
+      if (found.length > 0) {
+        found.sort((a, b) => b.arr.length - a.arr.length);
+        return found[0].arr;
+      }
+      return [];
+    }
+
+    async function runBatch({ batchCount, batchContext, acceptedSummaries }) {
+      const batchInput = buildUserInput({ count: batchCount, batchContext, acceptedSummaries });
+      console.log(`[ContentCalendar] Batch ${batchContext.current}/${batchContext.total}: ${batchCount} posts, input ${batchInput.length} chars`);
+
+      const result = await generateWithPromptTemplate({
+        templateSlug: "content-calendar-generator",
+        variables,
+        userInput: batchInput,
+        maxTokens: 8192,
+      });
+
+      console.log(`[ContentCalendar] Batch ${batchContext.current} raw: ${result.raw?.length ?? 0} chars, finish=${result.finishReason}`);
+
+      const rawPosts = extractPostsFromResult(result);
+      const normalized = rawPosts.map((p, i) => normalisePost(p, i, formFields.platforms));
+      return normalized;
+    }
+
+    // Build batch plan
+    const totalBatches = Math.ceil(safeCount / BATCH_SIZE);
+    const allPosts = [];
+    let totalAttempts = 0;
+    const MAX_TOTAL_ATTEMPTS = totalBatches * (1 + MAX_RETRIES_PER_BATCH) + 2;
+
+    for (let b = 0; b < totalBatches; b++) {
+      const batchStart = b * BATCH_SIZE;
+      let batchCount = Math.min(BATCH_SIZE, safeCount - batchStart);
+      if (batchCount <= 0) break;
+
+      const batchFormats = distributedFormats.slice(batchStart, batchStart + batchCount);
+      const formatsStr = batchFormats.length > 0 ? batchFormats.join(", ") : undefined;
+
+      const batchContext = {
+        current: b + 1,
+        total: totalBatches,
+        formats: formatsStr,
+      };
+
+      const acceptedSummaries = allPosts.map(p => p.hookTitle || p.coreMessage || "").filter(Boolean);
+
+      let batchPosts = [];
+      let retries = 0;
+
+      while (batchPosts.length < batchCount && totalAttempts < MAX_TOTAL_ATTEMPTS) {
+        totalAttempts++;
+        try {
+          const posts = await runBatch({
+            batchCount,
+            batchContext,
+            acceptedSummaries: retries > 0 ? acceptedSummaries : undefined,
+          });
+          batchPosts = batchPosts.concat(posts);
+          const seen = new Set();
+          batchPosts = batchPosts.filter(p => {
+            const key = (p.hookTitle || p.coreMessage || "").toLowerCase().trim();
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          batchPosts = batchPosts.slice(0, batchCount);
+          // Apply batch-assigned formats so each post matches the planned distribution
+          if (batchFormats.length > 0) {
+            batchPosts = batchPosts.map((p, i) => ({
+              ...p,
+              format: batchFormats[i] || p.format,
+            }));
+          }
+        } catch (err) {
+          console.error(`[ContentCalendar] Batch ${b + 1} attempt ${retries + 1} failed:`, err.message);
         }
+
+        if (batchPosts.length >= batchCount) break;
+        retries++;
+        if (retries > MAX_RETRIES_PER_BATCH) break;
+        console.log(`[ContentCalendar] Batch ${b + 1} retry ${retries}/${MAX_RETRIES_PER_BATCH}: got ${batchPosts.length}/${batchCount}`);
+      }
+
+      allPosts.push(...batchPosts);
+    }
+
+    console.log(`[ContentCalendar] Total after batching: ${allPosts.length}/${safeCount}`);
+
+    // ── 9. Deduplicate across all batches + retry replacements ────────────────
+    function deduplicatePosts(posts) {
+      const seen = new Set();
+      return posts.filter(p => {
+        const key = (p.hookTitle || p.coreMessage || p.caption?.slice(0, 60) || "").toLowerCase().trim();
+        if (!key) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    let deduped = deduplicatePosts(allPosts);
+
+    // Bounded replacement attempts when dedup reduces the count
+    const MAX_REPLACEMENT_ATTEMPTS = 2;
+    for (let r = 0; r < MAX_REPLACEMENT_ATTEMPTS && deduped.length < safeCount && totalAttempts < MAX_TOTAL_ATTEMPTS; r++) {
+      const needed = safeCount - deduped.length;
+      console.log(`[ContentCalendar] Replacement attempt ${r + 1}/${MAX_REPLACEMENT_ATTEMPTS}: need ${needed} more posts`);
+
+      const acceptedSummaries = deduped.map(p => p.hookTitle || p.coreMessage || "").filter(Boolean);
+      const context = { current: 1, total: 1, formats: undefined };
+      totalAttempts++;
+
+      try {
+        const posts = await runBatch({
+          batchCount: needed,
+          batchContext: context,
+          acceptedSummaries,
+        });
+        deduped = deduplicatePosts([...deduped, ...posts]).slice(0, safeCount);
+      } catch (err) {
+        console.error(`[ContentCalendar] Replacement attempt ${r + 1} failed:`, err.message);
       }
     }
 
-    console.log("[ContentCalendar] Parsed posts count:", rawPosts.length, "| requested:", safeCount);
+    const finalBatch = deduped.slice(0, safeCount);
 
-    if (rawPosts.length < safeCount) {
-      const truncated = result.finishReason === "length";
-      const rawPreview = String(result.raw ?? "").slice(0, 800).replace(/[\x00-\x1f]/g, " ");
-      const usageStr = result.usage ? `prompt=${result.usage.prompt_tokens} completion=${result.usage.completion_tokens} total=${result.usage.total_tokens}` : "usage=N/A";
-      console.error(`[ContentCalendar] rawPosts=${rawPosts.length} safeCount=${safeCount} finish=${result.finishReason} ${usageStr}`);
-      console.error(`[ContentCalendar] rawPreview: ${rawPreview}`);
-      const msg = truncated
-        ? `Only ${rawPosts.length} of ${safeCount} posts were generated. The AI response was truncated. Try generating fewer posts or reducing very long caption/video/script requirements.`
-        : `Only ${rawPosts.length} of ${safeCount} posts were generated. Try generating fewer posts or reducing very long caption/video/script requirements.`;
-      throw new Error(msg);
+    if (finalBatch.length < safeCount) {
+      console.error(`[ContentCalendar] shortfall: ${finalBatch.length}/${safeCount} after ${totalAttempts} total attempts`);
+      return NextResponse.json(
+        {
+          success: false,
+          code: "CALENDAR_POST_SHORTFALL",
+          error: `The calendar generator produced only ${finalBatch.length} of ${safeCount} required posts after retrying. Please retry the generation.`,
+          generatedCount: finalBatch.length,
+          requestedCount: safeCount,
+        },
+        { status: 422 }
+      );
     }
 
-    const normalized = rawPosts.map((p, i) => normalisePost(p, i, formFields.platforms));
+    // ── 10. Assign final numbering and dates centrally ───────────────────────
+    const numbered = finalBatch.map((p, i) => ({ ...p, postNumber: i + 1 }));
 
-    // ── 9b. Fallback date/time assignment for posts missing or invalid dates ─
-    const datedPosts = applyFallbackDates(normalized, {
+    const datedPosts = applyFallbackDates(numbered, {
       calendarPeriodStart,
       calendarPeriodEnd,
       publishingFrequency: formFields.publishingFrequency,
       seasonalDates: chosenSeasonalDates,
     });
 
-    // ── 10. Post-process: apply fallback for weak outputImageTextRequirements ─
-    // Validate the structured object the AI produced (slide count vs Content
-    // Structure, sequential numbering, no duplicate/blank slides, etc). If it
-    // fails, build a structured fallback from the post's own fields and derive
-    // the clean display string from THAT — so the two never disagree.
-    const posts = datedPosts.map(p => {
+    datedPosts.sort((a, b) => {
+      if (a.date && b.date) return a.date.localeCompare(b.date);
+      if (a.date) return -1;
+      if (b.date) return 1;
+      return a.postNumber - b.postNumber;
+    });
+    const sorted = datedPosts.map((p, i) => ({ ...p, postNumber: i + 1 }));
+
+    // ── 11. Validate outputImageTextRequirements ─────────────────────────────
+    const posts = sorted.map(p => {
       const check = validateOutputImageTextRequirements(p);
       if (!check.valid) {
         console.log(`[ContentCalendar] Post #${p.postNumber} outputImageTextRequirements validation failed (${check.reason}), applying fallback`);
@@ -1144,47 +1298,54 @@ export async function POST(request) {
       return p;
     });
 
-    // ── 10b. Merge source fields from selectedPosts ─────────────────────────
-    // The AI is no longer asked to preserve referenceLink, contentOrigin, or
-    // inspirationSource — instead we copy them deterministically from the
-    // selected post ideas the user chose in the Review step. This avoids the
-    // ambiguous "substantially derived" instruction that caused error responses.
+    // ── 12. Merge source fields from selectedPosts ──────────────────────────
     const finalPosts = mergeSourceFields(posts, selectedPosts, formFields.platforms);
 
-    // ── 11. Return ───────────────────────────────────────────────────────────
+    // ── 13. Return ───────────────────────────────────────────────────────────
     return NextResponse.json({
       success: true,
       posts: finalPosts,
       tables: null,
-      raw: result.raw,
-      usage: result.usage,
-      model: result.model,
     });
 
   } catch (err) {
-    console.error("[ContentCalendar] Unhandled error:", err);
     const code = err?.code;
-    const isConnectionError = code === "AI_CONNECTION_ERROR";
-    const isNotConfigured = code === "AI_NOT_CONFIGURED";
-
     let status = 500;
     let error;
+    let respCode;
 
-    if (isConnectionError) {
+    if (code === "AI_CONNECTION_ERROR") {
       status = 503;
       error = "Couldn't reach the AI service. Please check your connection and try again — your inputs are fine.";
-    } else if (isNotConfigured) {
+    } else if (code === "AI_NOT_CONFIGURED") {
       status = 503;
       error = "OpenAI API key is not configured. Go to Settings and add your OpenAI API key, then restart the server.";
+    } else if (code === "AI_TIMEOUT") {
+      status = 504;
+      error = "The AI provider did not respond in time. Please try again.";
+    } else if (err.message?.includes("Could not parse") || err.message?.includes("JSON")) {
+      status = 422;
+      respCode = "CALENDAR_OUTPUT_INVALID";
+      error = "The AI returned an unexpected response. Please retry the generation.";
+    } else if (err.message?.includes("placeholder") || err.message?.includes("OPENAI_API_KEY")) {
+      status = 503;
+      error = "OpenAI API key is not configured. Go to Settings and add your OpenAI API key, then restart the server.";
+    } else if (err.name === "AbortError") {
+      status = 504;
+      respCode = "AI_TIMEOUT";
+      error = "The request timed out. Please try again.";
     } else {
-      error = "Content calendar generation failed. Please check the inputs and try again.";
+      error = "Content calendar generation failed. Please try again.";
     }
+
+    console.error(`[ContentCalendar] ${respCode || "INTERNAL_ERROR"} status=${status}:`, err.message || err);
 
     return NextResponse.json(
       {
         success: false,
+        ...(respCode ? { code: respCode } : {}),
         error,
-        details: err instanceof Error ? err.message : String(err),
+        ...(status < 500 ? { generatedCount: 0, requestedCount: safeCount } : {}),
       },
       { status }
     );

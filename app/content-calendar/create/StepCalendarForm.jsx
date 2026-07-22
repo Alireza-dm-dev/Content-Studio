@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -251,6 +251,7 @@ export default function StepCalendarForm({
   const [generating, setGenerating] = useState(false);
   const [showAutoFilled, setShowAutoFilled] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const isSubmitting = useRef(false);
 
   function set(field, value) {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -305,6 +306,7 @@ export default function StepCalendarForm({
   }
 
   async function handleGenerate() {
+    if (isSubmitting.current) return;
     if (!form.mainMonthlySubject.trim() && !form.mainGoal.trim()) {
       return toast.error("Fill in at least Monthly Subject or Main Goal.");
     }
@@ -316,6 +318,7 @@ export default function StepCalendarForm({
         targetAudience:            form.targetAudience,
       }));
     } catch {}
+    isSubmitting.current = true;
     setGenerating(true);
     try {
       const res = await fetch("/api/content-calendar/generate", {
@@ -336,15 +339,11 @@ export default function StepCalendarForm({
       const data = await safeParseJsonResponse(res);
 
       if (!res.ok || data.success === false) {
-        const msg = data.error ?? "Generation failed.";
-        if (data.details) console.error("[CalendarForm] Server error details:", data.details);
-        throw new Error(msg);
+        toast.error(data.error ?? "Generation failed.");
+        return;
       }
 
       const posts = data.posts ?? [];
-      if (posts.length === 0) {
-        console.warn("[CalendarForm] 0 posts returned. Raw AI output:", data.raw);
-      }
 
       onGenerated({
         posts,
@@ -355,14 +354,10 @@ export default function StepCalendarForm({
         formData: form,
       });
     } catch (err) {
-      console.error("[CalendarForm] Generation error:", err);
-      toast.error(
-        err.message.includes("Unexpected") || err.message.includes("JSON")
-          ? "Content calendar generation failed. Please try again or reduce the number of posts."
-          : err.message
-      );
+      toast.error("An unexpected error occurred. Please check the browser console for details.");
     } finally {
       setGenerating(false);
+      isSubmitting.current = false;
     }
   }
 
