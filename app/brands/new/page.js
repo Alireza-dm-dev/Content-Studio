@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { ArrowLeft, Upload, X, ImageIcon } from "lucide-react";
 import Link from "next/link";
+import { CONTENT_LANGUAGES, DEFAULT_CONTENT_LANGUAGE } from "@/lib/content-language";
 
 export default function NewBrandPage() {
   const router = useRouter();
@@ -29,6 +30,7 @@ export default function NewBrandPage() {
     targetAudience: "",
     brandTone: "",
     brandVisualStyle: "",
+    contentLanguage: DEFAULT_CONTENT_LANGUAGE,
   });
 
   // Staged files: { file: File, preview: string }[]
@@ -158,6 +160,23 @@ export default function NewBrandPage() {
                 <Label htmlFor="brandVisualStyle">Visual Style</Label>
                 <Input id="brandVisualStyle" name="brandVisualStyle" value={form.brandVisualStyle} onChange={handleChange} placeholder="e.g. Clean minimalism" />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="contentLanguage">Output Language</Label>
+              <select
+                id="contentLanguage"
+                name="contentLanguage"
+                value={form.contentLanguage}
+                onChange={handleChange}
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {CONTENT_LANGUAGES.map(lang => (
+                  <option key={lang.code} value={lang.code}>{lang.label} ({lang.code})</option>
+                ))}
+              </select>
+              <p id="contentLanguageHelp" className="text-xs text-muted-foreground">
+                Controls the language used by AI-generated calendars, captions, image text, video prompts, and Brand Chat. Existing content is not automatically translated.
+              </p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="website">Website</Label>

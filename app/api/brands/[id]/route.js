@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { unlink } from "fs/promises";
 import path from "path";
+import { normalizeLanguageCode, isSupportedLanguageCode } from "@/lib/content-language";
 
 export async function GET(request, { params }) {
   const { id } = await params;
@@ -17,15 +18,25 @@ export async function PATCH(request, { params }) {
   const {
     name, website, instagramPage, linkedinPage, facebookPage,
     businessLocation, businessType, mainServicesOrProducts,
-    targetAudience, brandTone, brandVisualStyle,
+    targetAudience, brandTone, brandVisualStyle, contentLanguage,
   } = body;
+  if ("contentLanguage" in body && !isSupportedLanguageCode(contentLanguage)) {
+    return NextResponse.json(
+      { success: false, error: "Unsupported content language." },
+      { status: 400 }
+    );
+  }
+  const updateData = {
+    name, website, instagramPage, linkedinPage, facebookPage,
+    businessLocation, businessType, mainServicesOrProducts,
+    targetAudience, brandTone, brandVisualStyle,
+  };
+  if ("contentLanguage" in body) {
+    updateData.contentLanguage = normalizeLanguageCode(contentLanguage);
+  }
   const brand = await prisma.brand.update({
     where: { id },
-    data: {
-      name, website, instagramPage, linkedinPage, facebookPage,
-      businessLocation, businessType, mainServicesOrProducts,
-      targetAudience, brandTone, brandVisualStyle,
-    },
+    data: updateData,
   });
   return NextResponse.json(brand);
 }

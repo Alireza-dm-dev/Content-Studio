@@ -20,6 +20,7 @@ model Brand {
   targetAudience         String?
   brandTone              String?
   brandVisualStyle       String?
+  contentLanguage        String   @default("en")
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 

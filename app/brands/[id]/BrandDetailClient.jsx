@@ -6,6 +6,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import BrandFilesGallery from "@/components/BrandFilesGallery";
 import { normalizeBrandIdentityOutput } from "@/lib/brand-identity-utils";
+import { CONTENT_LANGUAGES, DEFAULT_CONTENT_LANGUAGE } from "@/lib/content-language";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -561,6 +562,7 @@ export default function BrandDetailClient({ brand: initialBrand, initialFiles, i
     targetAudience: initialBrand.targetAudience ?? "",
     brandTone: initialBrand.brandTone ?? "",
     brandVisualStyle: initialBrand.brandVisualStyle ?? "",
+    contentLanguage: initialBrand.contentLanguage ?? DEFAULT_CONTENT_LANGUAGE,
   });
 
   const [saving, setSaving] = useState(false);
@@ -703,6 +705,22 @@ export default function BrandDetailClient({ brand: initialBrand, initialFiles, i
               <input name="brandVisualStyle" value={form.brandVisualStyle} onChange={handleChange} placeholder="Clean minimalism" style={inputStyle} />
             </FieldRow>
           </FieldGrid>
+          <FieldRow label="Output Language">
+            <select
+              name="contentLanguage"
+              value={form.contentLanguage}
+              onChange={handleChange}
+              style={{ ...inputStyle, cursor: "pointer" }}
+              aria-describedby="contentLanguageHelp"
+            >
+              {CONTENT_LANGUAGES.map(lang => (
+                <option key={lang.code} value={lang.code}>{lang.label} ({lang.code})</option>
+              ))}
+            </select>
+            <div id="contentLanguageHelp" style={{ ...lbl, marginTop: 5, color: "var(--sketch-ink-faint)", fontSize: 9, lineHeight: 1.4 }}>
+              Controls the language used by AI-generated calendars, captions, image text, video prompts, and Brand Chat. Existing content is not automatically translated.
+            </div>
+          </FieldRow>
         </InkSection>
 
         {/* Brand Files */}
