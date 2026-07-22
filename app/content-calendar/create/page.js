@@ -66,18 +66,27 @@ function StepSelectBrand({ initialBrandId, onNext }) {
   // Incrementing this forces the identity effect to re-run even for the same brand ID
   const [checkTrigger, setCheckTrigger] = useState(0);
 
-  // Load brands, then auto-select initialBrandId and check its identity
   useEffect(() => {
     fetch("/api/brands")
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) {
+          return r.json().then(body => { throw new Error(body.error || "Failed to load brands"); });
+        }
+        return r.json();
+      })
       .then(data => {
+        if (!Array.isArray(data)) throw new Error("Invalid response from server");
         setBrands(data);
         if (initialBrandId) {
           setSelectedId(initialBrandId);
           setCheckingIdentity(true);
           setIdentity(null);
-          setCheckTrigger(t => t + 1); // trigger identity check after brands load
+          setCheckTrigger(t => t + 1);
         }
+      })
+      .catch(err => {
+        toast.error(err.message);
+        setBrands([]);
       })
       .finally(() => setLoading(false));
   }, [initialBrandId]);
@@ -1708,7 +1717,10 @@ function CreateCalendarInner() {
           setForm={setCalendarForm}
           onBack={() => setStep(2)}
           onGenerated={(data) => {
-            setGeneratedCalendar(data);
+            setCalendarPosts(data.posts ?? []);
+            setCalendarRaw(data.raw ?? "");
+            setCalendarFormData(data.formData ?? null);
+            setCalendarMeta({ model: data.model, usage: data.usage });
             setStep(4);
           }}
           brandId={brand.id}

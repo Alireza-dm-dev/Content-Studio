@@ -29,7 +29,10 @@ function BrandImageSelector({ onImagesChange }) {
   const [loadingFiles, setLoadingFiles] = useState(false);
 
   useEffect(() => {
-    fetch("/api/brands").then((r) => r.json()).then(setBrands).catch(() => {});
+    fetch("/api/brands")
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(data => { if (Array.isArray(data)) setBrands(data); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -155,9 +158,15 @@ function BrandFillSection({ onFill, mode = "basic" }) {
   const [selectedBrandId, setSelectedBrandId] = useState("");
 
   useEffect(() => {
-    fetch("/api/brands").then((r) => r.json()).then(setBrands).catch(() => {});
+    fetch("/api/brands")
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(data => { if (Array.isArray(data)) setBrands(data); })
+      .catch(() => {});
     if (mode === "identity") {
-      fetch("/api/brand-identities").then((r) => r.json()).then(setBrandIdentities).catch(() => {});
+      fetch("/api/brand-identities")
+        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+        .then(data => { if (Array.isArray(data)) setBrandIdentities(data); })
+        .catch(() => {});
     }
   }, [mode]);
 
