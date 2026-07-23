@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import {
   parseWallClockInTz,
   formatToDateTimeLocalInTz,
   formatScheduledDateInTz,
 } from "@/lib/timezone";
+
+const CLIENT_FETCH_TIMEOUT = 660000;
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -127,6 +129,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const closedRef = useRef(false);
 
   // Edit form state
   const [editCaption, setEditCaption] = useState(post.caption || "");
@@ -177,9 +180,12 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
       return;
     }
     setSending(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
     try {
       const res = await fetch(`/api/brands/${brandId}/published-posts/${post.id}/send-webhook`, {
         method: "POST",
+        signal: controller.signal,
       });
       let data;
       try {
@@ -192,17 +198,34 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
         throw new Error(`Send failed with status ${res.status}`);
       }
 
-      if (!res.ok) {
-        let message = data.error || `Send failed with status ${res.status}`;
-        if (data.webhookStatus && data.details) {
-          message += ` (Status ${data.webhookStatus}: ${data.details})`;
+      if (closedRef.current) return;
+
+      if (res.ok || (data.post && data.webhookResult?.success === false)) {
+        if (data.post && onUpdated) {
+          onUpdated(data.post);
+        } else if (onUpdated) {
+          const refreshRes = await fetch(`/api/brands/${brandId}/published-posts/${post.id}`);
+          if (refreshRes.ok) {
+            const refreshed = await refreshRes.json();
+            if (!closedRef.current) onUpdated(refreshed);
+          }
         }
-        throw new Error(message);
+        if (data.webhookResult?.success) {
+          toast.success("Sent to n8n.");
+        } else if (data.webhookResult?.success === false) {
+          toast.warning(data.webhookResult.error || "Sent to n8n with warnings.");
+        }
+      } else {
+        throw new Error(data?.error || `Send failed with status ${res.status}`);
       }
-      toast.success("Sent to n8n.");
     } catch (err) {
-      toast.error(err.message);
+      if (err.name === "AbortError") {
+        toast.error("Request timed out. The post may still be processing.");
+      } else {
+        toast.error(err.message);
+      }
     } finally {
+      clearTimeout(timeoutId);
       setSending(false);
     }
   }
@@ -296,7 +319,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
       }
       toast.success("Post deleted.");
       if (onDeleted) onDeleted(post.id);
-      onClose();
+      handleClose();
     } catch (err) {
       toast.error(err.message);
       setConfirmDelete(false);
@@ -311,6 +334,11 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
 
   function handleNext() {
     setCarouselIdx((prev) => (prev < orderedMedia.length - 1 ? prev + 1 : 0));
+  }
+
+  function handleClose() {
+    closedRef.current = true;
+    onClose();
   }
 
   const inkBtn = {
@@ -340,7 +368,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
         justifyContent: "center",
         padding: 16,
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
       {/* Backdrop */}
       <div
@@ -423,7 +451,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
             )}
             <button
               type="button"
-              onClick={onClose}
+        onClick={handleClose}
               style={{
                 ...inkBtn,
                 border: "none",

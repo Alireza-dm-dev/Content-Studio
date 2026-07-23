@@ -5,7 +5,7 @@ import {
   buildN8nPayload,
   buildRemoteAwareMedia,
   safeParseJson,
-  isPublicUrl,
+  isCanonicalMediaUrl,
   normalizePostType,
   isValidStatus,
   normalizePublishedPostPlatform,
@@ -272,7 +272,7 @@ export async function PATCH(request, { params }) {
 
     // Prefer the stored public thumbnail URL; fall back to the DB thumbnail.
     const storedThumb = existingPayload?.thumbnail_url;
-    const thumbnailUrl = isPublicUrl(storedThumb)
+    const thumbnailUrl = isCanonicalMediaUrl(storedThumb)
       ? storedThumb
       : existing.thumbnailUrl;
 

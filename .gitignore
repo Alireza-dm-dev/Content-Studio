@@ -6,3 +6,5 @@ public/uploads/
 graphify-out/
 .next/
 node_modules/
+
+.env.local

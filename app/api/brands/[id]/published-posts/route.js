@@ -16,7 +16,7 @@ import {
   POST_TYPE_REEL,
 } from "@/lib/published-post-utils";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
-import { uploadPublishedPostMedia } from "@/lib/published-post-remote-media";
+import { uploadPublishedPostMedia, isCanonicalMediaUrl } from "@/lib/published-post-remote-media";
 import { normalizeScheduledDate } from "@/lib/timezone";
 
 const MAX_POSTS_PER_BRAND = 21;
@@ -379,73 +379,119 @@ export async function POST(request, { params }) {
   } catch (error) {
     remoteResult = {
       success: false,
+      detailCode: error.detailCode || "SFTP_UPLOAD_FAILED",
       error: error.message || "Remote media upload failed.",
       code: error.code,
       details: error.message,
     };
     console.error("[PublishedPosts] remote media upload failed", {
+      detailCode: remoteResult.detailCode,
       error: error.message,
       code: error.code,
     });
   }
 
   // Rebuild jsonPayload with remote URLs if remote upload succeeded
-  if (remoteResult?.success) {
+  const remoteUploadSuccessful =
+    remoteResult?.success &&
+    remoteResult.media.length === (result.media || []).length;
+
+  if (remoteUploadSuccessful) {
     try {
       const remoteUrlByOrder = {};
       for (const r of remoteResult.media) {
         remoteUrlByOrder[r.order] = r;
       }
 
-      const updatedMedia = (result.media || []).map((m) => {
-        const remote = remoteUrlByOrder[m.order];
-        return remote
-          ? { ...m, url: remote.fileUrl, remoteUrl: remote.fileUrl }
-          : m;
-      });
-
       const updatedThumbnailUrl = remoteResult.thumbnailUrl || result.thumbnailUrl;
 
-      const remotePayload = buildN8nPayload(
-        { ...result, thumbnailUrl: updatedThumbnailUrl },
-        updatedMedia,
-        brand.name,
-      );
-      const remotePayloadJson = remotePayload
-        ? JSON.stringify(remotePayload, null, 2)
-        : null;
+      // Reload current post from DB
+      const currentPost = await prisma.publishedPost.findUnique({
+        where: { id: result.id },
+        include: { media: { orderBy: { order: "asc" } } },
+      });
 
-      if (remotePayloadJson) {
-        await prisma.publishedPost.update({
-          where: { id: result.id },
-          data: {
-            jsonPayload: remotePayloadJson,
-            thumbnailUrl: updatedThumbnailUrl,
-          },
+      if (currentPost) {
+        const remoteMedia = (currentPost.media || []).map((m) => {
+          const remote = remoteUrlByOrder[m.order];
+          return remote
+            ? { ...m, url: remote.fileUrl, remoteUrl: remote.fileUrl }
+            : m;
         });
-        result.jsonPayload = remotePayloadJson;
-        result.thumbnailUrl = updatedThumbnailUrl;
+
+        const remotePayload = buildN8nPayload(
+          { ...currentPost, thumbnailUrl: updatedThumbnailUrl },
+          remoteMedia,
+          brand.name,
+        );
+        const remotePayloadJson = remotePayload
+          ? JSON.stringify(remotePayload, null, 2)
+          : null;
+
+        if (remotePayloadJson) {
+          await prisma.publishedPost.update({
+            where: { id: result.id },
+            data: {
+              jsonPayload: remotePayloadJson,
+              thumbnailUrl: updatedThumbnailUrl,
+            },
+          });
+        }
+
+        // Reload once more to get the final persisted state
+        const persisted = await prisma.publishedPost.findUnique({
+          where: { id: result.id },
+          include: { media: { orderBy: { order: "asc" } } },
+        });
+
+        if (persisted) {
+          const finalMedia = (persisted.media || []).map((m) => {
+            const remote = remoteUrlByOrder[m.order];
+            return remote
+              ? { ...m, url: remote.fileUrl, remoteUrl: remote.fileUrl }
+              : m;
+          });
+          result = { ...persisted, media: finalMedia };
+        }
       }
     } catch (error) {
       console.error("[PublishedPosts] failed to update payload with remote URLs", error);
     }
   }
 
-  // ── Auto-send to n8n ────────────────────────────────────────────────────────
+  // ── Auto-send to n8n (only when canonical remote media is available) ────────
   let webhookResult = null;
-  try {
-    webhookResult = await sendPublishedPostToN8n({
-      post: result,
-      media: result.media || [],
-      brandName: brand.name,
+  if (remoteUploadSuccessful) {
+    try {
+      webhookResult = await sendPublishedPostToN8n({
+        post: result,
+        media: result.media || [],
+        brandName: brand.name,
+      });
+    } catch (webhookError) {
+      webhookResult = { success: false, error: "Failed to send to n8n webhook." };
+      console.error("[PublishedPosts] n8n webhook send failed", {
+        error: webhookError?.message,
+      });
+    }
+  } else {
+    webhookResult = {
+      success: false,
+      code: "REMOTE_MEDIA_UPLOAD_FAILED",
+      error: "The post was saved, but its media could not be uploaded to the public media server.",
+    };
+    if (remoteResult?.success && !remoteUploadSuccessful) {
+      webhookResult.details = `Remote media count mismatch: expected ${(result.media || []).length}, got ${remoteResult.media.length}`;
+    }
+    console.log("[PublishedPosts] auto n8n send skipped: remote media not available", {
+      detailCode: remoteResult?.detailCode,
+      skipped: remoteResult?.skipped,
     });
-  } catch {
-    webhookResult = { success: false, error: "Failed to send to n8n webhook." };
   }
 
   await enforcePublishedPostsLimit(id);
 
-  return NextResponse.json({ ...result, webhookResult, remoteResult }, { status: 201 });
+  return NextResponse.json({ post: result, webhookResult, remoteResult }, { status: 201 });
   } catch (error) {
     console.error("[PublishedPosts] upload failed", error);
     return NextResponse.json(

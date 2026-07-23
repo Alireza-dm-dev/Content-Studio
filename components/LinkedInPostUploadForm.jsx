@@ -4,6 +4,8 @@ import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { parseWallClockInTz } from "@/lib/timezone";
 
+const CLIENT_FETCH_TIMEOUT = 660000;
+
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
   fontSize: 10,
@@ -234,12 +236,14 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
     }
 
     setUploading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
 
     try {
       const fd = new FormData();
       fd.append("files", file);
       fd.append("platform", "LinkedIn");
-      fd.append("postType", format); // static | carousel | reel (never "video")
+      fd.append("postType", format);
       fd.append("caption", caption);
       if (scheduledDate) {
         const vancouverDate = parseWallClockInTz(scheduledDate, "America/Vancouver");
@@ -250,7 +254,6 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
       fd.append("notes", notes);
       fd.append("status", status || "draft");
 
-      // Optional LinkedIn video thumbnail — only for reel/video posts.
       if (format === "reel" && thumbnailFile) {
         fd.append("thumbnail", thumbnailFile);
       }
@@ -258,6 +261,7 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
       const res = await fetch(`/api/brands/${brandId}/published-posts`, {
         method: "POST",
         body: fd,
+        signal: controller.signal,
       });
 
       let data;
@@ -275,27 +279,30 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
         throw new Error(data?.error || `Upload failed with status ${res.status}`);
       }
 
+      const createdPost = data.post || data;
+      const webhookResult = data.webhookResult;
+      const remoteResult = data.remoteResult;
       const remoteFailed =
-        data.remoteResult == null ||
-        (data.remoteResult && data.remoteResult.success === false && !data.remoteResult.skipped);
-      const webhookFailed = data.webhookResult?.success === false;
+        remoteResult == null ||
+        (remoteResult && remoteResult.success === false && !remoteResult.skipped);
+      const webhookFailed = webhookResult?.success === false;
 
       if (webhookFailed && remoteFailed) {
         toast.warning(
           "LinkedIn post uploaded, but remote media upload failed and n8n sending failed.",
         );
         const parts = [];
-        if (data.remoteResult?.error) parts.push(`Remote: ${data.remoteResult.error}`);
-        if (data.webhookResult?.error) parts.push(`n8n: ${data.webhookResult.error}`);
+        if (remoteResult?.error) parts.push(`Remote: ${remoteResult.error}`);
+        if (webhookResult?.error) parts.push(`n8n: ${webhookResult.error}`);
         if (parts.length) setError(parts.join(" "));
       } else if (webhookFailed) {
         toast.warning("LinkedIn post uploaded, but n8n sending failed.");
-        if (data.webhookResult?.error) setError(data.webhookResult.error);
+        if (webhookResult?.error) setError(webhookResult.error);
       } else if (remoteFailed) {
         toast.warning("LinkedIn post uploaded, but remote media upload failed.");
-        if (data.remoteResult?.error) {
-          const codePart = data.remoteResult.code ? ` [${data.remoteResult.code}]` : "";
-          setError(`Remote upload failed: ${data.remoteResult.error}${codePart}`);
+        if (remoteResult?.error) {
+          const codePart = remoteResult.code ? ` [${remoteResult.code}]` : "";
+          setError(`Remote upload failed: ${remoteResult.error}${codePart}`);
         } else {
           setError("Remote media upload failed.");
         }
@@ -305,11 +312,17 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
       // Reset the optional thumbnail on success (parent will unmount the form).
       setThumbnailFile(null);
       resetThumbnailInput();
-      onCreated(data);
+      onCreated(createdPost);
     } catch (err) {
-      setError(err.message);
-      toast.error(err.message);
+      if (err.name === "AbortError") {
+        setError("Request timed out. The post may still be processing.");
+        toast.error("Upload timed out.");
+      } else {
+        setError(err.message);
+        toast.error(err.message);
+      }
     } finally {
+      clearTimeout(timeoutId);
       setUploading(false);
     }
   }

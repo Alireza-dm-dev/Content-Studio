@@ -10,6 +10,8 @@ import {
   formatScheduledDateInTz,
 } from "@/lib/timezone";
 
+const CLIENT_FETCH_TIMEOUT = 660000;
+
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
   fontSize: 10,
@@ -388,10 +390,12 @@ export default function LinkedInPostDetailModal({
       return;
     }
     setSending(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
     try {
       const res = await fetch(
         `/api/brands/${brandId}/published-posts/${post.id}/send-webhook`,
-        { method: "POST" },
+        { method: "POST", signal: controller.signal },
       );
       let data;
       try {
@@ -401,17 +405,37 @@ export default function LinkedInPostDetailModal({
       } catch {
         throw new Error(`Send failed with status ${res.status}`);
       }
-      if (!res.ok) {
-        let message = data.error || `Send failed with status ${res.status}`;
-        if (data.webhookStatus && data.details) {
-          message += ` (Status ${data.webhookStatus}: ${data.details})`;
+
+      if (closedRef.current) return;
+
+      if (res.ok || (data.post && data.webhookResult?.success === false)) {
+        if (data.post && onUpdated && !closedRef.current) {
+          onUpdated(data.post);
+        } else if (onUpdated && !closedRef.current) {
+          const refreshRes = await fetch(
+            `/api/brands/${brandId}/published-posts/${post.id}`,
+          );
+          if (refreshRes.ok) {
+            const refreshed = await refreshRes.json();
+            if (!closedRef.current) onUpdated(refreshed);
+          }
         }
-        throw new Error(message);
+        if (data.webhookResult?.success) {
+          toast.success("LinkedIn post sent to n8n.");
+        } else if (data.webhookResult?.success === false) {
+          toast.warning(data.webhookResult.error || "LinkedIn post sent to n8n with warnings.");
+        }
+      } else {
+        throw new Error(data?.error || `Send failed with status ${res.status}`);
       }
-      toast.success("LinkedIn post sent to n8n.");
     } catch (err) {
-      toast.error(err.message);
+      if (err.name === "AbortError") {
+        toast.error("Request timed out. The post may still be processing.");
+      } else {
+        toast.error(err.message);
+      }
     } finally {
+      clearTimeout(timeoutId);
       setSending(false);
     }
   }

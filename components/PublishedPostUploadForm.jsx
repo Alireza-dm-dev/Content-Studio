@@ -4,6 +4,8 @@ import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { parseWallClockInTz } from "@/lib/timezone";
 
+const CLIENT_FETCH_TIMEOUT = 660000;
+
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
   fontSize: 10,
@@ -71,7 +73,9 @@ export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }
       return;
     }
 
-    setUploading(true);
+      setUploading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
 
     try {
       const fd = new FormData();
@@ -89,8 +93,6 @@ export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }
       fd.append("caption", caption);
 
       if (scheduledDate) {
-        // Treat the datetime-local value as America/Vancouver local time and
-        // submit it as an absolute UTC ISO string (no browser-timezone reliance).
         const vancouverDate = parseWallClockInTz(scheduledDate, "America/Vancouver");
         if (vancouverDate) {
           fd.append("scheduledDate", vancouverDate.toISOString());
@@ -102,6 +104,7 @@ export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }
       const res = await fetch(`/api/brands/${brandId}/published-posts`, {
         method: "POST",
         body: fd,
+        signal: controller.signal,
       });
 
       let data;
@@ -119,33 +122,41 @@ export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }
         throw new Error(data?.error || `Upload failed with status ${res.status}`);
       }
 
-      const remoteFailed = data.remoteResult == null ||
-        (data.remoteResult && data.remoteResult.success === false && !data.remoteResult.skipped);
+      const createdPost = data.post || data;
+      const webhookResult = data.webhookResult;
+      const remoteResult = data.remoteResult;
+      const remoteFailed = remoteResult == null ||
+        (remoteResult && remoteResult.success === false && !remoteResult.skipped);
 
-      if (data.webhookResult?.success) {
+      if (webhookResult?.success) {
         toast.success(remoteFailed ? "Post uploaded and sent to n8n, but remote media upload failed." : "Post uploaded and sent to n8n.");
-      } else if (data.webhookResult?.success === false) {
+      } else if (webhookResult?.success === false) {
         toast.success("Post uploaded, but n8n sending failed.");
-        if (data.webhookResult.error) {
-          setError(data.webhookResult.error);
+        if (webhookResult.error) {
+          setError(webhookResult.error);
         }
       } else if (remoteFailed) {
         toast.success("Post uploaded, but remote media upload failed.");
-        const remoteErr = data.remoteResult;
-        if (remoteErr?.error) {
-          const codePart = remoteErr.code ? ` [${remoteErr.code}]` : "";
-          setError(`Remote upload failed: ${remoteErr.error}${codePart}`);
+        if (remoteResult?.error) {
+          const codePart = remoteResult.code ? ` [${remoteResult.code}]` : "";
+          setError(`Remote upload failed: ${remoteResult.error}${codePart}`);
         } else {
           setError("Remote media upload failed.");
         }
       } else {
         toast.success("Post uploaded successfully.");
       }
-      onCreated(data);
+      onCreated(createdPost);
     } catch (err) {
-      setError(err.message);
-      toast.error(err.message);
+      if (err.name === "AbortError") {
+        setError("Request timed out. The post may still be processing.");
+        toast.error("Upload timed out.");
+      } else {
+        setError(err.message);
+        toast.error(err.message);
+      }
     } finally {
+      clearTimeout(timeoutId);
       setUploading(false);
     }
   }
