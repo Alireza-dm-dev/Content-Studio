@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
+import { selectCameraMovement } from "@/lib/video-camera-movements";
 
 const EXPECTED_PROMPT_PREFIX = "Generate a video with the following prompt";
 
@@ -110,11 +111,24 @@ export async function POST(request) {
     console.log("[VideoBrandBased] Brand identity summary length:", brandIdentitySummary.length);
 
     // ── Normalize cinematic controls: only explicit (non-Auto) values ────
+    // Camera movement is resolved deterministically via the shared module
+    // when not explicitly set by the user.
     const explicitControls = [];
     for (const [key, label] of Object.entries(CONTROL_LABELS)) {
       if (isExplicitControl(body[key])) {
         explicitControls.push(`${label}: ${String(body[key]).trim()}`);
       }
+    }
+
+    // If camera movement is not explicit, resolve it deterministically
+    if (!isExplicitControl(body.cameraMovement)) {
+      const genre = (videoGoal || videoFormat || "social-media-reel").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      const selected = selectCameraMovement({
+        genre,
+        platform,
+        actionLevel: videoGoal?.toLowerCase().includes("action") ? "high" : "medium",
+      });
+      explicitControls.push(`Camera movement: ${selected.label} — ${selected.execution}, ${selected.speed} speed, ends ${selected.endFrame} (deterministically selected)`);
     }
 
     // ── Build userInput ─────────────────────────────────────────────────

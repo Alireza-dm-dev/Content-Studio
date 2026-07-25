@@ -2,12 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
-
-// ── Cinematic Controls helpers ────────────────────────────────────────────────
-// Optional per-request overrides for speed ramp, camera movement, camera,
-// lens, focal length, and aperture. When missing/empty, fall back to a
-// consistent "infer from context" signal for the AI.
-const CINEMATIC_FALLBACK = "Auto — infer from context";
+import { selectCameraMovement } from "@/lib/video-camera-movements";
 
 // The video-prompt-enhancer-raw-idea template always starts its final
 // structured prompt with this exact sentence. If the model instead detects
@@ -16,13 +11,23 @@ const CINEMATIC_FALLBACK = "Auto — infer from context";
 // a successful, saveable video prompt.
 const EXPECTED_PROMPT_PREFIX = "Generate a video with the following prompt";
 
+const CINEMATIC_FALLBACK = "Auto — infer from context";
+
+function resolveCameraMovement(rawValue, context = {}) {
+  if (rawValue && rawValue !== "Auto" && rawValue !== "Auto — infer from context") {
+    const selected = selectCameraMovement({ ...context, userMovement: rawValue });
+    return `${selected.label} — ${selected.execution}, ${selected.speed} speed, ends ${selected.endFrame}`;
+  }
+  const selected = selectCameraMovement(context);
+  return `${selected.label} — ${selected.execution}, ${selected.speed} speed, ends ${selected.endFrame}`;
+}
+
 function cinematicValue(value) {
   if (value === undefined || value === null) return CINEMATIC_FALLBACK;
   const str = String(value).trim();
   return str ? str : CINEMATIC_FALLBACK;
 }
 
-// Reword Auto values so the AI infers a real choice instead of echoing "Auto".
 function cinematicLine(label, value) {
   if (value === "Auto" || value === CINEMATIC_FALLBACK) {
     return `${label}: Auto selected by user — choose the best actual ${label.toLowerCase()} for this scene and write that value in the final output. Do not write "Auto" or "Auto — infer from context".`;
@@ -77,9 +82,18 @@ export async function POST(request) {
     }
 
     // ── Cinematic Controls (optional requested values) ──────────────────────────
+    // Camera movement is resolved deterministically via the shared module:
+    // - User explicit values are preserved
+    // - Auto/missing values are inferred from genre/style/scene/action context
+    const cameraMovementLine = resolveCameraMovement(cameraMovement, {
+      genre: videoType,
+      style: videoType,
+      actionLevel: "medium",
+    });
+
     const cinematicControls = {
       speedRamp:      cinematicValue(speedRamp),
-      cameraMovement: cinematicValue(cameraMovement),
+      cameraMovement: cameraMovementLine,
       camera:         cinematicValue(camera),
       lens:           cinematicValue(lens),
       focalLength:    cinematicValue(focalLength),

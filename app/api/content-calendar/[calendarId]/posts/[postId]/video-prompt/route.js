@@ -2,11 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
+import { selectCameraMovement } from "@/lib/video-camera-movements";
 
 // ── Cinematic Controls helpers ────────────────────────────────────────────────
-// Resolved postData values for speed ramp, camera movement, camera, lens,
-// focal length, and aperture. When missing/empty, fall back to a consistent
-// "infer from context" signal for the AI.
 const CINEMATIC_FALLBACK = "Auto — infer from context";
 
 function cinematicValue(value) {
@@ -15,12 +13,20 @@ function cinematicValue(value) {
   return str ? str : CINEMATIC_FALLBACK;
 }
 
-// Reword Auto values so the AI infers a real choice instead of echoing "Auto".
 function cinematicLine(label, value) {
   if (value === "Auto" || value === CINEMATIC_FALLBACK) {
     return `${label}: Auto selected by user — choose the best actual ${label.toLowerCase()} for this scene and write that value in the final output. Do not write "Auto" or "Auto — infer from context".`;
   }
   return `${label}: ${value}`;
+}
+
+function resolveCameraMovement(rawValue, context = {}) {
+  if (rawValue && rawValue !== "Auto" && rawValue !== "Auto — infer from context") {
+    const selected = selectCameraMovement({ ...context, userMovement: rawValue });
+    return `${selected.label} — ${selected.execution}, ${selected.speed} speed, ends ${selected.endFrame}`;
+  }
+  const selected = selectCameraMovement(context);
+  return `${selected.label} — ${selected.execution}, ${selected.speed} speed, ends ${selected.endFrame}`;
 }
 
 // ── Normalize post ────────────────────────────────────────────────────────────
@@ -110,10 +116,18 @@ export async function POST(request, { params }) {
     const { brandVisualIdentity } = normalizeBrandIdentityOutput(identity);
     const brandSummary = createCompactBrandVisualIdentitySummaryForVideoPrompt(brandVisualIdentity);
 
-    // ── Cinematic Controls (resolved from postData, fallback to "infer from context") ─
+    // ── Cinematic Controls (resolved from postData, deterministic camera movement) ─
+    const genre = (norm.videoRawIdea || norm.format || "social-media-reel").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const cameraMovementLine = resolveCameraMovement(norm.cameraMovement, {
+      genre,
+      style: norm.visualMood || "social-media",
+      platform: norm.platform || "",
+      actionLevel: "medium",
+    });
+
     const cinematicControls = {
       speedRamp:      cinematicValue(norm.speedRamp),
-      cameraMovement: cinematicValue(norm.cameraMovement),
+      cameraMovement: cameraMovementLine,
       camera:         cinematicValue(norm.camera),
       lens:           cinematicValue(norm.lens),
       focalLength:    cinematicValue(norm.focalLength),

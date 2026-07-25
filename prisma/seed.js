@@ -46,11 +46,13 @@ Cinematic Controls:
 
 Field rules:
 - Speed ramp — if the input is "Auto" or "Auto — infer from context", choose one of: Slow-mo, Ramp Up, Flash In, Flash Out, Bullet Time, Hero Moment, or a short custom value that better fits the scene. Otherwise keep the given value exactly.
-- Camera movement — if the input is "Auto" or "Auto — infer from context", choose one of: Static, Handheld, Zoom Out, Zoom in, Camera follows, Pan left, Pan right, Tilt up, Tilt down, Orbit around, Dolly in, Dolly out, Jib up, Jib down, Drone shot, Dolly left, Dolly right, 360 roll, or a short custom value that better fits the scene. Otherwise keep the given value exactly.
+- Camera movement — the system pre-selects the camera movement deterministically based on genre, style, scene, action level, and platform. The input value is already resolved (never "Auto"). Use the exact value provided. Do not override or change it.
 - Camera — if the input is "Auto" or "Auto — infer from context", choose one of: Raw 16 mm, Fine film, Clean Digital. Otherwise keep the given value exactly.
 - Lens — if the input is "Auto" or "Auto — infer from context", choose one of: extreme macro, anamorphic, warm halation, vintage haze. Otherwise keep the given value exactly.
 - Focal length — if the input is "Auto" or "Auto — infer from context", choose one of (in mm): 45, 75, 50, 35, 14, 8. Otherwise keep the given value exactly.
 - Aperture — if the input is "Auto" or "Auto — infer from context", choose one of: f/11 deep focus, f/1.4 wide open, f/4 moderate. Otherwise keep the given value exactly.
+
+Camera movement is pre-selected by the system's deterministic camera movement module (genre/style/scene/action-driven taxonomy). The provided camera movement value is the final resolved choice — do not override it. Use it exactly as given.
 
 If the input below includes a "CINEMATIC CONTROLS" section with requested values, treat each value per the field rules above: a specific (non-Auto) value must be honored exactly unless it clearly conflicts with the visual context, and any value of "Auto" or "Auto — infer from context" must be replaced with a real choice from the allowed options.
 
