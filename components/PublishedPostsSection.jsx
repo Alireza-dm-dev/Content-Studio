@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
+import { toast } from "sonner";
 import { MessageCircle } from "lucide-react";
 import PublishedPostUploadForm from "@/components/PublishedPostUploadForm";
 import PostDetailModal from "@/components/PostDetailModal";
@@ -184,12 +185,24 @@ function formatPostIdShort(postNumber) {
   return `P-${String(postNumber).padStart(3, "0")}`;
 }
 
-export default function PublishedPostsSection({ brand }) {
+const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand, onCrossPlatformPostCreated }, ref) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [selectedPost, setSelectedPost] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
+
+  function addPostToSection(post) {
+    setPosts((prev) => {
+      const exists = prev.some((p) => p.id === post.id);
+      if (exists) return prev.map((p) => (p.id === post.id ? post : p));
+      return [{ ...post, commentCount: post.commentCount ?? 0 }, ...prev];
+    });
+  }
+
+  useImperativeHandle(ref, () => ({
+    addPost: addPostToSection,
+  }));
 
   function handleCountChange(newCount) {
     setPosts((prev) =>
@@ -232,6 +245,14 @@ export default function PublishedPostsSection({ brand }) {
       prev.map((p) => (p.id === updatedPost.id ? updatedPost : p))
     );
     setSelectedPost(updatedPost);
+  }
+
+  function handleCrossPlatformCreated(createdPost) {
+    if (createdPost.platform === "Instagram") {
+      addPostToSection(createdPost);
+    } else {
+      onCrossPlatformPostCreated?.(createdPost);
+    }
   }
 
   function handleDeleted(deletedId) {
@@ -340,6 +361,7 @@ export default function PublishedPostsSection({ brand }) {
           onClose={() => setSelectedPost(null)}
           onUpdated={handleUpdated}
           onDeleted={handleDeleted}
+          onCrossPlatformCreated={handleCrossPlatformCreated}
         />
       )}
 
@@ -357,4 +379,6 @@ export default function PublishedPostsSection({ brand }) {
       )}
     </section>
   );
-}
+});
+
+export default PublishedPostsSection;

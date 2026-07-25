@@ -9,6 +9,7 @@ import {
   formatToDateTimeLocalInTz,
   formatScheduledDateInTz,
 } from "@/lib/timezone";
+import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -294,6 +295,7 @@ export default function LinkedInPostDetailModal({
   onClose,
   onUpdated,
   onDeleted,
+  onCrossPlatformCreated,
 }) {
   const [copied, setCopied] = useState(false);
   const [showJson, setShowJson] = useState(false);
@@ -302,6 +304,7 @@ export default function LinkedInPostDetailModal({
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showAdapt, setShowAdapt] = useState(false);
 
   // Track whether the modal has already been closed so late async responses
   // (e.g. a slow DELETE) do not mutate parent state or reopen the modal.
@@ -531,6 +534,13 @@ export default function LinkedInPostDetailModal({
     }
   }
 
+  function handleAdaptCreated(createdPost) {
+    if (onCrossPlatformCreated) onCrossPlatformCreated(createdPost);
+    setShowAdapt(false);
+    closedRef.current = true;
+    onClose();
+  }
+
   function handleCancelDelete() {
     setConfirmDelete(false);
   }
@@ -611,6 +621,27 @@ export default function LinkedInPostDetailModal({
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             {!editing && (
               <>
+                <button
+                  type="button"
+                  onClick={() => setShowAdapt(true)}
+                  disabled={busy}
+                  aria-label="Adapt for Instagram"
+                  style={{
+                    ...inkBtn,
+                    opacity: busy ? 0.5 : 1,
+                    borderColor: "transparent",
+                    background: "var(--sketch-paper-raw)",
+                    color: "var(--sketch-ink)",
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "inline-block", flexShrink: 0 }}>
+                    <rect width="24" height="24" rx="5" fill="url(#ig-adapt-li)" />
+                    <defs><linearGradient id="ig-adapt-li" x1="0" y1="0" x2="24" y2="24"><stop offset="0%" stopColor="#F58529"/><stop offset="50%" stopColor="#DD2A7B"/><stop offset="100%" stopColor="#8134AF"/></linearGradient></defs>
+                    <circle cx="12" cy="12" r="5.5" stroke="#fff" strokeWidth="1.5" fill="none" />
+                    <circle cx="18" cy="6" r="1.2" fill="#fff" />
+                  </svg>
+                  Adapt for Instagram
+                </button>
                 <button
                   type="button"
                   onClick={handleEdit}
@@ -1081,6 +1112,17 @@ export default function LinkedInPostDetailModal({
           </div>
         </div>
       </div>
+
+      {showAdapt && (
+        <CrossPlatformPostModal
+          sourcePost={post}
+          sourcePlatform="LinkedIn"
+          targetPlatform="Instagram"
+          brandId={brandId}
+          onCreated={handleAdaptCreated}
+          onClose={() => setShowAdapt(false)}
+        />
+      )}
     </div>
   );
 }

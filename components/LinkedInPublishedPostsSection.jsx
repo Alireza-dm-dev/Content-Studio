@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
@@ -262,13 +262,25 @@ function PostRow({ post, onOpen, onCommentClick }) {
   );
 }
 
-export default function LinkedInPublishedPostsSection({ brand }) {
+const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPostsSection({ brand, onCrossPlatformPostCreated }, ref) {
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [selectedPost, setSelectedPost] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
+
+  function addPostToSection(post) {
+    setPosts((prev) => {
+      const exists = prev.some((p) => p.id === post.id);
+      if (exists) return prev.map((p) => (p.id === post.id ? post : p));
+      return [{ ...post, commentCount: post.commentCount ?? 0 }, ...prev];
+    });
+  }
+
+  useImperativeHandle(ref, () => ({
+    addPost: addPostToSection,
+  }));
 
   function handleCountChange(newCount) {
     setPosts((prev) =>
@@ -326,6 +338,14 @@ export default function LinkedInPublishedPostsSection({ brand }) {
       prev.map((p) => (p.id === updatedPost.id ? updatedPost : p)),
     );
     setSelectedPost(updatedPost);
+  }
+
+  function handleCrossPlatformCreated(createdPost) {
+    if (createdPost.platform === "LinkedIn") {
+      addPostToSection(createdPost);
+    } else {
+      onCrossPlatformPostCreated?.(createdPost);
+    }
   }
 
   function handleDeleted(deletedId) {
@@ -486,6 +506,7 @@ export default function LinkedInPublishedPostsSection({ brand }) {
           onClose={() => setSelectedPost(null)}
           onUpdated={handleUpdated}
           onDeleted={handleDeleted}
+          onCrossPlatformCreated={handleCrossPlatformCreated}
         />
       )}
 
@@ -503,4 +524,6 @@ export default function LinkedInPublishedPostsSection({ brand }) {
       )}
     </section>
   );
-}
+});
+
+export default LinkedInPublishedPostsSection;

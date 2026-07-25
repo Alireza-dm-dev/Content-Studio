@@ -7,6 +7,7 @@ import {
   formatToDateTimeLocalInTz,
   formatScheduledDateInTz,
 } from "@/lib/timezone";
+import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -120,7 +121,7 @@ function formatPostIdShort(postNumber) {
   return `P-${String(postNumber).padStart(3, "0")}`;
 }
 
-export default function PostDetailModal({ post, brandId, onClose, onUpdated, onDeleted }) {
+export default function PostDetailModal({ post, brandId, onClose, onUpdated, onDeleted, onCrossPlatformCreated }) {
   const [copied, setCopied] = useState(false);
   const [showJson, setShowJson] = useState(false);
   const [carouselIdx, setCarouselIdx] = useState(0);
@@ -129,6 +130,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showAdapt, setShowAdapt] = useState(false);
   const closedRef = useRef(false);
 
   // Edit form state
@@ -336,6 +338,13 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
     setCarouselIdx((prev) => (prev < orderedMedia.length - 1 ? prev + 1 : 0));
   }
 
+  function handleAdaptCreated(createdPost) {
+    if (onCrossPlatformCreated) onCrossPlatformCreated(createdPost);
+    setShowAdapt(false);
+    closedRef.current = true;
+    onClose();
+  }
+
   function handleClose() {
     closedRef.current = true;
     onClose();
@@ -428,6 +437,21 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             {!editing && (
               <>
+                <button
+                  type="button"
+                  onClick={() => setShowAdapt(true)}
+                  style={{
+                    ...inkBtn,
+                    borderColor: "#0A66C2",
+                    color: "#0A66C2",
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ display: "inline-block", flexShrink: 0 }}>
+                    <rect width="24" height="24" rx="4" fill="#0A66C2" />
+                    <path d="M6.94 8.2H4.3V18h2.64V8.2zM5.62 4.3a1.53 1.53 0 1 0 0 3.06 1.53 1.53 0 0 0 0-3.06zM19.7 18v-5.36c0-2.86-1.53-4.19-3.57-4.19-1.64 0-2.37.9-2.78 1.54V8.2H10.7c.04.94 0 9.8 0 9.8h2.64v-5.47c0-.29.02-.58.1-.79.23-.58.76-1.18 1.65-1.18.16 0 1.13 0 1.13 1.18V18h2.48z" fill="#fff"/>
+                  </svg>
+                  Adapt for LinkedIn
+                </button>
                 <button
                   type="button"
                   onClick={handleEdit}
@@ -781,6 +805,17 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
           </div>
         </div>
       </div>
+
+      {showAdapt && (
+        <CrossPlatformPostModal
+          sourcePost={post}
+          sourcePlatform="Instagram"
+          targetPlatform="LinkedIn"
+          brandId={brandId}
+          onCreated={handleAdaptCreated}
+          onClose={() => setShowAdapt(false)}
+        />
+      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -277,6 +277,17 @@ function CalendarSection({ brand, initialCalendars }) {
 }
 
 export default function WorkspaceClient({ brand, initialCalendars = [] }) {
+  const igSectionRef = useRef(null);
+  const liSectionRef = useRef(null);
+
+  function handleCrossPlatformPostCreated(createdPost) {
+    if (createdPost.platform === "LinkedIn") {
+      liSectionRef.current?.addPost(createdPost);
+    } else if (createdPost.platform === "Instagram") {
+      igSectionRef.current?.addPost(createdPost);
+    }
+  }
+
   return (
     <div style={{ padding: "36px 44px 48px" }}>
       {/* Top bar */}
@@ -359,10 +370,10 @@ export default function WorkspaceClient({ brand, initialCalendars = [] }) {
       <CalendarSection brand={brand} initialCalendars={initialCalendars} />
 
       {/* Instagram Published Posts section */}
-      <PublishedPostsSection brand={brand} />
+      <PublishedPostsSection ref={igSectionRef} brand={brand} onCrossPlatformPostCreated={handleCrossPlatformPostCreated} />
 
       {/* LinkedIn Published Posts section */}
-      <LinkedInPublishedPostsSection brand={brand} />
+      <LinkedInPublishedPostsSection ref={liSectionRef} brand={brand} onCrossPlatformPostCreated={handleCrossPlatformPostCreated} />
 
       {/* Workspace Review Links section */}
       <WorkspaceReviewPanel brandId={brand.id} />
