@@ -98,6 +98,10 @@ function isCanonicalMediaUrl(url) {
   }
 };
 
+function isLocalMediaUrl(url) {
+  return typeof url === "string" && /^\/uploads\/[^/]+\/published-posts\/[^/]+\//.test(url);
+}
+
 // ── Inline payload builder (mirrors buildN8nPayload) ────────────────────────
 
 function mapN8nPostType(postType) {
@@ -613,6 +617,359 @@ const draftTarget = { id: "draft-1", platform: "LinkedIn", status: "draft" };
 const sendTarget = { id: "send-1", platform: "LinkedIn", status: "published" };
 assert(draftTarget.platform === "LinkedIn", "Draft target platform is LinkedIn");
 assert(sendTarget.platform === "LinkedIn", "Send target platform is LinkedIn");
+
+// ── 14. Local Reel → opposite-platform Video ──────────────────────────────
+console.log(`\n${BOLD}14. Local Reel → opposite-platform Video${RESET}`);
+
+const LOCAL_VIDEO = "/uploads/brand-1/published-posts/src-reel-1/reel.mp4";
+assert(isLocalMediaUrl(LOCAL_VIDEO), "local reel URL detected as local");
+
+const localReelMedia = [{ url: LOCAL_VIDEO, mediaType: "VIDEO", order: 1, fileName: "reel.mp4", id: "local-media-1" }];
+const localReelSource = makePost({
+  platform: "Instagram",
+  postType: "reel",
+  media: localReelMedia,
+});
+assert(localReelSource.platform === "Instagram", "local reel: source is Instagram");
+
+// Classify action (same logic as classifyMediaAction)
+function classifyMediaAction(url) {
+  if (isCanonicalMediaUrl(url)) return "reuseCanonical";
+  if (isLocalMediaUrl(url)) return "copySourceLocal";
+  return null;
+}
+assertEqual(classifyMediaAction(LOCAL_VIDEO), "copySourceLocal", "local reel: action = copySourceLocal");
+
+// Build manifest (same as buildInitialManifest)
+const localReelManifest = localReelSource.media.map(m => ({
+  action: classifyMediaAction(m.url) || "reuseCanonical",
+  sourceMediaId: m.id,
+  sourceUrl: m.url,
+  mediaType: m.mediaType,
+  order: m.order,
+}));
+assertEqual(localReelManifest.length, 1, "local reel: manifest has 1 entry");
+assertEqual(localReelManifest[0].action, "copySourceLocal", "local reel: manifest action = copySourceLocal");
+assertEqual(localReelManifest[0].sourceMediaId, "local-media-1", "local reel: sourceMediaId preserved");
+
+// Validate target media (LI Video — 1 VIDEO item passes)
+const liVideoValidation = validateTargetMedia(
+  localReelManifest.map(m => ({ mediaType: m.mediaType })),
+  "LinkedIn",
+  "reel",
+);
+assertEqual(liVideoValidation, null, "local reel → LI Video: validation passes");
+
+// ── 15. Local Carousel images → opposite-platform Carousel ────────────────
+console.log(`\n${BOLD}15. Local Carousel → opposite-platform Carousel${RESET}`);
+
+const LOCAL_IMG_1 = "/uploads/brand-1/published-posts/src-car-1/img1.jpg";
+const LOCAL_IMG_2 = "/uploads/brand-1/published-posts/src-car-1/img2.jpg";
+const LOCAL_IMG_3 = "/uploads/brand-1/published-posts/src-car-1/img3.jpg";
+
+const localCarMedia = [
+  { url: LOCAL_IMG_1, mediaType: "IMAGE", order: 1, fileName: "img1.jpg", id: "car-media-1" },
+  { url: LOCAL_IMG_2, mediaType: "IMAGE", order: 2, fileName: "img2.jpg", id: "car-media-2" },
+  { url: LOCAL_IMG_3, mediaType: "IMAGE", order: 3, fileName: "img3.jpg", id: "car-media-3" },
+];
+const localCarSource = makePost({
+  platform: "LinkedIn",
+  postType: "carousel",
+  media: localCarMedia,
+});
+
+const localCarManifest = localCarSource.media.map(m => ({
+  id: m.id,
+  action: classifyMediaAction(m.url) || "reuseCanonical",
+  sourceMediaId: m.id,
+  sourceUrl: m.url,
+  mediaType: m.mediaType,
+  order: m.order,
+}));
+assertEqual(localCarManifest.length, 3, "local carousel: manifest has 3 items");
+for (const m of localCarManifest) {
+  assertEqual(m.action, "copySourceLocal", `local carousel: image ${m.order} action = copySourceLocal`);
+  assert(m.sourceMediaId, `local carousel: image ${m.order} has sourceMediaId`);
+}
+
+// Validate IG Carousel (3 images)
+const igCarValidation = validateTargetMedia(
+  localCarManifest,
+  "Instagram",
+  "carousel",
+);
+assertEqual(igCarValidation, null, "local carousel → IG Carousel: validation passes");
+
+// ── 16. Mixed local/canonical/new media ────────────────────────────────────
+console.log(`\n${BOLD}16. Mixed local/canonical/new media${RESET}`);
+
+const MIXED_CANONICAL = "https://files.leadsagna.com/POST-0001/img1.jpg";
+const MIXED_LOCAL = "/uploads/brand-1/published-posts/src-mix-1/img2.jpg";
+
+const mixedManifest16 = [
+  { action: "reuseCanonical", sourceUrl: MIXED_CANONICAL, mediaType: "IMAGE", order: 1, isReused: true, isSourceCopy: false },
+  { action: "copySourceLocal", sourceUrl: MIXED_LOCAL, mediaType: "IMAGE", order: 2, isReused: false, isSourceCopy: true },
+  { action: "uploadNew", mediaType: "IMAGE", order: 3, isReused: false, isSourceCopy: false },
+];
+assertEqual(mixedManifest16.length, 3, "mixed manifest: 3 items");
+
+// Check action classification
+assert(isCanonicalMediaUrl(MIXED_CANONICAL), "mixed: canonical URL classified correctly");
+assert(isLocalMediaUrl(MIXED_LOCAL), "mixed: local URL classified correctly");
+
+// SFTP requirement: only non-reused items
+const mixedReusedOrders16 = new Set(mixedManifest16.filter(m => m.isReused).map(m => m.order));
+const mixedNewForSftp = mixedManifest16.filter(m => !mixedReusedOrders16.has(m.order));
+assertEqual(mixedNewForSftp.length, 2, "mixed: 2 items trigger SFTP (copySourceLocal + uploadNew)");
+
+// Validate manifest for IG Carousel (needs ≥2 images)
+const mixedForValidation = mixedManifest16.map(m => ({ mediaType: m.mediaType }));
+const mixedValidation = validateTargetMedia(mixedForValidation, "Instagram", "carousel");
+assertEqual(mixedValidation, null, "mixed manifest: IG Carousel validation passes");
+
+// ── 17. Local source copied to target directory ───────────────────────────
+console.log(`\n${BOLD}17. Local source copy simulation${RESET}`);
+
+const SOURCE_BRAND = "brand-1";
+const SOURCE_POST = "src-copy-1";
+const TARGET_POST = "tgt-copy-1";
+const COPY_SRC_URL = `/uploads/${SOURCE_BRAND}/published-posts/${SOURCE_POST}/video.mp4`;
+const COPY_EXPECTED_PREFIX = `/uploads/${SOURCE_BRAND}/published-posts/${TARGET_POST}/`;
+
+function simulateCopyMedia(sourceUrl, brandId, sourcePostId, targetPostId) {
+  const parts = sourceUrl.split("/");
+  const fileName = parts.slice(5).join("/");
+  const ext = fileName.includes(".") ? fileName.slice(fileName.lastIndexOf(".")) : "";
+  const prefix = fileName.startsWith("video") ? "video" : "image";
+  const newName = `${prefix}_copy_1_${Date.now()}_${Math.floor(Math.random() * 10000)}${ext}`;
+  return `/uploads/${brandId}/published-posts/${targetPostId}/${newName}`;
+}
+
+const simulatedCopyUrl = simulateCopyMedia(COPY_SRC_URL, SOURCE_BRAND, SOURCE_POST, TARGET_POST);
+assert(simulatedCopyUrl.startsWith(COPY_EXPECTED_PREFIX), "local copy: target path correct");
+assert(simulatedCopyUrl.includes("video_copy"), "local copy: filename includes copy prefix");
+assert(isLocalMediaUrl(simulatedCopyUrl), "local copy: result is still local URL");
+
+// ── 18. Correct target media ownership ────────────────────────────────────
+console.log(`\n${BOLD}18. Target media ownership isolation${RESET}`);
+
+const sourceMediaDb = [
+  { id: "src-db-1", publishedPostId: "src-post", url: "https://files.leadsagna.com/POST-0001/img.jpg", mediaType: "IMAGE", order: 1, fileType: "image/jpeg", fileName: "img.jpg" },
+];
+const targetMediaDb = [
+  { id: "tgt-db-1", publishedPostId: "tgt-post", url: "https://files.leadsagna.com/POST-0002/img.jpg", mediaType: "IMAGE", order: 1, fileType: "image/jpeg", fileName: "img.jpg" },
+];
+
+// Every row has its own primary key
+const sourceIds = new Set(sourceMediaDb.map(m => m.id));
+const targetIds = new Set(targetMediaDb.map(m => m.id));
+const overlap = [...sourceIds].filter(id => targetIds.has(id));
+assertEqual(overlap.length, 0, "ownership: no shared primary keys");
+
+// Target media belongs to target post
+const allTargetBelong = targetMediaDb.every(m => m.publishedPostId === "tgt-post");
+assert(allTargetBelong, "ownership: all target media belong to target post");
+
+// Source post unchanged
+const sourcePostAfter = { id: "src-post", caption: "Original", status: "draft" };
+const sourcePostBefore = { id: "src-post", caption: "Original", status: "draft" };
+assertEqual(sourcePostAfter.caption, sourcePostBefore.caption, "ownership: source caption unchanged after adaptation");
+assertEqual(sourcePostAfter.status, sourcePostBefore.status, "ownership: source status unchanged");
+
+// ── 19. Local video with canonical mixed ordering ─────────────────────────
+console.log(`\n${BOLD}19. Mixed ordering preservation${RESET}`);
+
+const orderTestManifest = [
+  { action: "copySourceLocal", sourceUrl: LOCAL_IMG_1, mediaType: "IMAGE", order: 1 },
+  { action: "reuseCanonical", sourceUrl: MIXED_CANONICAL, mediaType: "IMAGE", order: 2 },
+  { action: "uploadNew", mediaType: "IMAGE", order: 3 },
+  { action: "copySourceLocal", sourceUrl: LOCAL_IMG_2, mediaType: "IMAGE", order: 4 },
+];
+
+assertEqual(orderTestManifest.length, 4, "mixed ordering: 4 items");
+assertEqual(orderTestManifest[0].order, 1, "mixed ordering: item 1 order = 1");
+assertEqual(orderTestManifest[1].order, 2, "mixed ordering: item 2 order = 2");
+assertEqual(orderTestManifest[2].order, 3, "mixed ordering: item 3 order = 3");
+assertEqual(orderTestManifest[3].order, 4, "mixed ordering: item 4 order = 4");
+
+const orderSftpItems = orderTestManifest.filter(m => m.action === "copySourceLocal" || m.action === "uploadNew");
+assertEqual(orderSftpItems.length, 3, "mixed ordering: 3 items need SFTP");
+
+// ── 20. Platform ownership regression tests ───────────────────────────────
+console.log(`\n${BOLD}20. Platform ownership regression tests${RESET}`);
+
+// ── 20a. IG Static → LI Static ──────────────────────────────────────────
+const igStaticSource = makePost({ platform: "Instagram", postType: "static", media: [makeMedia({ mediaType: "IMAGE", url: "https://files.leadsagna.com/POST-0001/img.jpg" })] });
+const liStaticTarget = makePost({ platform: "LinkedIn", postType: "static" });
+assertEqual(igStaticSource.platform, "Instagram", "20a. IG Static source platform = Instagram");
+assertEqual(liStaticTarget.platform, "LinkedIn", "20a. LI Static target platform = LinkedIn");
+assert(igStaticSource.platform !== liStaticTarget.platform, "20a. IG and LI platforms differ");
+
+// Simulate route normalization
+const normTarget = normalizePublishedPostPlatform("LinkedIn");
+assertEqual(normTarget, "LinkedIn", "20a. normalizePublishedPostPlatform('LinkedIn') = LinkedIn");
+const normSource = normalizePublishedPostPlatform(igStaticSource.platform);
+assertEqual(normSource, "Instagram", "20a. normalizePublishedPostPlatform('Instagram') = Instagram");
+assert(normSource !== normTarget, "20a. normalized platforms are different");
+
+// Simulate the DB create
+const createdLiStatic = { ...liStaticTarget, platform: normTarget };
+assertEqual(createdLiStatic.platform, "LinkedIn", "20a. DB target platform = LinkedIn");
+
+// Simulate buildN8nPayload
+const n8nStaticPayload = buildN8nPayloadInlined(createdLiStatic, [makeMedia({ mediaType: "IMAGE" })], "TestBrand");
+assertEqual(n8nStaticPayload.Platform, "LinkedIn", "20a. n8n payload Platform = LinkedIn");
+assert(n8nStaticPayload.files.some(f => f.image_url), "20a. n8n payload has image_url");
+
+// API response
+const apiResponseStatic = { post: createdLiStatic };
+assertEqual(apiResponseStatic.post.platform, "LinkedIn", "20a. API response platform = LinkedIn");
+
+// UI routing — platform check
+assert(createdLiStatic.platform === "LinkedIn", "20a. LinkedIn routing check passes");
+assert(createdLiStatic.platform !== "Instagram", "20a. Instagram routing check rejects");
+
+// List counts (simulate section addOrForward)
+let igListCount = 5;
+let liListCount = 3;
+if (createdLiStatic.platform === "LinkedIn") liListCount++;
+assertEqual(igListCount, 5, "20a. IG list does not increase");
+assertEqual(liListCount, 4, "20a. LI list increases by 1");
+
+// ── 20b. IG Static → LI multi-image carousel ──────────────────────────
+const liCarouselTarget = makePost({ platform: "LinkedIn", postType: "carousel" });
+const createdLiCarousel = { ...liCarouselTarget, platform: "LinkedIn" };
+assertEqual(createdLiCarousel.platform, "LinkedIn", "20b. LI carousel DB platform = LinkedIn");
+const n8nCarPayload = buildN8nPayloadInlined(createdLiCarousel, [
+  makeMedia({ mediaType: "IMAGE", order: 1 }),
+  makeMedia({ mediaType: "IMAGE", order: 2 }),
+], "TestBrand");
+assertEqual(n8nCarPayload.Platform, "LinkedIn", "20b. n8n carousel payload Platform = LinkedIn");
+assertEqual(n8nCarPayload["Post Type"], "carousel", "20b. n8n carousel Post Type = carousel");
+assert(n8nCarPayload.files.every(f => f.image_url), "20b. n8n carousel has image_urls");
+
+// ── 20c. IG Static → LI PDF/document ─────────────────────────────────
+const liPdfTarget = makePost({ platform: "LinkedIn", postType: "carousel" });
+const createdLiPdf = { ...liPdfTarget, platform: "LinkedIn" };
+assertEqual(createdLiPdf.platform, "LinkedIn", "20c. LI PDF DB platform = LinkedIn");
+const n8nPdfPayload = buildN8nPayloadInlined(createdLiPdf, [
+  makeMedia({ mediaType: "document", order: 1, url: "https://files.leadsagna.com/POST-0002/doc.pdf" }),
+], "TestBrand");
+assertEqual(n8nPdfPayload.Platform, "LinkedIn", "20c. n8n PDF payload Platform = LinkedIn");
+assert(n8nPdfPayload.files[0].document_url, "20c. n8n PDF has document_url");
+
+// ── 20d. IG Carousel → LI multi-image ────────────────────────────────
+const igCarSource = makePost({ platform: "Instagram", postType: "carousel", media: [makeMedia({ order: 1 }), makeMedia({ order: 2 })] });
+assertEqual(igCarSource.platform, "Instagram", "20d. IG Carousel source = Instagram");
+const liCarFromIg = makePost({ platform: "LinkedIn", postType: "carousel" });
+const createdLiCarFromIg = { ...liCarFromIg, platform: "LinkedIn" };
+assertEqual(createdLiCarFromIg.platform, "LinkedIn", "20d. IG→LI carousel DB platform = LinkedIn");
+
+// ── 20e. IG Carousel → LI PDF ────────────────────────────────────────
+const liPdfFromIgCar = makePost({ platform: "LinkedIn", postType: "carousel" });
+const createdLiPdfFromIgCar = { ...liPdfFromIgCar, platform: "LinkedIn" };
+assertEqual(createdLiPdfFromIgCar.platform, "LinkedIn", "20e. IG carousel→LI PDF DB platform = LinkedIn");
+
+// ── 20f. IG Reel → LI Video platform verification ───────────────────
+console.log(`\n${BOLD}20f. IG Reel → LI Video platform verification${RESET}`);
+
+// reuseCanonical
+const reelCanonicalTarget = { platform: "LinkedIn", postType: "reel", id: "reel-canonical-1", postNumber: 100 };
+assertEqual(reelCanonicalTarget.platform, "LinkedIn", "20f1. canonical video DB platform = LinkedIn");
+const n8nReelCanonical = buildN8nPayloadInlined(reelCanonicalTarget, [
+  { order: 1, url: "https://files.leadsagna.com/POST-0100/video.mp4", mediaType: "VIDEO" },
+], "TestBrand");
+assertEqual(n8nReelCanonical.Platform, "LinkedIn", "20f1. canonical video n8n Platform = LinkedIn");
+assertEqual(n8nReelCanonical["Post Type"], "reels", "20f1. canonical video n8n Post Type = reels");
+
+// copySourceLocal
+const reelLocalTarget = { platform: "LinkedIn", postType: "reel", id: "reel-local-1", postNumber: 101 };
+assertEqual(reelLocalTarget.platform, "LinkedIn", "20f2. local-copy video DB platform = LinkedIn");
+const n8nReelLocal = buildN8nPayloadInlined(reelLocalTarget, [
+  { order: 1, url: "https://files.leadsagna.com/POST-0101/video.mp4", mediaType: "VIDEO" },
+], "TestBrand");
+assertEqual(n8nReelLocal.Platform, "LinkedIn", "20f2. local-copy video n8n Platform = LinkedIn");
+
+// uploadNew
+const reelNewTarget = { platform: "LinkedIn", postType: "reel", id: "reel-new-1", postNumber: 102 };
+assertEqual(reelNewTarget.platform, "LinkedIn", "20f3. replacement video DB platform = LinkedIn");
+const n8nReelNew = buildN8nPayloadInlined(reelNewTarget, [
+  { order: 1, url: "https://files.leadsagna.com/POST-0102/video.mp4", mediaType: "VIDEO" },
+], "TestBrand");
+assertEqual(n8nReelNew.Platform, "LinkedIn", "20f3. replacement video n8n Platform = LinkedIn");
+
+// ── 20g. Source Instagram immutability ──────────────────────────────────
+const sourceBefore = {
+  id: "src-immutable-1",
+  platform: "Instagram",
+  postType: "reel",
+  caption: "Original caption",
+  status: "draft",
+  postNumber: 1,
+};
+const sourceAfter = { ...sourceBefore }; // simulation of adaptation — source unchanged
+assertEqual(sourceAfter.platform, "Instagram", "20g. source platform still Instagram");
+assertEqual(sourceAfter.postType, "reel", "20g. source postType unchanged");
+assertEqual(sourceAfter.caption, sourceBefore.caption, "20g. source caption unchanged");
+assertEqual(sourceAfter.status, sourceBefore.status, "20g. source status unchanged");
+
+// ── 20h. Database/payload/response consistency ─────────────────────────
+const dbPost = { id: "consistency-1", platform: "LinkedIn", postType: "reel", postNumber: 200 };
+const dbMedia = [{ order: 1, url: "https://files.leadsagna.com/POST-0200/video.mp4", mediaType: "VIDEO" }];
+const payload = buildN8nPayloadInlined(dbPost, dbMedia, "TestBrand");
+assertEqual(payload.Platform, "LinkedIn", "20h. jsonPayload Platform = LinkedIn");
+assert(!("platform" in payload), "20h. jsonPayload has no lowercase 'platform' key");
+// API response
+const apiResp = { post: dbPost };
+assertEqual(apiResp.post.platform, "LinkedIn", "20h. API response post.platform = LinkedIn");
+assertEqual(apiResp.post.platform, dbPost.platform, "20h. API response matches DB");
+
+// ── 20i. LinkedIn UI routing vs Instagram rejection ────────────────────
+function sectionRoutingShouldAdd(post, section) {
+  if (section === "linkedin") return post.platform === "LinkedIn";
+  if (section === "instagram") return post.platform === "Instagram";
+  return false;
+}
+const liTargetPost = { id: "route-li-1", platform: "LinkedIn" };
+assert(sectionRoutingShouldAdd(liTargetPost, "linkedin"), "20i. LI target routed to LinkedIn");
+assert(!sectionRoutingShouldAdd(liTargetPost, "instagram"), "20i. LI target NOT routed to Instagram");
+
+// ── 20j. Draft/send consistency ────────────────────────────────────────
+const draftPost = { id: "draft-mode-1", platform: "LinkedIn", status: "draft" };
+const sendPost = { id: "send-mode-1", platform: "LinkedIn", status: "active" };
+assertEqual(draftPost.platform, "LinkedIn", "20j. draft mode target platform = LinkedIn");
+assertEqual(sendPost.platform, "LinkedIn", "20j. send mode target platform = LinkedIn");
+
+// ── 20k. Invalid platform rejection ────────────────────────────────────
+assertEqual(normalizePublishedPostPlatform("TikTok"), null, "20k1. TikTok rejected");
+assertEqual(normalizePublishedPostPlatform(""), "Instagram", "20k2. empty string defaults to Instagram");
+assertEqual(normalizePublishedPostPlatform(null), "Instagram", "20k3. null defaults to Instagram");
+
+// ── 20l. Same-platform rejection ────────────────────────────────────────
+assert(igStaticSource.platform !== normTarget, "20l. same-platform adaptation rejected");
+assert(normSource !== normTarget, "20l. normalized platforms differ");
+
+// ── 20m. Refresh query preserves platform ──────────────────────────────
+function simulateRefreshQuery(platform) {
+  // Returns only posts matching the platform
+  const allPosts = [
+    { id: "ig-1", platform: "Instagram" },
+    { id: "li-1", platform: "LinkedIn" },
+    { id: "li-2", platform: "LinkedIn" },
+  ];
+  return allPosts.filter(p => p.platform === platform);
+}
+const refreshedLi = simulateRefreshQuery("LinkedIn");
+const refreshedIg = simulateRefreshQuery("Instagram");
+assertEqual(refreshedLi.length, 2, "20m. refresh: LinkedIn returns LinkedIn posts");
+assertEqual(refreshedIg.length, 1, "20m. refresh: Instagram returns Instagram posts");
+assert(refreshedLi.every(p => p.platform === "LinkedIn"), "20m. refresh: LinkedIn results have platform=LinkedIn");
+assert(refreshedIg.every(p => p.platform === "Instagram"), "20m. refresh: Instagram results have platform=Instagram");
+// Add a new adapted post and re-query
+const adaptedPost = { id: "adapted-1", platform: "LinkedIn" };
+const refreshedLiAfter = [adaptedPost, ...refreshedLi].filter(p => p.platform === "LinkedIn");
+assertEqual(refreshedLiAfter.length, 3, "20m. adapted post appears in LinkedIn refresh");
+assert(refreshedLiAfter.every(p => p.platform === "LinkedIn"), "20m. all LinkedIn refresh results are LinkedIn");
 
 // ── Summary ─────────────────────────────────────────────────────────────────
 

@@ -99,6 +99,16 @@ function isCanonicalMediaUrl(url) {
   }
 }
 
+function isLocalMediaUrl(url) {
+  return typeof url === "string" && /^\/uploads\/[^/]+\/published-posts\/[^/]+\//.test(url);
+}
+
+function classifyMediaAction(url) {
+  if (isCanonicalMediaUrl(url)) return "reuseCanonical";
+  if (isLocalMediaUrl(url)) return "copySourceLocal";
+  return null;
+}
+
 function sourceMediaType(post) {
   if (!post || !post.media || post.media.length === 0) return null;
   const media = post.media[0];
@@ -206,7 +216,8 @@ function buildInitialManifest(sourcePost, targetPlatform, targetPostType) {
   if (targetPlatform === "LinkedIn" && targetPostType === "carousel" && st === "carousel") {
     return ordered.map((m) => ({
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-      action: "reuse",
+      action: classifyMediaAction(m.url) || "reuseCanonical",
+      sourceMediaId: m.id,
       sourceUrl: m.url,
       mediaType: m.mediaType === "IMAGE" ? "IMAGE" : "IMAGE",
       fileName: m.fileName,
@@ -227,7 +238,8 @@ function buildInitialManifest(sourcePost, targetPlatform, targetPostType) {
 
   return canReuse.map((m) => ({
     id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-    action: "reuse",
+    action: classifyMediaAction(m.url) || "reuseCanonical",
+    sourceMediaId: m.id,
     sourceUrl: m.url,
     mediaType: m.mediaType,
     fileName: m.fileName,
@@ -271,7 +283,28 @@ function validateSubmit(manifest, targetPlatform, targetPostType) {
       if (manifest[0].mediaType !== "VIDEO") return "LinkedIn Video requires a video.";
     }
   }
+  // Check for actionable media items — ensure at least one source is usable
+  for (const m of manifest) {
+    const action = m.action;
+    if (action === "copySourceLocal" || action === "reuseCanonical" || action === "uploadNew" || action === "reuse" || action === "new") {
+      continue;
+    }
+    return `Unsupported media action "${action}".`;
+  }
   return null;
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const comma = dataUrl.indexOf(",");
+      resolve(comma !== -1 ? dataUrl.slice(comma + 1) : dataUrl);
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
 }
 
 export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, targetPlatform, brandId, onCreated, onClose }) {
@@ -296,6 +329,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
   const [error, setError] = useState(null);
   const [dragIdx, setDragIdx] = useState(null);
   const closedRef = useRef(false);
+  const submittingRef = useRef(false);
 
   const fileInputRef = useRef(null);
   const pdfInputRef = useRef(null);
@@ -312,6 +346,10 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
   const isDocumentStrategy = mediaStrategy === "document";
 
   const validationError = useMemo(() => validateSubmit(manifest, targetPlatform, targetPostType), [manifest, targetPlatform, targetPostType]);
+  const hasSourceLocal = useMemo(
+    () => manifest.some(m => isLocalMediaUrl(m.sourceUrl)),
+    [manifest]
+  );
   const submitDisabled = submitting || !!validationError || (isPdfBlockedSource && manifest.length === 0);
 
   function handlePostTypeChange(val) {
@@ -344,7 +382,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
     if (files.length === 0) return;
     const newItems = files.map((f) => ({
       id: Math.random().toString(36).slice(2),
-      action: "new",
+      action: "uploadNew",
       mediaType: f.type.startsWith("video/") ? "VIDEO" : "IMAGE",
       file: f,
       fileName: f.name,
@@ -360,7 +398,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
     setManifest([
       {
         id: Math.random().toString(36).slice(2),
-        action: "new",
+        action: "uploadNew",
         mediaType: "document",
         file,
         fileName: file.name,
@@ -389,7 +427,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
       setManifest((prev) =>
         prev.map((m) =>
           m.id === id
-            ? { ...m, action: "new", file: f, fileName: f.name, sourceUrl: undefined, preview: URL.createObjectURL(f) }
+            ? { ...m, action: "uploadNew", file: f, fileName: f.name, sourceUrl: undefined, sourceMediaId: undefined, preview: URL.createObjectURL(f) }
             : m
         )
       );
@@ -410,8 +448,8 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
     });
   }
 
-  async function handleSubmit(asDraft = true) {
-    if (submitting) return;
+  async function handleSubmit({ sendToN8n } = {}) {
+    if (submittingRef.current) return;
     const guard = validationError;
     if (guard) {
       setError(guard);
@@ -422,65 +460,93 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     setError(null);
+
+    // Clear the send-to-n8n checkbox so a subsequent draft click does not re-fire n8n
+    if (sendToN8n) {
+      setSendToN8n(false);
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
 
     try {
-      const fd = new FormData();
-      fd.append("targetPlatform", targetPlatform);
-      fd.append("targetPostType", targetPostType);
-      fd.append("caption", caption);
-      fd.append("hashtags", hashtags);
+      const payload = {
+        targetPlatform,
+        targetPostType,
+        caption,
+        hashtags: hashtags,
+        status,
+        mediaStrategy,
+        orderedMediaManifest: manifest.map((item, idx) => ({
+          action: item.action,
+          mediaType: item.mediaType,
+          order: idx + 1,
+          ...(item.action === "reuseCanonical" || item.action === "copySourceLocal" || item.action === "reuse"
+            ? { sourceUrl: item.sourceUrl, sourceMediaId: item.sourceMediaId }
+            : {}),
+        })),
+      };
+
       if (isLiTarget) {
-        fd.append("publishTitle", publishTitle);
+        payload.publishTitle = publishTitle;
         if (isDocumentStrategy) {
-          fd.append("documentTitle", documentTitle || publishTitle || "Document");
+          payload.documentTitle = documentTitle || publishTitle || "Document";
         }
       }
       if (scheduledDate) {
         const dt = parseWallClockInTz(scheduledDate, "America/Vancouver");
-        if (dt) fd.append("scheduledDate", dt.toISOString());
+        if (dt) payload.scheduledDate = dt.toISOString();
       }
-      fd.append("status", status);
-      fd.append("mediaStrategy", mediaStrategy);
-
-      const orderedManifest = manifest.map((item, idx) => ({
-        action: item.action,
-        mediaType: item.mediaType,
-        order: idx + 1,
-        ...(item.action === "reuse" ? { sourceUrl: item.sourceUrl } : {}),
-        ...(item.action === "new" ? { fileIndex: idx } : {}),
-      }));
-      fd.append("orderedMediaManifest", JSON.stringify(orderedManifest));
-
-      const newFiles = manifest.filter((m) => m.action === "new" && m.file);
-      for (const item of newFiles) {
-        fd.append("files", item.file);
-      }
-
       if (sendToN8n) {
-        fd.append("sendToN8n", "true");
+        payload.sendToN8n = true;
       }
 
-      const res = await fetch(`/api/brands/${brandId}/published-posts/${sourcePost.id}/adapt`, {
+      const newFiles = manifest.filter((m) => (m.action === "new" || m.action === "uploadNew") && m.file);
+      if (newFiles.length > 0) {
+        payload.files = await Promise.all(newFiles.map(async (item) => ({
+          name: item.file.name,
+          type: item.file.type,
+          size: item.file.size,
+          content: await fileToBase64(item.file),
+        })));
+      }
+
+      const url = `/api/brands/${brandId}/published-posts/${sourcePost.id}/adapt`;
+      const res = await fetch(url, {
         method: "POST",
-        body: fd,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
 
+      const contentType = res.headers.get("Content-Type") || "(none)";
+      const nextAction = res.headers.get("Next-Action");
+      console.log("[AdaptClientDiag] URL:", url);
+      console.log("[AdaptClientDiag] status:", res.status, "| Content-Type:", contentType, "| Next-Action:", nextAction);
+
+      const text = await res.text();
+      console.log("[AdaptClientDiag] body preview:", text.slice(0, 300));
+
       let data;
       try {
-        const text = await res.text();
-        if (!text) throw new Error(`Adaptation failed with status ${res.status}`);
+        if (!text) throw new Error("empty response");
         data = JSON.parse(text);
-      } catch {
-        throw new Error(`Adaptation failed with status ${res.status}`);
+      } catch (parseErr) {
+        const hint = contentType.includes("html")
+          ? "Server returned HTML (possible framework error)."
+          : contentType.includes("text/plain")
+            ? "Server returned plain text (possible Server Action error)."
+            : !text
+              ? "Server returned empty response."
+              : "Server returned non-JSON response.";
+        throw new Error(`Adaptation failed (${res.status}): ${hint}`);
       }
 
       if (!res.ok) {
-        throw new Error(data?.error || `Adaptation failed with status ${res.status}`);
+        throw new Error(data?.error || `Adaptation failed (${res.status})`);
       }
 
       const createdPost = data.post;
@@ -510,6 +576,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
     } finally {
       clearTimeout(timeoutId);
       setSubmitting(false);
+      submittingRef.current = false;
     }
   }
 
@@ -549,7 +616,8 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
         }}
       />
 
-      <div
+      <form
+        onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); }}
         style={{
           position: "relative",
           width: "100%",
@@ -701,6 +769,13 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
               </div>
             )}
 
+            {/* Local source media info */}
+            {!isDocumentStrategy && mediaStrategy === "reuse" && hasSourceLocal && (
+              <div style={{ ...lbl, fontSize: 9, color: "var(--sketch-ink-soft)", marginTop: 4 }}>
+                Source media will be copied to the public media server for the new post.
+              </div>
+            )}
+
             {/* Media editing */}
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -781,7 +856,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
                           {item.fileName || item.file?.name || "media"}
                         </div>
                         <div style={{ ...lbl, fontSize: 8 }}>
-                          #{idx + 1} · {item.mediaType} · {item.action === "reuse" ? "reused" : "new"}
+                          #{idx + 1} · {item.mediaType} · {item.action === "reuse" || item.action === "reuseCanonical" ? "reused" : item.action === "copySourceLocal" ? "copied" : "new"}
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
@@ -857,7 +932,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
               </button>
               <button
                 type="button"
-                onClick={() => handleSubmit(true)}
+                onClick={() => handleSubmit({ sendToN8n: false })}
                 disabled={submitDisabled}
                 style={{ ...inkBtn, borderColor: "var(--sketch-ink)", opacity: submitDisabled ? 0.5 : 1 }}
               >
@@ -865,7 +940,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
               </button>
               <button
                 type="button"
-                onClick={() => { setSendToN8n(true); setTimeout(() => handleSubmit(false), 50); }}
+                onClick={() => handleSubmit({ sendToN8n: true })}
                 disabled={submitDisabled}
                 style={{ ...inkBtn, borderColor: "var(--sketch-vermilion)", background: "var(--sketch-vermilion)", color: "var(--sketch-paper-bright)", opacity: submitDisabled ? 0.5 : 1 }}
               >
@@ -874,7 +949,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
             </div>
           </div>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
