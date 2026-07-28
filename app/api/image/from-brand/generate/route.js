@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
-import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
 
 const TEMPLATE_SLUG = "image-prompt-from-brand-and-post-without-reference";
 
@@ -109,6 +109,7 @@ export async function POST(request) {
       visualStyleDirection,
       textDensity,
       visualControlsBlock: serializeVisualControls(normalizedVisualControls),
+      cinematicStyle: body?.visualControls?.cinematicStyle || "auto",
     });
 
     const result = await generateWithPromptTemplate({
@@ -185,6 +186,7 @@ function buildUserInput({
   visualStyleDirection,
   textDensity,
   visualControlsBlock,
+  cinematicStyle,
 }) {
   const lines = [
     `Brand identity summary: ${brandIdentitySummary}`,
@@ -204,9 +206,6 @@ function buildUserInput({
   }
 
   // ── Selected Visual Production Controls (explicit user constraints) ──────
-  // Only non-auto selections are serialized; auto values are never sent to the
-  // AI. Appended as production/style direction that must not override the
-  // brand's required identity.
   if (visualControlsBlock) {
     lines.push(
       "",
@@ -214,6 +213,14 @@ function buildUserInput({
       "",
       "These selected Visual Production Controls are intentional user constraints. Apply them as production/style direction only. They must NOT alter the brand's required identity — brand colors, logo rules, typography, photography/illustration style, tone, products, or services. Where a control conflicts with required brand identity, apply it in the closest compatible way (for example, a lighting or colour-treatment choice may shift mood and grade but must not redesign the product or replace brand assets). Never invent a different logo, palette, product, or brand style.",
     );
+  }
+
+  // ── Cinematic Style ──────────────────────────────────────────────────────
+  if (cinematicStyle && cinematicStyle !== "auto") {
+    const styleBlock = buildImageStyleBlock(cinematicStyle);
+    if (styleBlock) {
+      lines.push("", styleBlock);
+    }
   }
 
   return lines.join("\n");

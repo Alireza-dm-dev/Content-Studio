@@ -6,6 +6,8 @@ import {
   X, Clapperboard, Loader2, Copy, Check, RefreshCw, AlertCircle, ChevronDown, ChevronUp,
 } from "lucide-react";
 
+import { CINEMATIC_STYLE_OPTIONS } from "@/lib/cinematic-styles";
+
 // ── Safe JSON response helper ──────────────────────────────────────────────────
 async function safeParseJson(response) {
   const text = await response.text();
@@ -116,6 +118,7 @@ export default function VideoPromptModal({ post, calendarId, brandId, onClose })
     post.mainAngle || post.coreMessage || post.mainAngleAndCoreMessage || ""
   );
   const [settingsOpen, setSettingsOpen] = useState(true);
+  const [cinematicStyle, setCinematicStyle] = useState("auto");
 
   // Generation
   const [generating, setGenerating] = useState(false);
@@ -142,6 +145,7 @@ export default function VideoPromptModal({ post, calendarId, brandId, onClose })
           duration,
           aspectRatio,
           videoGoal,
+          cinematicStyle,
         }),
       });
       const data = await safeParseJson(res);
@@ -256,6 +260,12 @@ export default function VideoPromptModal({ post, calendarId, brandId, onClose })
                 />
                 <Field label="Video Goal" value={videoGoal} onChange={setVideoGoal}
                   placeholder="E.g. Increase awareness, drive clicks…" />
+                <SelectField
+                  label="Cinematic Style"
+                  value={cinematicStyle}
+                  onChange={setCinematicStyle}
+                  options={CINEMATIC_STYLE_OPTIONS}
+                />
               </div>
             )}
           </div>

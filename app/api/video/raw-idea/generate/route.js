@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
+import { buildVideoStyleBlock } from "@/lib/cinematic-styles";
 
 // The video-prompt-enhancer-raw-idea template always starts its final
 // structured prompt with this exact sentence. If the model instead detects
@@ -62,6 +63,7 @@ export async function POST(request) {
       lens,
       focalLength,
       aperture,
+      cinematicStyle,
     } = body;
 
     // ── Validation ────────────────────────────────────────────────────────────
@@ -82,12 +84,10 @@ export async function POST(request) {
     }
 
     // ── Cinematic Controls (optional requested values) ──────────────────────────
-    // Camera movement is resolved deterministically via the shared module:
-    // - User explicit values are preserved
-    // - Auto/missing values are inferred from genre/style/scene/action context
+    const effectiveCamStyle = cinematicStyle && cinematicStyle !== "auto" ? cinematicStyle : videoType;
     const cameraMovementLine = resolveCameraMovement(cameraMovement, {
       genre: videoType,
-      style: videoType,
+      style: effectiveCamStyle,
       actionLevel: "medium",
     });
 
@@ -104,8 +104,7 @@ export async function POST(request) {
     console.log("[VideoRawIdea] inputs:", inputs);
 
     // ── Build userInput block ─────────────────────────────────────────────────
-    // The template is a system instruction; all data goes via userInput (appended after template).
-    const userInput = [
+    const userInputParts = [
       `Raw video idea: ${rawVideoIdea.trim()}`,
       `Target video creator model: ${targetVideoCreatorModel}`,
       `Duration: ${duration}`,
@@ -119,7 +118,16 @@ export async function POST(request) {
       cinematicLine("Lens", cinematicControls.lens),
       cinematicLine("Focal length", cinematicControls.focalLength),
       cinematicLine("Aperture", cinematicControls.aperture),
-    ].join("\n");
+    ];
+
+    if (cinematicStyle && cinematicStyle !== "auto") {
+      const styleBlock = buildVideoStyleBlock(cinematicStyle);
+      if (styleBlock) {
+        userInputParts.push("", styleBlock);
+      }
+    }
+
+    const userInput = userInputParts.join("\n");
 
     // ── Call AI ───────────────────────────────────────────────────────────────
     let finalPrompt;

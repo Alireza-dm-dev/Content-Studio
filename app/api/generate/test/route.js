@@ -1,10 +1,7 @@
 import { NextResponse } from "next/server";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { getAdminAccess } from "@/lib/auth";
-import {
-  normalizeVisualControls,
-  serializeVisualControls,
-} from "@/lib/image-visual-controls";
+import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
 
 const ALLOWED_TEMPLATE_SLUGS = new Set([
   "image-prompt-booster-raw-idea",
@@ -60,12 +57,15 @@ export async function POST(request) {
 
   const rawIdeaText = typeof userInput === "string" ? userInput.trim() : "";
   const ideaBlock = `Raw image idea:\n${rawIdeaText}`;
-  const finalUserInput =
-    controlsBlock && rawIdeaText
-      ? `${ideaBlock}\n\n${controlsBlock}`
-      : rawIdeaText
-        ? ideaBlock
-        : null;
+  const cinematicStyle = controls.cinematicStyle;
+  const styleBlock = cinematicStyle && cinematicStyle !== "auto" ? buildImageStyleBlock(cinematicStyle) : "";
+
+  let finalUserInput;
+  const parts = [];
+  if (rawIdeaText) parts.push(ideaBlock);
+  if (controlsBlock) parts.push(controlsBlock);
+  if (styleBlock) parts.push(styleBlock);
+  finalUserInput = parts.length > 0 ? parts.join("\n\n") : null;
 
   try {
     const result = await generateWithPromptTemplate({

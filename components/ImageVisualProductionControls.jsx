@@ -24,6 +24,7 @@ import {
   OPTION_MAP,
   applyPreset,
   defaultVisualControls,
+  CINEMATIC_STYLE_OPTIONS,
 } from "@/lib/image-visual-controls";
 
 const CONTROL_OPTION_MAP = {
@@ -86,6 +87,31 @@ export default function ImageVisualProductionControls({ value, onChange, disable
 
   return (
     <div className="space-y-4">
+      {/* Cinematic Style */}
+      <div className="space-y-1.5">
+        <Label htmlFor="cinematic-style">Cinematic style</Label>
+        <Select
+          value={controls.cinematicStyle ?? "auto"}
+          onValueChange={(v) => handleControlChange("cinematicStyle", v)}
+          disabled={disabled}
+        >
+          <SelectTrigger id="cinematic-style" className="w-full" aria-label="Cinematic style">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {CINEMATIC_STYLE_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {controls.cinematicStyle && controls.cinematicStyle !== "auto" && (
+          <p className="text-xs text-muted-foreground">
+            {CINEMATIC_STYLE_OPTIONS.find((o) => o.value === controls.cinematicStyle)?.description}
+          </p>
+        )}
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Preset */}
         <div className="space-y-1.5">

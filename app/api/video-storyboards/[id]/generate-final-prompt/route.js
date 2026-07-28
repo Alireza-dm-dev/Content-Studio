@@ -4,6 +4,7 @@ import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
+import { buildVideoStyleBlock } from "@/lib/cinematic-styles";
 
 // ── Cinematic Controls helpers ────────────────────────────────────────────────
 const CINEMATIC_FALLBACK = "Auto — infer from context";
@@ -119,6 +120,7 @@ export async function POST(request, { params }) {
       aspectRatio = "9:16",
       videoFormat = "Reel",
       videoGoal = "",
+      cinematicStyle,
     } = body;
 
     // ── 1. Load storyboard ──────────────────────────────────────────────────
@@ -184,10 +186,11 @@ export async function POST(request, { params }) {
     const calendarPostSummary = norm ? buildCalendarPostSummary(norm) : "";
 
     // ── Cinematic Controls (resolved from post context, fallback to deterministic selector) ─
+    const effectiveCamStyle = cinematicStyle && cinematicStyle !== "auto" ? cinematicStyle : "cinematic";
     const genre = (videoFormat || videoGoal || "cinematic-narrative").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const cameraMovementLine = resolveCameraMovement(norm?.cameraMovement, {
       genre,
-      style: "cinematic",
+      style: effectiveCamStyle,
       platform: norm?.platform || "",
       actionLevel: videoGoal?.toLowerCase().includes("action") ? "high" : "medium",
     });
@@ -202,7 +205,7 @@ export async function POST(request, { params }) {
     };
 
     // ── 3. Build combined raw video input ──────────────────────────────────
-    const combinedRawVideoInput = [
+    const combinedLines = [
       "Brand Identity Summary:",
       brandSummary,
       "",
@@ -219,6 +222,16 @@ export async function POST(request, { params }) {
       cinematicLine("Lens", cinematicControls.lens),
       cinematicLine("Focal length", cinematicControls.focalLength),
       cinematicLine("Aperture", cinematicControls.aperture),
+    ];
+
+    if (cinematicStyle && cinematicStyle !== "auto") {
+      const styleBlock = buildVideoStyleBlock(cinematicStyle);
+      if (styleBlock) {
+        combinedLines.push("", styleBlock);
+      }
+    }
+
+    combinedLines.push(
       "",
       "Video Settings:",
       `Target video creator model: ${targetVideoCreatorModel}`,
@@ -236,7 +249,9 @@ export async function POST(request, { params }) {
       "Include camera movement, visual mood, scene actions, transitions, pacing, narration or dialogue, and text on video where relevant.",
       "Do not add visual elements that conflict with the approved storyboard.",
       "Do not return a storyboard again. Return the final video generation prompt only.",
-    ].filter(l => l !== null).join("\n");
+    );
+
+    const combinedRawVideoInput = combinedLines.filter(l => l !== null).join("\n");
 
     // ── 4. Generate prompt ─────────────────────────────────────────────────
     let finalPrompt;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,6 +14,7 @@ import {
   ArrowLeft, Briefcase, Sparkles, Loader2,
   Copy, Check, Video, Lightbulb, AlertCircle,
 } from "lucide-react";
+import { CINEMATIC_STYLE_OPTIONS } from "@/lib/cinematic-styles";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -354,6 +355,7 @@ function BrandBasedView({ onBack }) {
   const [focalLength, setFocalLength]                   = useState("50");
   const [aperture, setAperture]                         = useState("f/4 moderate");
   const [cinematicPreset, setCinematicPreset]           = useState("manual");
+  const [cinematicStyle, setCinematicStyle]             = useState("auto");
 
   // Generation
   const [generating, setGenerating] = useState(false);
@@ -440,6 +442,7 @@ function BrandBasedView({ onBack }) {
           lens,
           focalLength,
           aperture,
+          cinematicStyle,
         }),
       });
 
@@ -652,6 +655,25 @@ function BrandBasedView({ onBack }) {
               </div>
             </div>
 
+            {/* ── Cinematic style ──────────────────────────────────── */}
+            <div className="space-y-1.5">
+              <Label htmlFor="bb-cinematicStyle">Cinematic style</Label>
+              <select
+                id="bb-cinematicStyle"
+                value={cinematicStyle}
+                onChange={e => setCinematicStyle(e.target.value)}
+                disabled={generating}
+                className={SELECT_CLASS}
+              >
+                {CINEMATIC_STYLE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              {cinematicStyle !== "auto" && (
+                <p className="text-xs text-muted-foreground">
+                  {CINEMATIC_STYLE_OPTIONS.find(o => o.value === cinematicStyle)?.description}
+                </p>
+              )}
+            </div>
+
             {/* ── Cinematic preset ────────────────────────────────── */}
             <div className="space-y-1.5">
               <Label htmlFor="bb-cinematicPreset">Cinematic preset</Label>
@@ -793,6 +815,7 @@ function RawIdeaView({ onBack }) {
   const [focalLength, setFocalLength]                   = useState("50");
   const [aperture, setAperture]                         = useState("f/4 moderate");
   const [cinematicPreset, setCinematicPreset]           = useState("manual");
+  const [cinematicStyle, setCinematicStyle]             = useState("auto");
 
   const [generating, setGenerating] = useState(false);
   const [output, setOutput]         = useState("");
@@ -845,6 +868,7 @@ function RawIdeaView({ onBack }) {
           lens,
           focalLength,
           aperture,
+          cinematicStyle,
         }),
       });
 
@@ -940,6 +964,24 @@ function RawIdeaView({ onBack }) {
               <input className={INPUT_CLASS + " mt-1.5"} placeholder="Enter video type" value={customVideoType} onChange={e => setCustomVideoType(e.target.value)} disabled={generating} />
             )}
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="ri-cinematicStyle">Cinematic style</Label>
+          <select
+            id="ri-cinematicStyle"
+            value={cinematicStyle}
+            onChange={e => setCinematicStyle(e.target.value)}
+            disabled={generating}
+            className={SELECT_CLASS}
+          >
+            {CINEMATIC_STYLE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          {cinematicStyle !== "auto" && (
+            <p className="text-xs text-muted-foreground">
+              {CINEMATIC_STYLE_OPTIONS.find(o => o.value === cinematicStyle)?.description}
+            </p>
+          )}
         </div>
 
         <div className="space-y-1.5">

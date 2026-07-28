@@ -4,7 +4,7 @@ import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
-import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
 
 function stripRatioMentions(prompt) {
   return prompt
@@ -418,9 +418,18 @@ export async function POST(request, { params }) {
     ].filter(v => v !== null && v !== false && v !== undefined && v !== "").join("\n");
 
     // ── Append visual production controls block (non-auto selections) ────────
-    const baseUserInput = visualControlsBlock
+    let baseUserInput = visualControlsBlock
       ? `${userInput}\n\n${visualControlsBlock}\n\nPriority: treat the selected visual production controls as explicit user constraints, but never override required brand identity, supplied reference composition, or visible text/logos/products. If a control conflicts with required identity, preserve the required identity and apply the control in the closest compatible manner without redesigning logos, products, people, artwork, or required text.`
       : userInput;
+
+    // ── Append cinematic style block ─────────────────────────────────────────
+    const cinematicStyle = normalizedVisualControls?.cinematicStyle;
+    if (cinematicStyle && cinematicStyle !== "auto") {
+      const styleBlock = buildImageStyleBlock(cinematicStyle);
+      if (styleBlock) {
+        baseUserInput += "\n\n" + styleBlock;
+      }
+    }
 
     // ── Append refinement block when refining an existing prompt ────────────
     const finalUserInput = isRefinement

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
+import { buildVideoStyleBlock } from "@/lib/cinematic-styles";
 
 // ── Cinematic Controls helpers ────────────────────────────────────────────────
 const CINEMATIC_FALLBACK = "Auto — infer from context";
@@ -87,6 +88,7 @@ export async function POST(request, { params }) {
       duration = "15 seconds",
       aspectRatio = "9:16",
       videoGoal = "",
+      cinematicStyle,
     } = body;
 
     if (!brandId?.trim()) {
@@ -117,10 +119,11 @@ export async function POST(request, { params }) {
     const brandSummary = createCompactBrandVisualIdentitySummaryForVideoPrompt(brandVisualIdentity);
 
     // ── Cinematic Controls (resolved from postData, deterministic camera movement) ─
+    const effectiveCamStyle = cinematicStyle && cinematicStyle !== "auto" ? cinematicStyle : (norm.visualMood || "social-media");
     const genre = (norm.videoRawIdea || norm.format || "social-media-reel").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const cameraMovementLine = resolveCameraMovement(norm.cameraMovement, {
       genre,
-      style: norm.visualMood || "social-media",
+      style: effectiveCamStyle,
       platform: norm.platform || "",
       actionLevel: "medium",
     });
@@ -181,6 +184,17 @@ export async function POST(request, { params }) {
       cinematicLine("Lens", cinematicControls.lens),
       cinematicLine("Focal length", cinematicControls.focalLength),
       cinematicLine("Aperture", cinematicControls.aperture),
+    ];
+
+    // ── Cinematic Style Block ──────────────────────────────────────────────────
+    if (cinematicStyle && cinematicStyle !== "auto") {
+      const styleBlock = buildVideoStyleBlock(cinematicStyle);
+      if (styleBlock) {
+        combinedRawVideoInput.push("", styleBlock);
+      }
+    }
+
+    combinedRawVideoInput.push(
       "",
       "=== CALENDAR CONTEXT ===",
       calendar.mainMonthlySubject && `Monthly subject: ${calendar.mainMonthlySubject}`,
@@ -192,7 +206,7 @@ export async function POST(request, { params }) {
       "Use the brand colors, visual style, mood, environment, theme, and video creation rules where relevant.",
       "Do not add anything that conflicts with the brand do-not rules.",
       "Keep the output suitable for the selected target video creator model.",
-    ].filter(v => v !== null && v !== false && v !== undefined && v !== "").join("\n");
+    );
 
     console.log("[VideoPrompt] Combined input length:", combinedRawVideoInput.length);
 
