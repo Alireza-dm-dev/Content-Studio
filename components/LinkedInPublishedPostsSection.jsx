@@ -5,10 +5,11 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { StatusPill } from "@/components/content-report/StatusPill";
-import { FileText, Image as ImageIcon, Video as VideoIcon, MessageCircle } from "lucide-react";
+import { FileText, Image as ImageIcon, Video as VideoIcon, MessageCircle, CheckCircle } from "lucide-react";
 import LinkedInPostUploadForm from "@/components/LinkedInPostUploadForm";
 import LinkedInPostDetailModal from "@/components/LinkedInPostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
+import { getPublishedPostFooterState } from "@/lib/published-post-footer";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -197,9 +198,45 @@ function PostRow({ post, onOpen, onCommentClick }) {
           {label}: {fileName}
         </div>
 
+        {/*
+        // ── Footer state line: POSTED / scheduled time / NOT SCHEDULED ── */}
+        <div
+          aria-label={getPublishedPostFooterState(post).ariaLabel}
+          style={{
+            ...lbl,
+            fontSize: 9,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+        >
+          {(() => {
+            const fs = getPublishedPostFooterState(post);
+            if (fs.type === "posted") {
+              return <>
+                <CheckCircle size={11} aria-hidden="true" style={{ flexShrink: 0 }} />
+                <span>{fs.label}</span>
+              </>;
+            }
+            if (fs.type === "scheduled") {
+              return <>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
+                <span>{fs.label}</span>
+              </>;
+            }
+            return <span>{fs.label}</span>;
+          })()}
+        </div>
+
         <div style={{ ...lbl, fontSize: 9 }}>
-          Scheduled: {post.scheduledDate ? fmtDate(post.scheduledDate) : "—"}
-          {" · "}
           Uploaded: {fmtDate(post.createdAt)}
         </div>
       </div>

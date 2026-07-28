@@ -2,11 +2,12 @@
 
 import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
 import { toast } from "sonner";
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, CheckCircle } from "lucide-react";
 import PublishedPostUploadForm from "@/components/PublishedPostUploadForm";
 import PostDetailModal from "@/components/PostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
+import { getPublishedPostFooterState } from "@/lib/published-post-footer";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -38,6 +39,7 @@ function GridCard({ post, onClick, onCommentClick }) {
   const isVideo = post.postType === "reel" || firstMedia?.mediaType === "VIDEO";
   const thumbnailUrl = post.thumbnailUrl;
   const postId = formatPostIdShort(post.postNumber);
+  const footerState = getPublishedPostFooterState(post);
 
   return (
     <div
@@ -89,7 +91,7 @@ function GridCard({ post, onClick, onCommentClick }) {
         </div>
       )}
 
-      {/* Bottom overlay with post ID, comment button, media indicators */}
+      {/* Bottom overlay with post ID, publishing state, comment button, media indicators */}
       <div
         style={{
           position: "absolute",
@@ -109,12 +111,41 @@ function GridCard({ post, onClick, onCommentClick }) {
               fontFamily: "var(--font-mono-ink)",
               fontSize: 8,
               color: "var(--sketch-paper-bright)",
+              flexShrink: 0,
             }}
           >
             {postId}
           </span>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+        <span
+          aria-label={footerState.ariaLabel}
+          style={{
+            fontFamily: "var(--font-mono-ink)",
+            fontSize: 7,
+            color: "var(--sketch-paper-bright)",
+            opacity: 0.85,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flex: "1 1 auto",
+            minWidth: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 3,
+          }}
+        >
+          {footerState.type === "posted" && <CheckCircle size={10} aria-hidden="true" />}
+          {footerState.type === "scheduled" && (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+          )}
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{footerState.label}</span>
+        </span>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           <button
             type="button"
             onClick={(e) => {
