@@ -38,6 +38,22 @@ function test(name, fn) {
   }
 }
 
+async function testAsync(name, fn) {
+  try {
+    await fn();
+    passed++;
+    console.log(`  ✓ ${name}`);
+  } catch (e) {
+    failed++;
+    console.log(`  ✗ ${name}`);
+    console.log(`    ${e.message}`);
+    if (e.stack) {
+      const lines = e.stack.split('\n').slice(1, 3).join('\n');
+      console.log(`    ${lines}`);
+    }
+  }
+}
+
 function assertNear(actual, expected, tolerance, msg) {
   const ok = Math.abs(actual - expected) <= tolerance;
   if (!ok) {
@@ -46,6 +62,105 @@ function assertNear(actual, expected, tolerance, msg) {
       actual,
       expected,
     });
+  }
+}
+
+// ─── Helper: build a minimal valid PDF with text content ───────────────────
+
+function createMinimalPdf(text = 'Hello PDF world!') {
+  // Build a simple PDF containing the given text
+  const streamLen = 44 + Buffer.byteLength(text, 'utf-8');
+  const pdf = `%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<</Font<</F1 4 0 R>>>>>>endobj
+4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+5 0 obj<</Length ${streamLen}>>stream
+BT /F1 12 Tf 100 700 Td (${text}) Tj ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000266 00000 n 
+0000000356 00000 n 
+trailer<</Size 6/Root 1 0 R>>
+startxref
+458
+%%EOF`;
+  return Buffer.from(pdf, 'utf-8');
+}
+
+// ─── Helper: build a minimal valid DOCX using a ZIP of required parts ──────
+
+import { writeFileSync, mkdtempSync, rmSync, readFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { execSync } from 'child_process';
+
+function createMinimalDocx(text = 'Hello DOCX world!') {
+  // Create a minimal DOCX using ZIP structure with required Office XML parts
+  const tmpDir = mkdtempSync(join(tmpdir(), 'docx-test-'));
+  try {
+    // Create required DOCX structure
+    const wordDir = join(tmpDir, 'word');
+    const docPropsDir = join(tmpDir, 'docProps');
+    const relsDir = join(tmpDir, '_rels');
+    const wordRelsDir = join(wordDir, '_rels');
+
+    // Create directories
+    execSync(`mkdir -p "${wordDir}" "${docPropsDir}" "${relsDir}" "${wordRelsDir}"`);
+
+    // [Content_Types].xml
+    const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`;
+    writeFileSync(join(tmpDir, '[Content_Types].xml'), contentTypes);
+
+    // _rels/.rels
+    const rels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`;
+    writeFileSync(join(relsDir, '.rels'), rels);
+
+    // word/_rels/document.xml.rels
+    const wordRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>`;
+    writeFileSync(join(wordRelsDir, 'document.xml.rels'), wordRels);
+
+    // word/document.xml
+    const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r>
+        <w:t>${text}</w:t>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>`;
+    writeFileSync(join(wordDir, 'document.xml'), docXml);
+
+    // Create ZIP
+    const zipPath = join(tmpDir, 'output.docx');
+    execSync(`cd "${tmpDir}" && zip -q -r "${zipPath}" . -i '*.xml' -i '*.rels'`, { shell: true });
+
+    const docxBuf = readFileSync(zipPath);
+    // Validate it's actually a ZIP (starts with PK)
+    if (docxBuf[0] !== 0x50 || docxBuf[1] !== 0x4B) {
+      throw new Error('Generated DOCX is not a valid ZIP');
+    }
+    return docxBuf;
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
   }
 }
 
@@ -97,12 +212,19 @@ function testFilenames() {
 
   test('weird extension', () => {
     const result = sanitizeAttachmentFileName('file.exe');
-    // .exe should be preserved if it looks like an extension
     assert.equal(result, 'file.exe');
   });
 
   test('mixed separators', () => {
     assert.equal(sanitizeAttachmentFileName('foo/bar\\baz/file.txt'), 'file.txt');
+  });
+
+  test('PDF filename preserved', () => {
+    assert.equal(sanitizeAttachmentFileName('report.pdf'), 'report.pdf');
+  });
+
+  test('DOCX filename preserved', () => {
+    assert.equal(sanitizeAttachmentFileName('brief.docx'), 'brief.docx');
   });
 }
 
@@ -148,8 +270,52 @@ function testMetadataValidation() {
     assert.ok(r.ok);
   });
 
-  test('unsupported PDF', () => {
+  test('valid PDF', () => {
     const r = validateCalendarAttachmentFile({ fileName: 'doc.pdf', mimeType: 'application/pdf', sizeBytes: 100 });
+    assert.ok(r.ok);
+    assert.equal(r.extension, '.pdf');
+  });
+
+  test('valid DOCX', () => {
+    const r = validateCalendarAttachmentFile({ fileName: 'brief.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', sizeBytes: 100 });
+    assert.ok(r.ok);
+    assert.equal(r.extension, '.docx');
+  });
+
+  test('PDF with empty MIME accepted (browser fallback)', () => {
+    const r = validateCalendarAttachmentFile({ fileName: 'doc.pdf', mimeType: '', sizeBytes: 100 });
+    assert.ok(r.ok);
+  });
+
+  test('PDF with octet-stream accepted (browser fallback)', () => {
+    const r = validateCalendarAttachmentFile({ fileName: 'doc.pdf', mimeType: 'application/octet-stream', sizeBytes: 100 });
+    assert.ok(r.ok);
+  });
+
+  test('DOCX with empty MIME accepted (browser fallback)', () => {
+    const r = validateCalendarAttachmentFile({ fileName: 'brief.docx', mimeType: '', sizeBytes: 100 });
+    assert.ok(r.ok);
+  });
+
+  test('DOCX with octet-stream accepted (browser fallback)', () => {
+    const r = validateCalendarAttachmentFile({ fileName: 'brief.docx', mimeType: 'application/octet-stream', sizeBytes: 100 });
+    assert.ok(r.ok);
+  });
+
+  test('PDF with conflicting MIME rejected', () => {
+    const r = validateCalendarAttachmentFile({ fileName: 'doc.pdf', mimeType: 'text/csv', sizeBytes: 100 });
+    assert.ok(!r.ok);
+    assert.equal(r.error, 'File extension and MIME type do not match');
+  });
+
+  test('DOCX with conflicting MIME rejected', () => {
+    const r = validateCalendarAttachmentFile({ fileName: 'brief.docx', mimeType: 'text/plain', sizeBytes: 100 });
+    assert.ok(!r.ok);
+    assert.equal(r.error, 'File extension and MIME type do not match');
+  });
+
+  test('legacy .doc rejected', () => {
+    const r = validateCalendarAttachmentFile({ fileName: 'old.doc', mimeType: 'application/msword', sizeBytes: 100 });
     assert.ok(!r.ok);
     assert.equal(r.error, 'Unsupported file type');
   });
@@ -242,7 +408,6 @@ function testDecoding() {
 
   test('invalid byte replacement', () => {
     const invalid = Buffer.from([0xFF, 0xFE, 0x00, 0x61]);
-    // 0x00 (null byte) should cause rejection
     const r = decodeAttachmentBuffer(invalid);
     assert.ok(!r.ok);
   });
@@ -264,7 +429,7 @@ function testDecoding() {
   });
 
   test('Uint8Array accepted', () => {
-    const arr = new Uint8Array([72, 105]); // "Hi"
+    const arr = new Uint8Array([72, 105]);
     const r = decodeAttachmentBuffer(arr);
     assert.ok(r.ok);
     assert.equal(r.text, 'Hi');
@@ -273,11 +438,11 @@ function testDecoding() {
 
 // ─── D. TXT/Markdown extraction ────────────────────────────────────────────────
 
-function testTxtExtraction() {
+async function testTxtExtraction() {
   console.log('\nD. TXT/Markdown extraction');
 
-  test('line-ending normalization', () => {
-    const r = extractCalendarAttachmentText({
+  await testAsync('line-ending normalization', async () => {
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from('line1\r\nline2\rline3\n'),
       fileName: 'test.txt',
       mimeType: 'text/plain',
@@ -287,8 +452,8 @@ function testTxtExtraction() {
     assert.ok(!r.extractedText.includes('\r'));
   });
 
-  test('control-character removal', () => {
-    const r = extractCalendarAttachmentText({
+  await testAsync('control-character removal', async () => {
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from('hello\x07world\x1Ftext\x08end'),
       fileName: 'clean.txt',
       mimeType: 'text/plain',
@@ -302,9 +467,9 @@ function testTxtExtraction() {
     assert.ok(out.includes('helloworldtextend'));
   });
 
-  test('headings and paragraphs preserved', () => {
+  await testAsync('headings and paragraphs preserved', async () => {
     const md = '# Title\n\nParagraph one.\n\n## Sub\n\nParagraph two.\n';
-    const r = extractCalendarAttachmentText({
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from(md),
       fileName: 'doc.md',
       mimeType: 'text/markdown',
@@ -319,12 +484,12 @@ function testTxtExtraction() {
 
 // ─── E. CSV extraction ─────────────────────────────────────────────────────────
 
-function testCsvExtraction() {
+async function testCsvExtraction() {
   console.log('\nE. CSV extraction');
 
-  test('headers and rows preserved', () => {
+  await testAsync('headers and rows preserved', async () => {
     const csv = 'name,age,city\nAlice,30,NYC\nBob,25,LA\n';
-    const r = extractCalendarAttachmentText({
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from(csv),
       fileName: 'data.csv',
       mimeType: 'text/csv',
@@ -335,9 +500,9 @@ function testCsvExtraction() {
     assert.ok(r.extractedText.includes('Alice,30,NYC'));
   });
 
-  test('quoted commas preserved', () => {
+  await testAsync('quoted commas preserved', async () => {
     const csv = 'item,description\n1,"hello, world"\n';
-    const r = extractCalendarAttachmentText({
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from(csv),
       fileName: 'items.csv',
       mimeType: 'text/csv',
@@ -350,12 +515,12 @@ function testCsvExtraction() {
 
 // ─── F. JSON extraction ────────────────────────────────────────────────────────
 
-function testJsonExtraction() {
+async function testJsonExtraction() {
   console.log('\nF. JSON extraction');
 
-  test('object formatted', () => {
+  await testAsync('object formatted', async () => {
     const json = '{"name":"test","value":42}';
-    const r = extractCalendarAttachmentText({
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from(json),
       fileName: 'data.json',
       mimeType: 'application/json',
@@ -363,12 +528,12 @@ function testJsonExtraction() {
     });
     assert.ok(r.ok);
     assert.ok(r.extractedText.includes('"name"'));
-    assert.ok(r.extractedText.includes('  ')); // 2-space indent
+    assert.ok(r.extractedText.includes('  '));
   });
 
-  test('array formatted', () => {
+  await testAsync('array formatted', async () => {
     const json = '[1,2,3]';
-    const r = extractCalendarAttachmentText({
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from(json),
       fileName: 'list.json',
       mimeType: 'application/json',
@@ -377,8 +542,8 @@ function testJsonExtraction() {
     assert.ok(r.ok);
   });
 
-  test('invalid JSON rejected', () => {
-    const r = extractCalendarAttachmentText({
+  await testAsync('invalid JSON rejected', async () => {
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from('{invalid}'),
       fileName: 'bad.json',
       mimeType: 'application/json',
@@ -388,8 +553,8 @@ function testJsonExtraction() {
     assert.equal(r.error, 'Invalid JSON document');
   });
 
-  test('scalar JSON rejected', () => {
-    const r = extractCalendarAttachmentText({
+  await testAsync('scalar JSON rejected', async () => {
+    const r = await extractCalendarAttachmentText({
       buffer: Buffer.from('"just a string"'),
       fileName: 'scalar.json',
       mimeType: 'application/json',
@@ -423,7 +588,7 @@ function testTruncation() {
     const text = 'x'.repeat(200);
     const r = truncateAttachmentText(text, 100);
     assert.equal(r.wasTruncated, true);
-    assert.ok(r.text.length > 100); // still has content
+    assert.ok(r.text.length > 100);
     assert.ok(r.text.includes('[...content truncated...]'));
     assert.equal(r.originalCharacterCount, 200);
   });
@@ -431,7 +596,6 @@ function testTruncation() {
   test('boundary preference', () => {
     const text = 'hello world foo bar baz';
     const r = truncateAttachmentText(text, 14);
-    // Should prefer to break at space or newline near the limit
     assert.equal(r.wasTruncated, true);
     assert.ok(r.text.includes('[...content truncated...]'));
     assert.ok(r.text.length < text.length + 30);
@@ -527,9 +691,7 @@ function testCombinedBlock() {
     ]);
     assert.ok(r.includedAttachmentIds.length === 1);
     assert.ok(r.block);
-    // Sanitized name should not contain "/etc/" (path component stripped)
     assert.ok(!r.block.includes('/etc/'));
-    // The sanitized name is "passwd" (no extension) — the path was stripped
     assert.ok(r.block.includes('passwd'));
   });
 
@@ -548,6 +710,264 @@ function testCombinedBlock() {
     assert.ok(!r.block.includes('../../'));
     assert.ok(r.block.includes('bad.txt'));
   });
+
+  test('PDF attachment in combined block', () => {
+    const r = buildUploadedReferenceMaterialContext([
+      { id: 'p1', fileName: 'report.pdf', extractedText: 'PDF extracted content', extractionStatus: 'complete' },
+    ]);
+    assert.ok(r.block.includes('PDF extracted content'));
+    assert.equal(r.includedAttachmentIds.length, 1);
+  });
+
+  test('DOCX attachment in combined block', () => {
+    const r = buildUploadedReferenceMaterialContext([
+      { id: 'd1', fileName: 'brief.docx', extractedText: 'DOCX extracted content', extractionStatus: 'complete' },
+    ]);
+    assert.ok(r.block.includes('DOCX extracted content'));
+    assert.equal(r.includedAttachmentIds.length, 1);
+  });
+}
+
+// ─── I. PDF extraction ─────────────────────────────────────────────────────────
+
+async function testPdfExtraction() {
+  console.log('\nI. PDF extraction');
+
+  await testAsync('valid PDF signature accepted', async () => {
+    const buf = createMinimalPdf('Test content');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'report.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    assert.equal(r.extractionStatus, 'complete' || 'truncated');
+    assert.ok(r.extractedText.length > 0);
+  });
+
+  await testAsync('false PDF signature rejected', async () => {
+    const buf = Buffer.from('Fake PDF content');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'fake.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: buf.length,
+    });
+    assert.ok(!r.ok);
+    assert.equal(r.error, 'Invalid PDF file');
+  });
+
+  await testAsync('malformed PDF rejected', async () => {
+    const buf = Buffer.from('%PDF-1.4\n%%EOF');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'broken.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: buf.length,
+    });
+    assert.ok(!r.ok);
+  });
+
+  await testAsync('renamed binary rejected by signature', async () => {
+    const buf = Buffer.from('This is just a text file pretending to be a PDF');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'malicious.pdf',
+      mimeType: 'application/octet-stream',
+      sizeBytes: buf.length,
+    });
+    assert.ok(!r.ok);
+    assert.equal(r.error, 'Invalid PDF file');
+  });
+
+  await testAsync('PDF extraction returns correct metadata', async () => {
+    const buf = createMinimalPdf('Some reference data');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'reference.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    assert.equal(r.fileName, 'reference.pdf');
+    assert.equal(r.mimeType, 'application/pdf');
+    assert.equal(typeof r.extractedText, 'string');
+    assert.ok(r.originalCharacterCount > 0);
+    assert.ok(r.extractedCharacterCount > 0);
+  });
+
+  await testAsync('PDF with empty MIME accepted and extracted', async () => {
+    const buf = createMinimalPdf('Content for empty MIME test');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'empty-mime.pdf',
+      mimeType: '',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    assert.ok(r.extractedText.length > 0);
+  });
+
+  await testAsync('PDF truncation', async () => {
+    const longText = 'A'.repeat(MAX_EXTRACTED_CHARS_PER_FILE + 1000) + 'ENDMARKER';
+    const buf = createMinimalPdf(longText);
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'long.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    assert.ok(r.extractedText.includes('[...content truncated...]') || !r.extractedText.includes('ENDMARKER'));
+  });
+}
+
+// ─── J. DOCX extraction ─────────────────────────────────────────────────────────
+
+async function testDocxExtraction() {
+  console.log('\nJ. DOCX extraction');
+
+  await testAsync('valid DOCX accepted', async () => {
+    const buf = createMinimalDocx('DOCX paragraph text');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'brief.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    // The text might be "DOCX paragraph text\n" or various extra whitespace
+    assert.ok(r.extractedText.includes('DOCX paragraph text'));
+    assert.equal(r.fileName, 'brief.docx');
+  });
+
+  await testAsync('generic ZIP rejected', async () => {
+    const buf = Buffer.alloc(22);
+    buf.write('PK\u0003\u0004');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'archive.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      sizeBytes: buf.length,
+    });
+    // Should fail extraction — valid ZIP but not a valid DOCX
+    assert.ok(!r.ok);
+  });
+
+  await testAsync('malformed DOCX rejected', async () => {
+    const buf = Buffer.from('not a docx at all');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'broken.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      sizeBytes: buf.length,
+    });
+    assert.ok(!r.ok);
+  });
+
+  await testAsync('renamed binary rejected', async () => {
+    const buf = Buffer.from('Just plain text with .docx name');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'fake.docx',
+      mimeType: 'application/octet-stream',
+      sizeBytes: buf.length,
+    });
+    assert.ok(!r.ok);
+  });
+
+  await testAsync('DOCX extraction returns correct metadata', async () => {
+    const buf = createMinimalDocx('Metadata test');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'meta.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    assert.equal(r.fileName, 'meta.docx');
+    assert.equal(r.mimeType, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    assert.ok(r.originalCharacterCount > 0);
+    assert.ok(r.extractedCharacterCount > 0);
+  });
+
+  await testAsync('DOCX with empty MIME accepted and extracted', async () => {
+    const buf = createMinimalDocx('Empty MIME test');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'empty-mime.docx',
+      mimeType: '',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    assert.ok(r.extractedText.includes('Empty MIME test'));
+  });
+
+  await testAsync('DOCX truncation', async () => {
+    const longText = 'B'.repeat(MAX_EXTRACTED_CHARS_PER_FILE + 500) + 'ENDMARKER';
+    const buf = createMinimalDocx(longText);
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'long.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    assert.ok(r.extractedText.includes('[...content truncated...]') || !r.extractedText.includes('ENDMARKER'));
+  });
+
+  await testAsync('DOCX with empty MIME accepted', async () => {
+    const buf = createMinimalDocx('MIME-less upload');
+    const r = await extractCalendarAttachmentText({
+      buffer: buf,
+      fileName: 'nomime.docx',
+      mimeType: '',
+      sizeBytes: buf.length,
+    });
+    assert.ok(r.ok);
+    assert.ok(r.extractedText.includes('MIME-less upload'));
+  });
+}
+
+// ─── K. Limit regression tests ────────────────────────────────────────────────
+
+function testLimitRegression() {
+  console.log('\nK. Limit regression');
+
+  test('max file size unchanged at 5 MB', () => {
+    assert.equal(MAX_ATTACHMENT_FILE_SIZE_BYTES, 5 * 1024 * 1024);
+  });
+
+  test('max file count unchanged at 5', () => {
+    assert.equal(MAX_ATTACHMENT_FILES, 5);
+  });
+
+  test('max extracted chars per file unchanged at 10000', () => {
+    assert.equal(MAX_EXTRACTED_CHARS_PER_FILE, 10000);
+  });
+
+  test('max combined chars unchanged at 30000', () => {
+    assert.equal(MAX_COMBINED_ATTACHMENT_CHARS, 30000);
+  });
+
+  test('SUPPORTED_FORMATS now has 6 entries', () => {
+    assert.equal(SUPPORTED_FORMATS.length, 6);
+  });
+
+  test('PDF format is in supported list', () => {
+    const pdf = SUPPORTED_FORMATS.find(f => f.id === 'pdf');
+    assert.ok(pdf);
+    assert.deepEqual(pdf.extensions, ['.pdf']);
+    assert.deepEqual(pdf.mimeTypes, ['application/pdf']);
+  });
+
+  test('DOCX format is in supported list', () => {
+    const docx = SUPPORTED_FORMATS.find(f => f.id === 'docx');
+    assert.ok(docx);
+    assert.deepEqual(docx.extensions, ['.docx']);
+    assert.deepEqual(docx.mimeTypes, ['application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
+  });
 }
 
 // ─── Run all tests ─────────────────────────────────────────────────────────────
@@ -555,11 +975,14 @@ function testCombinedBlock() {
 testFilenames();
 testMetadataValidation();
 testDecoding();
-testTxtExtraction();
-testCsvExtraction();
-testJsonExtraction();
+await testTxtExtraction();
+await testCsvExtraction();
+await testJsonExtraction();
 testTruncation();
 testCombinedBlock();
+await testPdfExtraction();
+await testDocxExtraction();
+testLimitRegression();
 
 // ─── Summary ───────────────────────────────────────────────────────────────────
 

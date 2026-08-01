@@ -10,6 +10,7 @@ import { StatusPill } from "@/components/content-report/StatusPill";
 import PublishedPostsSection from "@/components/PublishedPostsSection";
 import LinkedInPublishedPostsSection from "@/components/LinkedInPublishedPostsSection";
 import WorkspaceReviewPanel from "@/components/WorkspaceReviewPanel";
+import BrandAssistant from "@/components/BrandAssistant";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -365,6 +366,9 @@ export default function WorkspaceClient({ brand, initialCalendars = [] }) {
           ))}
         </div>
       </div>
+
+      {/* Brand Assistant */}
+      <BrandAssistant brandId={brand.id} brandName={brand.name} />
 
       {/* Calendar section */}
       <CalendarSection brand={brand} initialCalendars={initialCalendars} />

@@ -9,6 +9,7 @@ import {
 } from "@/lib/url-resource-utils";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
 
 const ALLOWED_FORMATS = ["Static", "Carousel"];
 const MAX_ARTICLES_TO_FETCH = 10;
@@ -208,6 +209,8 @@ export async function POST(request) {
     return errorResponse(404, "Brand not found.");
   }
 
+  const contentLanguage = normalizeLanguageCode(brand.contentLanguage);
+
   // ── 6. Resolve the resource ──────────────────────────────────────────────────
   let extracted;
   try {
@@ -311,6 +314,8 @@ export async function POST(request) {
       attachmentContext.block,
     );
   }
+
+  userInputSections.push("", buildLanguageInstruction(contentLanguage));
 
   const articlesBlock = articles
     .map((a, i) => [

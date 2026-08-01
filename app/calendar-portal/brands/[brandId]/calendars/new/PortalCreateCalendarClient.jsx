@@ -13,6 +13,7 @@ export function PortalCreateCalendarClient({ brand, brandIdentity }) {
   const [calendarRaw, setCalendarRaw] = useState("");
   const [calendarFormData, setCalendarFormData] = useState(null);
   const [calendarMeta, setCalendarMeta] = useState({ model: "", usage: "" });
+  const [referenceAttachments, setReferenceAttachments] = useState([]);
 
   const defaultForm = {
     platforms: "",
@@ -77,6 +78,9 @@ export function PortalCreateCalendarClient({ brand, brandIdentity }) {
           form={calendarForm}
           setForm={setCalendarForm}
           onBack={() => {}}
+          brandId={brand.id}
+          referenceAttachments={referenceAttachments}
+          onReferenceAttachmentsChange={setReferenceAttachments}
           onGenerated={({ posts, raw, formData, model, usage }) => {
             setCalendarPosts(posts || []);
             setCalendarRaw(raw || "");
@@ -96,6 +100,7 @@ export function PortalCreateCalendarClient({ brand, brandIdentity }) {
           model={calendarMeta?.model}
           usage={calendarMeta?.usage}
           onBack={() => setStep(1)}
+          referenceAttachments={referenceAttachments}
         />
       )}
     </div>

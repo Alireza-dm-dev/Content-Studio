@@ -148,7 +148,7 @@ export async function POST(request, { params }) {
   }
 
   // ── 7. Extract text ───────────────────────────────────────────────────────
-  const extraction = extractCalendarAttachmentText({
+  const extraction = await extractCalendarAttachmentText({
     buffer,
     fileName: rawFileName,
     mimeType: rawMimeType,

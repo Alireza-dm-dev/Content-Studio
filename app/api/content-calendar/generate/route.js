@@ -10,10 +10,13 @@ import {
 } from "@/lib/calendar-post-utils";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
 
 // ─── Batching constants ──────────────────────────────────────────────────────
 const BATCH_SIZE = 4;
 const MAX_RETRIES_PER_BATCH = 2;
+const MAX_SUPPLEMENTAL_ATTEMPTS = 3;
+const SUPPLEMENTAL_BUFFER = 2;
 
 // ─── JSON output parser ────────────────────────────────────────────────────────
 // Handles: direct JSON, markdown-fenced JSON, JSON embedded in surrounding text.
@@ -562,6 +565,8 @@ export async function POST(request) {
       );
     }
 
+    const contentLanguage = normalizeLanguageCode(brand.contentLanguage);
+
     // ── 3. Derive safe post count ────────────────────────────────────────────
     // Source of truth: Calendar Setup numberOfPostsNeeded from the user.
     // Selected post ideas are inspiration inputs, not a hard cap.
@@ -711,7 +716,10 @@ export async function POST(request) {
         row("Content Strategy Rules",      formFields.contentStrategyRules),
         row("Audience Language Rules",     formFields.audienceLanguageRules),
         row("Writing Style Rules",         formFields.writingStyleRules),
-      "",
+        "",
+        "=== LANGUAGE INSTRUCTION ===",
+        buildLanguageInstruction(contentLanguage),
+        "",
       // ── Output Image Text Requirements: dedicated rules section ─────────────
       // These rules appear BEFORE the JSON schema so the AI has context when
       // filling in outputImageTextRequirementsStructured. It is a STRATEGIC
@@ -1185,8 +1193,11 @@ export async function POST(request) {
           batchPosts = batchPosts.concat(posts);
           const seen = new Set();
           batchPosts = batchPosts.filter(p => {
-            const key = (p.hookTitle || p.coreMessage || "").toLowerCase().trim();
-            if (!key || seen.has(key)) return false;
+            const hook = (p.hookTitle || p.coreMessage || "").toLowerCase().trim();
+            const angle = (p.mainAngle || p.coreMessage || "").toLowerCase().trim();
+            const fmt = (p.format || "").toLowerCase().trim();
+            const key = `${hook}||${angle}||${fmt}`;
+            if (!hook || seen.has(key)) return false;
             seen.add(key);
             return true;
           });
@@ -1213,51 +1224,155 @@ export async function POST(request) {
 
     console.log(`[ContentCalendar] Total after batching: ${allPosts.length}/${safeCount}`);
 
-    // ── 9. Deduplicate across all batches + retry replacements ────────────────
+    // ── 9. Deduplicate across all batches ──────────────────────────────────────
     function deduplicatePosts(posts) {
       const seen = new Set();
       return posts.filter(p => {
-        const key = (p.hookTitle || p.coreMessage || p.caption?.slice(0, 60) || "").toLowerCase().trim();
-        if (!key) return true;
+        const hook = (p.hookTitle || p.coreMessage || p.caption?.slice(0, 60) || "").toLowerCase().trim();
+        const angle = (p.mainAngle || p.coreMessage || "").toLowerCase().trim();
+        const fmt = (p.format || "").toLowerCase().trim();
+        const key = `${hook}||${angle}||${fmt}`;
+        if (!hook) return true;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;
       });
     }
 
-    let deduped = deduplicatePosts(allPosts);
+    let allUnique = deduplicatePosts(allPosts);
 
-    // Bounded replacement attempts when dedup reduces the count
-    const MAX_REPLACEMENT_ATTEMPTS = 2;
-    for (let r = 0; r < MAX_REPLACEMENT_ATTEMPTS && deduped.length < safeCount && totalAttempts < MAX_TOTAL_ATTEMPTS; r++) {
-      const needed = safeCount - deduped.length;
-      console.log(`[ContentCalendar] Replacement attempt ${r + 1}/${MAX_REPLACEMENT_ATTEMPTS}: need ${needed} more posts`);
+    // ── 9b. Supplemental phase — targeted format-aware collection ───────────
+    // After batching and dedup, if we are still short, make focused supplemental
+    // requests. Each supplemental request:
+    //   - knows the current accepted-pool state
+    //   - requests (remaining + buffer) candidates to hedge against duplicates
+    //   - tracks format deficits so underrepresented formats are prioritised
+    //   - preserves the authoritative language instruction
+    //   - preserves attachment context
+    //   - stays within the bounded attempt budget
 
-      const acceptedSummaries = deduped.map(p => p.hookTitle || p.coreMessage || "").filter(Boolean);
-      const context = { current: 1, total: 1, formats: undefined };
+    function computeFormatDeficits(currentPosts, distributedFormats, totalNeeded) {
+      const formatCount = {};
+      for (const p of currentPosts) {
+        const f = (p.format || "").trim();
+        if (f) formatCount[f] = (formatCount[f] || 0) + 1;
+      }
+      const expected = {};
+      for (const f of distributedFormats.slice(0, totalNeeded)) {
+        expected[f] = (expected[f] || 0) + 1;
+      }
+      const deficits = [];
+      for (const [fmt, need] of Object.entries(expected)) {
+        const have = formatCount[fmt] || 0;
+        if (have < need) deficits.push(`${fmt}: need ${need - have} more of ${need} total`);
+      }
+      return deficits;
+    }
+
+    function buildSupplementalPromptContent({
+      count,
+      acceptedPosts,
+      formatDeficits,
+      languageInstruction,
+      attachmentBlock,
+      brandName,
+    }) {
+      const lines = [
+        "=== SUPPLEMENTAL GENERATION ===",
+        `The calendar currently has ${acceptedPosts.length} accepted posts but needs more.`,
+        `Generate exactly ${count} ADDITIONAL posts that are DIFFERENT from the accepted list below.`,
+        "",
+        "=== ACCEPTED POSTS (do NOT duplicate) ===",
+        ...acceptedPosts.map((p, i) =>
+          `${i + 1}. Date: ${p.date || "unset"} | Format: ${p.format || ""} | ` +
+          `Hook: "${(p.hookTitle || p.coreMessage || "").slice(0, 80)}"`
+        ),
+      ];
+
+      if (formatDeficits.length > 0) {
+        lines.push(
+          "",
+          "=== FORMAT DEFICITS ===",
+          "Prioritise the following formats:",
+          ...formatDeficits.map(d => `  - ${d}`),
+        );
+      }
+
+      if (languageInstruction) {
+        lines.push("", languageInstruction);
+      }
+
+      if (attachmentBlock) {
+        lines.push("", attachmentBlock);
+      }
+
+      lines.push(
+        "",
+        "Each post must use the standard schema and be valid for the same brand and campaign.",
+        "Return ONLY valid JSON with a 'posts' array.",
+      );
+
+      return lines.join("\n");
+    }
+
+    let finalBatch = allUnique.slice(0, safeCount);
+
+    for (let s = 0; s < MAX_SUPPLEMENTAL_ATTEMPTS && finalBatch.length < safeCount && totalAttempts < MAX_TOTAL_ATTEMPTS; s++) {
+      const remaining = safeCount - finalBatch.length;
+      const requestCount = Math.min(remaining + SUPPLEMENTAL_BUFFER, 5);
+      const deficits = computeFormatDeficits(finalBatch, distributedFormats, safeCount);
+
+      console.log(`[ContentCalendar] Supplemental ${s + 1}/${MAX_SUPPLEMENTAL_ATTEMPTS}: have ${finalBatch.length}/${safeCount}, requesting ${requestCount}, deficits:`, deficits);
+
       totalAttempts++;
 
       try {
-        const posts = await runBatch({
-          batchCount: needed,
-          batchContext: context,
-          acceptedSummaries,
+        const supInput = buildSupplementalPromptContent({
+          count: requestCount,
+          acceptedPosts: finalBatch,
+          formatDeficits: deficits,
+          languageInstruction: buildLanguageInstruction(contentLanguage),
+          attachmentBlock: attachmentContext.block,
+          brandName: brand.name,
         });
-        deduped = deduplicatePosts([...deduped, ...posts]).slice(0, safeCount);
+
+        const supResult = await generateWithPromptTemplate({
+          templateSlug: "content-calendar-generator",
+          variables,
+          userInput: supInput,
+          maxTokens: 8192,
+        });
+
+        console.log(`[ContentCalendar] Supplemental ${s + 1} raw chars=${supResult.raw?.length ?? 0} finish=${supResult.finishReason}`);
+
+        const rawPosts = extractPostsFromResult(supResult);
+        const normalized = rawPosts.map((p, i) => normalisePost(p, i, formFields.platforms));
+
+        console.log(`[ContentCalendar] Supplemental ${s + 1}: parsed ${normalized.length} raw candidates`);
+
+        const merged = deduplicatePosts([...finalBatch, ...normalized]).slice(0, safeCount);
+        if (merged.length > finalBatch.length) {
+          console.log(`[ContentCalendar] Supplemental ${s + 1}: gained ${merged.length - finalBatch.length} new unique posts (total ${merged.length}/${safeCount})`);
+        } else {
+          console.log(`[ContentCalendar] Supplemental ${s + 1}: no new unique posts gained`);
+        }
+        finalBatch = merged;
       } catch (err) {
-        console.error(`[ContentCalendar] Replacement attempt ${r + 1} failed:`, err.message);
+        console.error(`[ContentCalendar] Supplemental ${s + 1} failed:`, err.message);
       }
+
+      if (finalBatch.length >= safeCount) break;
     }
 
-    const finalBatch = deduped.slice(0, safeCount);
+    console.log(`[ContentCalendar] Total after supplemental: ${finalBatch.length}/${safeCount}`);
 
     if (finalBatch.length < safeCount) {
       console.error(`[ContentCalendar] shortfall: ${finalBatch.length}/${safeCount} after ${totalAttempts} total attempts`);
       return NextResponse.json(
         {
           success: false,
-          code: "CALENDAR_POST_SHORTFALL",
-          error: `The calendar generator produced only ${finalBatch.length} of ${safeCount} required posts after retrying. Please retry the generation.`,
+          code: "CALENDAR_POST_COUNT_INCOMPLETE",
+          error: `The calendar generator created ${finalBatch.length} of ${safeCount} posts. Please retry, or reduce the number of posts if the issue continues.`,
           generatedCount: finalBatch.length,
           requestedCount: safeCount,
         },

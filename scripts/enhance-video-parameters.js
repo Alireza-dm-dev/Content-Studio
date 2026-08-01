@@ -327,31 +327,66 @@ function countOccurrences(text, substring) {
 const SECTION_START = "# Recommended structure:";
 const SECTION_END   = "# Recommendations by video type:";
 
+// (OLD_EXAMPLE removed — unused)
+
+const NEW_EXAMPLE = `subject: a father teaching his child how to read
+
+scene: a quiet home living room on a warm late-summer afternoon — sunbeams filter through sheer curtains, illuminating dust motes above a well-worn armchair beside a small reading table stacked with children\u2019s books. The room feels calm and lived-in: soft beige walls, a patterned rug, bookshelves along the far wall, and a single potted plant catching the golden light.
+
+main action: the father sits beside his young child in the armchair, an open picture book balanced on the child\u2019s lap. He gently guides the child\u2019s finger under each word as they sound out syllables together. When the child successfully reads a sentence, their face lights up; the father responds with a warm nod and a soft, approving smile. The scene captures a quiet reading milestone — patient instruction, shared focus, and subtle emotional encouragement.
+
+motion: the child\u2019s index finger traces slowly beneath each line of text, pausing at unfamiliar words. The father\u2019s hand gestures calmly toward the illustrations to provide context. The child\u2019s posture shifts from concentrated leaning-in to relaxed sitting back after each successful word. Facial micro-expressions are central: the child\u2019s brow furrows in concentration, then softens into a bright smile upon decoding; the father\u2019s eyes crinkle gently as he nods. Movements are slow, deliberate, and unhurried.
+
+speed ramp: Auto
+
+camera movement: the shot begins with a slow, steady push-in from a medium establishing view of the armchair by the window, gradually drawing closer over approximately 8 seconds to frame both figures in a warm two-shot. The movement is smooth and organic, as if the camera is quietly settling in to witness the moment without disturbing it.
+
+camera: Clean Digital
+
+lens: warm halation
+
+focal length: 50
+
+aperture: f/4 moderate
+
+shot type: the scene opens with a medium wide shot that establishes the cosy living room and positions the father and child within the armchair. As the push-in progresses, the framing transitions naturally into a medium two-shot from chest up, keeping both faces and the open book visible. The composition slightly favours the child to emphasise the learning journey, with the father\u2019s supportive presence anchoring the frame.
+
+visual style: realistic everyday-life footage with a warm, naturalistic quality — candid and unpolished, as if captured on a premium smartphone or compact mirrorless camera. Colour temperature leans warm golden from the afternoon sun. Subtle natural grain and soft contrast avoid the sharp clinical look of commercial video. The environment feels authentic and lived-in.
+
+lighting: soft natural daylight coming from the window
+
+mood / vibe: calm, tender, and quietly encouraging — the emotional atmosphere of a safe, patient teaching moment. The pacing is unhurried, the lighting warm, and the interaction marked by small affirming gestures rather than dramatic expression. The viewer should feel like an unobtrusive observer of an intimate domestic ritual.
+
+video quality: natural film-like motion with stable handheld warmth as if captured on a premium smartphone or mirrorless camera in available light, maintaining consistent skin tones, natural skin texture without waxy rendering, and recognisable facial expressions throughout the push-in. Edges are soft and organic with no oversharpening. No flickering, exposure hunting, or frame jitter as the camera moves. Frame pacing is smooth with natural motion blur.
+
+sound direction: soft natural room ambience, no music unless needed
+
+text on screen: no extra text
+
+transition: smooth natural cut
+
+Avoid: unnatural facial morphing or identity drift between father and child, stiff or robotic finger placement, flickering window light, overexposed highlights on the white page that obscure text detail, oversharpened edges creating a synthetic look, artificial studio lighting contradicting the warm natural-light setup, random text appearing on screen, watermarks, or any off-brand visual overlays`;
+
 /**
  * Pure patch function: replaces the Recommended structure section
- * (identified by start/end markers) with NEW_STRUCTURE_BLOCK.
- * Supports first-time patch (OLD_STRUCTURE_BLOCK → NEW) and
- * re-patch (NEW content changed → latest NEW).
+ * (identified by start/end markers) with NEW_STRUCTURE_BLOCK,
+ * and enriches the Final output example nine-field values.
+ * Supports first-time patch and re-patch (v1\u2192v2 upgrades).
  * Returns { status, patchedText?, reason? }.
  */
-function patchTemplateText(templateText) {
-  const startIdx = templateText.indexOf(SECTION_START);
-  const endIdx   = templateText.indexOf(SECTION_END);
+function patchTemplateText(templateText, opts = {}) {
+  // ── Step 1: Replace Recommended structure section ──────────────────
+  const rsStart = templateText.indexOf(SECTION_START);
+  const rsEnd   = templateText.indexOf(SECTION_END);
 
-  if (startIdx === -1 || endIdx === -1) {
+  if (rsStart === -1 || rsEnd === -1) {
     return { status: "unsafe", reason: "Section boundaries # Recommended structure: / # Recommendations by video type: not found." };
   }
 
-  const currentSection = templateText.slice(startIdx, endIdx);
+  const currentSection = templateText.slice(rsStart, rsEnd);
   const hasMarker      = currentSection.includes(MANAGED_MARKER);
-  const isExactMatch   = currentSection === NEW_STRUCTURE_BLOCK;
+  const rsIsCurrent    = currentSection === NEW_STRUCTURE_BLOCK;
 
-  if (hasMarker && isExactMatch) {
-    return { status: "already_patched" };
-  }
-
-  // Guard: refuse if the section does not contain either the old block
-  // or any managed marker version (unrecognised custom content).
   const hasAnyMarker = currentSection.includes(MANAGED_MARKER) ||
     currentSection.includes("<!-- managed:video-parameter-enhancement:");
   if (!hasAnyMarker && !currentSection.includes(OLD_STRUCTURE_BLOCK)) {
@@ -361,10 +396,48 @@ function patchTemplateText(templateText) {
     };
   }
 
-  return {
-    status: "needs_patch",
-    patchedText: templateText.slice(0, startIdx) + NEW_STRUCTURE_BLOCK + templateText.slice(endIdx),
-  };
+  // ── Step 2: Check Final output example ──────────────────────────────
+  // Detect by content — compare the scene line rather than matching prefix exactly
+  const OLD_EXAMPLE_SCENE = "scene: a quiet home living room during summer";
+  const NEW_EXAMPLE_SCENE = "scene: a quiet home living room on a warm late-summer afternoon";
+  const exSection = templateText.indexOf("# Final output example:");
+  let exIsCurrent = false;
+
+  if (exSection >= 0) {
+    const exampleRegion = templateText.slice(exSection, exSection + 800);
+    exIsCurrent = exampleRegion.includes(NEW_EXAMPLE_SCENE);
+  }
+
+  // Both current → already patched
+  if (rsIsCurrent && exIsCurrent) {
+    if (opts.skipEarlyReturn) {
+      // Forced re-patch — continue to apply
+    } else {
+      return { status: "already_patched" };
+    }
+  }
+
+  // ── Apply both replacements ─────────────────────────────────────────
+  let patched = templateText;
+
+  // Replace Recommended structure section
+  patched = patched.slice(0, rsStart) + NEW_STRUCTURE_BLOCK + patched.slice(rsEnd);
+
+  // Replace example nine-field values by reconstructing the entire example section
+  const EX_HEADER = "# Final output example:";
+  const exHeaderPos = patched.indexOf(EX_HEADER);
+  if (exHeaderPos >= 0) {
+    // Find the first content line after the header (past the "Generate a video..." line)
+    const afterHeader = patched.slice(exHeaderPos + EX_HEADER.length);
+    const contentStart = afterHeader.indexOf("\nsubject:");
+    if (contentStart >= 0) {
+      patched = patched.slice(0, exHeaderPos + EX_HEADER.length) +
+        afterHeader.slice(0, contentStart) +
+        "\n\n" + NEW_EXAMPLE;
+    }
+  }
+
+  return { status: "needs_patch", patchedText: patched };
 }
 
 // ── Database helpers ───────────────────────────────────────────────────
@@ -396,14 +469,16 @@ async function applyPatch(id, patchedText, originalText) {
 
 async function main() {
   const args = process.argv.slice(2);
+  const isForce = args.includes("--force");
+  const cleanArgs = args.filter(a => !a.startsWith("--force"));
   const validModes = new Set(["--check", "--apply"]);
-  if (args.length === 0) args.push("--check");
-  if (args.length !== 1 || !validModes.has(args[0])) {
-    console.error("Usage: node scripts/enhance-video-parameters.js [--check | --apply]");
+  if (cleanArgs.length === 0) cleanArgs.push("--check");
+  if (cleanArgs.length !== 1 || !validModes.has(cleanArgs[0])) {
+    console.error("Usage: node scripts/enhance-video-parameters.js [--check | --apply] [--force]");
     process.exit(1);
   }
 
-  const mode = args[0];
+  const mode = cleanArgs[0];
 
   try {
     const tpl = await readTemplate();
@@ -424,7 +499,7 @@ async function main() {
     }
 
     // mode === "--apply"
-    if (classification.status === "already_patched") {
+    if (classification.status === "already_patched" && !isForce) {
       console.log("Database changed: no");
       process.exit(0);
     }
@@ -434,13 +509,20 @@ async function main() {
       process.exit(1);
     }
 
-    // status === "needs_patch"
+    // If forcing re-patch, compute patchedText from current template
+    let patchedText = classification.patchedText;
+    if (classification.status === "already_patched" && isForce) {
+      const forced = patchTemplateText(tpl.templateText, { skipEarlyReturn: true });
+      patchedText = forced.patchedText;
+    }
+
+    // status === "needs_patch" || forced re-patch
     const origLen = tpl.templateText.length;
-    const patchedLen = classification.patchedText.length;
+    const patchedLen = patchedText.length;
     console.log(`Resulting char count: ${patchedLen}`);
     console.log(`Length diff: ${patchedLen - origLen}`);
 
-    await applyPatch(tpl.id, classification.patchedText, tpl.templateText);
+    await applyPatch(tpl.id, patchedText, tpl.templateText);
     console.log("Database changed: yes");
     process.exit(0);
 

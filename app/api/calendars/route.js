@@ -132,17 +132,33 @@ export async function GET(request) {
 
 // ── POST /api/calendars ────────────────────────────────────────────────────────
 export async function POST(request) {
-  console.log("[SaveCalendar] POST /api/calendars");
+  const checkpoint = (label) => console.log("[CalendarCheckpoint]", label);
+  checkpoint("CALENDAR_SAVE_ROUTE_ENTERED");
   try {
+    const { pathname } = request.nextUrl ? new URL(request.url) : { pathname: "/api/calendars" };
+    console.log("[CalendarDiag] request URL:", pathname);
+    console.log("[CalendarDiag] request method: POST");
+    console.log("[CalendarDiag] Content-Type:", request.headers.get("Content-Type") || "(none)");
+    console.log("[CalendarDiag] Content-Length:", request.headers.get("Content-Length") || "(none)");
+    console.log("[CalendarDiag] Next-Action header:", request.headers.get("Next-Action")?.slice(0, 50) || "(none)");
+
+    // Check if this is being treated as a Server Action
+    if (request.headers.get("Next-Action")) {
+      console.warn("[CalendarDiag] WARNING: Next-Action header present — possible Server Action interception");
+    }
+
+    checkpoint("BODY_PARSING");
     let body;
     try {
       body = await request.json();
     } catch (e) {
+      console.error("[CalendarDiag] JSON parse error:", e.message);
       return NextResponse.json(
         { success: false, error: "Invalid request body.", details: e.message },
         { status: 400 }
       );
     }
+    checkpoint("BODY_PARSED");
 
     const {
       title, platform, brandId, timePeriod,
@@ -158,16 +174,6 @@ export async function POST(request) {
       return NextResponse.json({ error: "Invalid calendar status" }, { status: 400 });
     }
 
-    if (!access.isAdmin && normalizedStatus !== "draft") {
-      return NextResponse.json(
-        { error: "Calendar Editors must create calendars as drafts" },
-        { status: 403 }
-      );
-    }
-
-    console.log("[SaveCalendar] brandId:", brandId, "| posts count:", posts?.length);
-    if (posts?.[0]) console.log("[SaveCalendar] first post sample:", JSON.stringify(posts[0]).slice(0, 300));
-
     if (!title?.trim()) {
       return NextResponse.json(
         { success: false, error: "Calendar title is required." },
@@ -180,9 +186,25 @@ export async function POST(request) {
         { status: 400 }
       );
     }
+    checkpoint("VALIDATION_PASSED");
 
     const access = await getBrandCalendarAccess(brandId);
-    if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+    if (!access.allowed) {
+      console.log("[CalendarDiag] brand access denied:", access.error);
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+    checkpoint("BRAND_ACCESS_CONFIRMED");
+
+    if (!access.isAdmin && normalizedStatus !== "draft") {
+      return NextResponse.json(
+        { error: "Calendar Editors must create calendars as drafts" },
+        { status: 403 }
+      );
+    }
+
+    console.log("[SaveCalendar] brandId:", brandId, "| posts count:", posts?.length);
+    if (posts?.[0]) console.log("[SaveCalendar] first post sample:", JSON.stringify(posts[0]).slice(0, 300));
+
     if (!Array.isArray(posts) || posts.length === 0) {
       return NextResponse.json(
         { success: false, error: "There are no posts to save." },
@@ -192,6 +214,7 @@ export async function POST(request) {
 
     const postCreateData = posts.map((p, i) => mapPost(p, i, platform));
     console.log("[SaveCalendar] First Prisma post create data keys:", Object.keys(postCreateData[0]));
+    checkpoint("POSTS_MAPPED");
 
     const calendar = await prisma.contentCalendar.create({
       data: {
@@ -212,6 +235,7 @@ export async function POST(request) {
     });
 
     console.log("[SaveCalendar] Saved id:", calendar.id, "| posts:", calendar._count.posts);
+    checkpoint("CALENDAR_CREATED");
 
     return NextResponse.json(
       { success: true, id: calendar.id, ...calendar, message: "Content calendar saved successfully." },
@@ -219,7 +243,12 @@ export async function POST(request) {
     );
 
   } catch (err) {
-    console.error("[SaveCalendar] Error:", err.message);
+    console.error("[CalendarCheckpoint] LAST CHECKPOINT BEFORE ERROR");
+    console.error("[CalendarCheckpoint] Error name:", err?.constructor?.name || typeof err);
+    console.error("[CalendarCheckpoint] Error message:", err?.message || String(err));
+    if (process.env.NODE_ENV === "development") {
+      console.error("[CalendarCheckpoint] Stack:", err?.stack);
+    }
     return NextResponse.json(
       {
         success: false,

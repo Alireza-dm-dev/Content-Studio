@@ -5,6 +5,7 @@ import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
 
 const str = (v) => (typeof v === "string" ? v : Array.isArray(v) ? v.join(" ") : "");
 
@@ -229,6 +230,7 @@ export async function POST(request) {
       );
     }
 
+    const contentLanguage = normalizeLanguageCode(brand.contentLanguage);
     const apiKey = apiKeySetting?.value || process.env.OPENAI_API_KEY || "";
     const brandIdentitySummary = buildIdentitySummary(identity, brand);
 
@@ -294,6 +296,8 @@ export async function POST(request) {
     if (attachmentContext.block) {
       userInput += "\n\n=== INTERPRETED UPLOADED REFERENCE MATERIAL ===\n" + attachmentContext.block;
     }
+
+    userInput += "\n\n" + buildLanguageInstruction(contentLanguage);
 
     console.log("[SuggestPosts] userInput length:", userInput.length, "chars | safeCount:", safeCount);
 

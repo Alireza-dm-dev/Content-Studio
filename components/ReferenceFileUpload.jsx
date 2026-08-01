@@ -4,7 +4,7 @@ import { useState, useRef, useId } from "react";
 import { Button } from "@/components/ui/button";
 import { Loader2, Upload, X, AlertCircle, FileText, Clock } from "lucide-react";
 
-const ACCEPTED_EXTENSIONS = ".txt,.md,.markdown,.csv,.json";
+const ACCEPTED_EXTENSIONS = ".txt,.md,.markdown,.csv,.json,.pdf,.docx";
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const MAX_FILES_DEFAULT = 5;
 
@@ -16,6 +16,9 @@ function formatSize(bytes) {
 
 function isSupportedFile(file) {
   const name = file.name.toLowerCase();
+  if (name.endsWith(".doc")) {
+    return "legacy_doc";
+  }
   return ACCEPTED_EXTENSIONS.split(",").some(ext => name.endsWith(ext));
 }
 
@@ -104,7 +107,12 @@ function ReferenceFileUpload({
         errors.push(`"${file.name}" exceeds the 5 MB limit.`);
         continue;
       }
-      if (!isSupportedFile(file)) {
+      const supported = isSupportedFile(file);
+      if (supported === "legacy_doc") {
+        errors.push(`"${file.name}" is a legacy .doc file. Save the document as .docx and upload it again.`);
+        continue;
+      }
+      if (!supported) {
         errors.push(`"${file.name}" has an unsupported file type.`);
         continue;
       }
@@ -295,7 +303,7 @@ function ReferenceFileUpload({
             )}
           </p>
           <p className="text-xs text-muted-foreground">
-            Supported: .txt, .md, .csv, .json
+            Supported: .txt, .md, .csv, .json, .pdf, .docx
           </p>
           <p className="text-xs text-muted-foreground">
             Up to {maxFiles} files, max 5 MB each

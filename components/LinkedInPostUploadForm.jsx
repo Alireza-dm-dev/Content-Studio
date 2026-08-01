@@ -235,6 +235,11 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
       return;
     }
 
+    if (!brandId) {
+      setError("Cannot upload because the Brand ID is missing.");
+      return;
+    }
+
     setUploading(true);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
@@ -264,19 +269,26 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
         signal: controller.signal,
       });
 
+      const responseText = await res.text();
+
       let data;
       try {
-        const text = await res.text();
-        if (!text) {
-          throw new Error(`Upload failed with status ${res.status}`);
-        }
-        data = JSON.parse(text);
+        data = JSON.parse(responseText);
       } catch {
-        throw new Error(`Upload failed with status ${res.status}`);
+        if (!responseText) {
+          throw new Error(`Upload failed (${res.status}): Empty response`);
+        }
+        const isHtml = responseText.trim().startsWith("<");
+        if (isHtml) {
+          const titleMatch = responseText.match(/<title>([^<]+)<\/title>/i);
+          const htmlTitle = titleMatch ? titleMatch[1] : "HTML error page";
+          throw new Error(`Upload failed (${res.status}): ${htmlTitle}. Check that the API route and brand ID are correct.`);
+        }
+        throw new Error(`Upload failed (${res.status}): ${responseText.substring(0, 200)}`);
       }
 
       if (!res.ok) {
-        throw new Error(data?.error || `Upload failed with status ${res.status}`);
+        throw new Error(data?.error || `Upload failed (${res.status})`);
       }
 
       const createdPost = data.post || data;

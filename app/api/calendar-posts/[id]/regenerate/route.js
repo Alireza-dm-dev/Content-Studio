@@ -4,6 +4,7 @@ import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
 import { MAX_ATTACHMENT_FILES } from "@/lib/calendar-attachment-utils";
 import {
   validateOutputImageTextRequirements,
@@ -477,6 +478,8 @@ export async function POST(request, { params }) {
     ]);
     if (!brand) return NextResponse.json({ success: false, error: "Brand not found." }, { status: 404 });
 
+    const contentLanguage = normalizeLanguageCode(brand.contentLanguage);
+
     const calendar = calendarId ? post.calendar : null;
 
     // ── Merge postData JSON string into current post fields ───────────────────
@@ -530,6 +533,9 @@ export async function POST(request, { params }) {
         "",
         "=== BRAND ===",
         brandSummary,
+        "",
+        "=== LANGUAGE INSTRUCTION ===",
+        buildLanguageInstruction(contentLanguage),
         "",
         "=== CALENDAR CONTEXT ===",
         calendar?.mainMonthlySubject ? `Monthly subject: ${calendar.mainMonthlySubject}` : null,
@@ -612,6 +618,9 @@ export async function POST(request, { params }) {
         "=== BRAND ===",
         brandSummary,
         "",
+        "=== LANGUAGE INSTRUCTION ===",
+        buildLanguageInstruction(contentLanguage),
+        "",
         attachmentBlock,
         "",
         "=== CURRENT POST (READ-ONLY CONTEXT — do NOT change these fields) ===",
@@ -663,6 +672,9 @@ export async function POST(request, { params }) {
       userInput = [
         "=== BRAND ===",
         brandSummary,
+        "",
+        "=== LANGUAGE INSTRUCTION ===",
+        buildLanguageInstruction(contentLanguage),
         "",
         "=== CURRENT POST (keep postNumber, date, platform, format unchanged) ===",
         `Post #${current.postNumber || "?"}`,

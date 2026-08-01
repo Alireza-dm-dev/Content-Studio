@@ -67,13 +67,23 @@ export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }
     e.preventDefault();
     setError(null);
 
+    if (!brandId) {
+      setError("Cannot upload because the Brand ID is missing.");
+      return;
+    }
+
     const files = mediaInputRef.current?.files;
     if (!files || files.length === 0) {
       setError("At least one media file is required.");
       return;
     }
 
-      setUploading(true);
+    if (postType === "static" && files.length > 1) {
+      setError("Static posts accept only one file. Use Carousel for multiple files.");
+      return;
+    }
+
+    setUploading(true);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
 
@@ -107,19 +117,26 @@ export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }
         signal: controller.signal,
       });
 
+      const responseText = await res.text();
+
       let data;
       try {
-        const text = await res.text();
-        if (!text) {
-          throw new Error(`Upload failed with status ${res.status}`);
-        }
-        data = JSON.parse(text);
+        data = JSON.parse(responseText);
       } catch {
-        throw new Error(`Upload failed with status ${res.status}`);
+        if (!responseText) {
+          throw new Error(`Upload failed (${res.status}): Empty response`);
+        }
+        const isHtml = responseText.trim().startsWith("<");
+        if (isHtml) {
+          const titleMatch = responseText.match(/<title>([^<]+)<\/title>/i);
+          const htmlTitle = titleMatch ? titleMatch[1] : "HTML error page";
+          throw new Error(`Upload failed (${res.status}): ${htmlTitle}. Check that the API route and brand ID are correct.`);
+        }
+        throw new Error(`Upload failed (${res.status}): ${responseText.substring(0, 200)}`);
       }
 
       if (!res.ok) {
-        throw new Error(data?.error || `Upload failed with status ${res.status}`);
+        throw new Error(data?.error || `Upload failed (${res.status})`);
       }
 
       const createdPost = data.post || data;

@@ -23,7 +23,11 @@
     "template:calendar-attachment-interpreter:apply": "node scripts/ensure-calendar-attachment-interpreter-template.js --apply",
     "verify:calendar-attachment-interpreter": "node scripts/verify-calendar-attachment-interpreter.js",
     "verify:calendar-attachment-context": "node scripts/verify-calendar-attachment-context.js",
-    "verify:brand-chat-context": "node scripts/run-verify.mjs"
+    "verify:brand-chat-context": "node scripts/run-verify.mjs",
+    "verify:brand-chat-api": "node scripts/run-verify-api.mjs",
+    "verify:content-language": "node scripts/verify-content-language.js",
+    "verify:calendar-content-language": "node scripts/verify-calendar-content-language.js",
+    "verify:calendar-exact-post-count": "node scripts/verify-calendar-exact-post-count.js"
   },
   "type": "module",
   "prisma": {
@@ -41,9 +45,11 @@
     "clsx": "^2.1.1",
     "geist": "^1.7.2",
     "lucide-react": "^1.17.0",
+    "mammoth": "^1.12.0",
     "next": "16.2.7",
     "next-themes": "^0.4.6",
     "openai": "^6.41.0",
+    "pdf-parse": "^2.4.5",
     "pdfmake": "^0.3.10",
     "react": "19.2.4",
     "react-dom": "19.2.4",

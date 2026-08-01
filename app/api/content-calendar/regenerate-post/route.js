@@ -4,6 +4,7 @@ import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
 import {
   validateOutputImageTextRequirements,
   buildFallbackOutputImageTextRequirements,
@@ -357,6 +358,8 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: "Brand not found." }, { status: 404 });
     }
 
+    const contentLanguage = normalizeLanguageCode(brand.contentLanguage);
+
     // ── Use the inline post directly — no DB lookup or postData merge needed ──
     const current = post;
     const currentOitrDisplay = formatOutputImageTextRequirementsForDisplay(
@@ -381,6 +384,9 @@ export async function POST(request) {
         "",
         "=== BRAND ===",
         brandSummary,
+        "",
+        "=== LANGUAGE INSTRUCTION ===",
+        buildLanguageInstruction(contentLanguage),
         "",
         "=== CALENDAR CONTEXT ===",
         calendarContext?.mainMonthlySubject ? `Monthly subject: ${calendarContext.mainMonthlySubject}` : null,
@@ -463,6 +469,9 @@ export async function POST(request) {
         "=== BRAND ===",
         brandSummary,
         "",
+        "=== LANGUAGE INSTRUCTION ===",
+        buildLanguageInstruction(contentLanguage),
+        "",
         attachmentBlock,
         "",
         "=== CURRENT POST (READ-ONLY CONTEXT — do NOT change these fields) ===",
@@ -512,6 +521,9 @@ export async function POST(request) {
       userInput = [
         "=== BRAND ===",
         brandSummary,
+        "",
+        "=== LANGUAGE INSTRUCTION ===",
+        buildLanguageInstruction(contentLanguage),
         "",
         "=== CURRENT POST (keep postNumber, date, platform, format unchanged) ===",
         `Post #${current.postNumber || "?"}`,

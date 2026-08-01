@@ -751,37 +751,53 @@ export default function StepCalendarOutput({
     if (posts.length === 0) return toast.error("Add at least one post.");
     setSaving(true);
     try {
+      const payload = {
+        title: calendarTitle,
+        brandId: brand.id,
+        platform: formData.platforms,
+        timePeriod: formData.publishingFrequency,
+        mainMonthlySubject: formData.mainMonthlySubject,
+        mainGoal: formData.mainGoal,
+        mainOfferOrMessage: formData.mainOfferOrMessage,
+        sourceMaterial: formData.sourceMaterial,
+        status,
+        posts: posts.map(({ _id, ...p }) => {
+          const norm = normalizePost(p, 0);
+          return serializePostForSave(norm, formData.platforms);
+        }),
+      };
       console.log("[SaveCalendar] Saving", posts.length, "posts for brand", brand.id, "| status:", status);
+      console.log("[SaveCalendarDiag] URL: /api/calendars | method: POST | Content-Type: application/json | body bytes:", new TextEncoder().encode(JSON.stringify(payload)).length);
       const res = await fetch("/api/calendars", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: calendarTitle,
-          brandId: brand.id,
-          platform: formData.platforms,
-          timePeriod: formData.publishingFrequency,
-          mainMonthlySubject: formData.mainMonthlySubject,
-          mainGoal: formData.mainGoal,
-          mainOfferOrMessage: formData.mainOfferOrMessage,
-          sourceMaterial: formData.sourceMaterial,
-          status,
-          posts: posts.map(({ _id, ...p }) => {
-            const norm = normalizePost(p, 0);
-            return serializePostForSave(norm, formData.platforms);
-          }),
-        }),
+        body: JSON.stringify(payload),
       });
 
+      const contentType = res.headers.get("Content-Type") || "(none)";
+      const nextAction = res.headers.get("Next-Action");
       const text = await res.text();
+      const isJson = contentType.includes("json") || text.trim().startsWith("{");
+      console.log("[SaveCalendarDiag] response status:", res.status, "| Content-Type:", contentType, "| isJson:", isJson, "| Next-Action:", nextAction);
+      console.log("[SaveCalendarDiag] body preview:", text.slice(0, 300));
+
       let data;
-      try { data = JSON.parse(text); }
-      catch { throw new Error("Server returned an unexpected response. Check logs."); }
+      if (isJson) {
+        try { data = JSON.parse(text); }
+        catch { data = null; }
+      }
 
-      console.log("[SaveCalendar] Response:", res.status, data?.success, data?.error);
-
-      if (!res.ok || data?.success === false) {
+      if (!res.ok || !data || data?.success === false) {
+        let safeReason;
+        if (res.status === 413) safeReason = "Payload too large.";
+        else if (res.status === 401) safeReason = "Authentication required.";
+        else if (res.status === 403) safeReason = "Access denied.";
+        else if (res.status === 500) safeReason = data?.error || data?.details || "Server error.";
+        else if (!isJson) safeReason = "Non-JSON response (possible framework error).";
+        else if (!data) safeReason = "Invalid JSON response.";
+        else safeReason = data?.error || "Content calendar could not be saved.";
         if (data?.details) console.error("[SaveCalendar] details:", data.details);
-        throw new Error(data?.error ?? "Content calendar could not be saved.");
+        throw new Error(`Calendar save failed (${res.status}): ${safeReason}`);
       }
 
       toast.success(`Calendar saved with ${posts.length} posts!`);
