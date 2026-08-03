@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { getAdminAccess } from "@/lib/auth";
 import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
+import { resolveCinematicStyle } from "@/lib/cinematic-styles";
 
 const ALLOWED_TEMPLATE_SLUGS = new Set([
   "image-prompt-booster-raw-idea",
@@ -52,22 +53,29 @@ export async function POST(request) {
     );
   }
 
-  const controls = normalizeVisualControls(visualControls);
-  const controlsBlock = serializeVisualControls(controls);
-
-  const rawIdeaText = typeof userInput === "string" ? userInput.trim() : "";
-  const ideaBlock = `Raw image idea:\n${rawIdeaText}`;
-  const cinematicStyle = controls.cinematicStyle;
-  const styleBlock = cinematicStyle && cinematicStyle !== "auto" ? buildImageStyleBlock(cinematicStyle) : "";
-
-  let finalUserInput;
-  const parts = [];
-  if (rawIdeaText) parts.push(ideaBlock);
-  if (controlsBlock) parts.push(controlsBlock);
-  if (styleBlock) parts.push(styleBlock);
-  finalUserInput = parts.length > 0 ? parts.join("\n\n") : null;
-
   try {
+    const controls = normalizeVisualControls(visualControls);
+    const controlsBlock = serializeVisualControls(controls);
+
+    const rawIdeaText = typeof userInput === "string" ? userInput.trim() : "";
+    const ideaBlock = `Raw image idea:\n${rawIdeaText}`;
+
+    // ── Cinematic style validation ─────────────────────────────────────────────
+    // Invalid explicit selections return a clean 400 instead of being silently
+    // downgraded to "auto" or crashing later.
+    const cinematic = resolveCinematicStyle(visualControls?.cinematicStyle);
+    if (cinematic.error) {
+      return NextResponse.json({ success: false, error: cinematic.error }, { status: 400 });
+    }
+    const styleBlock = cinematic.style !== "auto" ? buildImageStyleBlock(cinematic.style) : "";
+
+    let finalUserInput;
+    const parts = [];
+    if (rawIdeaText) parts.push(ideaBlock);
+    if (controlsBlock) parts.push(controlsBlock);
+    if (styleBlock) parts.push(styleBlock);
+    finalUserInput = parts.length > 0 ? parts.join("\n\n") : null;
+
     const result = await generateWithPromptTemplate({
       templateSlug,
       variables: variables ?? {},

@@ -4,6 +4,7 @@ import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
+import { resolveCinematicStyle } from "@/lib/cinematic-styles";
 
 const TEMPLATE_SLUG = "image-prompt-from-brand-and-post-without-reference";
 
@@ -55,9 +56,14 @@ export async function POST(request) {
     textDensity = "Headline plus short supporting text",
   } = body ?? {};
 
-  // Normalize untrusted control input. Invalid/unknown values collapse to
-  // "auto" and never throw — this must not cause a 400 or 500.
-  const normalizedVisualControls = normalizeVisualControls(body?.visualControls);
+  // ── Cinematic style validation ─────────────────────────────────────────────
+  // Resolve the shared preset BEFORE any other work so an invalid explicit
+  // selection returns a clean 400 JSON error instead of failing later. Missing,
+  // blank, or "auto" resolve to { style: "auto" } (AI decides).
+  const cinematic = resolveCinematicStyle(body?.visualControls?.cinematicStyle);
+  if (cinematic.error) {
+    return NextResponse.json({ success: false, error: cinematic.error }, { status: 400 });
+  }
 
   if (!brandId) {
     return NextResponse.json({ success: false, error: "Please choose a brand." }, { status: 400 });
@@ -67,6 +73,9 @@ export async function POST(request) {
   }
 
   try {
+    // Normalize untrusted control input. Invalid/unknown values collapse to
+    // "auto" and never throw — this must not cause a 400 or 500.
+    const normalizedVisualControls = normalizeVisualControls(body?.visualControls);
     const brand = await prisma.brand.findUnique({ where: { id: brandId } });
     if (!brand) {
       return NextResponse.json({ success: false, error: "Brand not found." }, { status: 404 });
@@ -109,7 +118,7 @@ export async function POST(request) {
       visualStyleDirection,
       textDensity,
       visualControlsBlock: serializeVisualControls(normalizedVisualControls),
-      cinematicStyle: body?.visualControls?.cinematicStyle || "auto",
+      cinematicStyle: cinematic.style,
     });
 
     const result = await generateWithPromptTemplate({

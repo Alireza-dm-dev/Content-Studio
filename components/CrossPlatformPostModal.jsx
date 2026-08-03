@@ -4,7 +4,10 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { parseWallClockInTz, formatToDateTimeLocalInTz } from "@/lib/timezone";
 
-const CLIENT_FETCH_TIMEOUT = 660000;
+// Matches the server's new max SFTP upload budget (30 min). Image/PDF uploads
+// finish in milliseconds, so this only extends the ceiling for large video
+// transfers which legitimately take minutes over SFTP.
+const CLIENT_FETCH_TIMEOUT = 1800000;
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",

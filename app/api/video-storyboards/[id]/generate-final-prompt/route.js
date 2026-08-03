@@ -4,7 +4,7 @@ import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
-import { buildVideoStyleBlock } from "@/lib/cinematic-styles";
+import { buildVideoStyleBlock, resolveCinematicStyle } from "@/lib/cinematic-styles";
 
 // ── Cinematic Controls helpers ────────────────────────────────────────────────
 const CINEMATIC_FALLBACK = "Auto — infer from context";
@@ -123,6 +123,17 @@ export async function POST(request, { params }) {
       cinematicStyle,
     } = body;
 
+    // ── Cinematic style validation ─────────────────────────────────────────────
+    // Invalid explicit selections return a clean 400 instead of being silently
+    // downgraded to "auto" or failing later. Missing/blank/"auto" → AI decides.
+    const cinematic = resolveCinematicStyle(cinematicStyle);
+    if (cinematic.error) {
+      return NextResponse.json(
+        { success: false, error: cinematic.error },
+        { status: 400 }
+      );
+    }
+
     // ── 1. Load storyboard ──────────────────────────────────────────────────
     const storyboard = await prisma.videoStoryboard.findUnique({ where: { id } });
 
@@ -186,7 +197,7 @@ export async function POST(request, { params }) {
     const calendarPostSummary = norm ? buildCalendarPostSummary(norm) : "";
 
     // ── Cinematic Controls (resolved from post context, fallback to deterministic selector) ─
-    const effectiveCamStyle = cinematicStyle && cinematicStyle !== "auto" ? cinematicStyle : "cinematic";
+    const effectiveCamStyle = cinematic.style !== "auto" ? cinematic.style : "cinematic";
     const genre = (videoFormat || videoGoal || "cinematic-narrative").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const cameraMovementLine = resolveCameraMovement(norm?.cameraMovement, {
       genre,
@@ -224,8 +235,8 @@ export async function POST(request, { params }) {
       cinematicLine("Aperture", cinematicControls.aperture),
     ];
 
-    if (cinematicStyle && cinematicStyle !== "auto") {
-      const styleBlock = buildVideoStyleBlock(cinematicStyle);
+    if (cinematic.style !== "auto") {
+      const styleBlock = buildVideoStyleBlock(cinematic.style);
       if (styleBlock) {
         combinedLines.push("", styleBlock);
       }

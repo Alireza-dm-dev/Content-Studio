@@ -479,9 +479,15 @@ export async function POST(request, { params }) {
       success: false,
       code: "REMOTE_MEDIA_UPLOAD_FAILED",
       error: "The post was saved, but its media could not be uploaded to the public media server.",
+      detailCode: remoteResult?.detailCode || "SFTP_UPLOAD_FAILED",
+      details: remoteResult?.error || remoteResult?.details || remoteResult?.detailCode || null,
+      ...(remoteResult?.fileSize != null ? { fileSize: remoteResult.fileSize } : {}),
+      ...(remoteResult?.duration != null ? { duration: remoteResult.duration } : {}),
+      ...(remoteResult?.skipped ? { skipped: true } : {}),
     };
     if (remoteResult?.success && !remoteUploadSuccessful) {
       webhookResult.details = `Remote media count mismatch: expected ${(result.media || []).length}, got ${remoteResult.media.length}`;
+      webhookResult.detailCode = "SFTP_MEDIA_COUNT_MISMATCH";
     }
     console.log("[PublishedPosts] auto n8n send skipped: remote media not available", {
       detailCode: remoteResult?.detailCode,

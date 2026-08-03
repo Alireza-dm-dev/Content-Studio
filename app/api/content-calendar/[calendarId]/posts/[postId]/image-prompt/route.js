@@ -5,6 +5,7 @@ import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
 import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
+import { resolveCinematicStyle } from "@/lib/cinematic-styles";
 
 function stripRatioMentions(prompt) {
   return prompt
@@ -268,6 +269,14 @@ export async function POST(request, { params }) {
 
     const isRefinement = currentPrompt.trim().length > 0 && refinementFeedback.trim().length > 0;
 
+    // ── Cinematic style validation ─────────────────────────────────────────────
+    // Invalid explicit selections return a clean 400 instead of being silently
+    // downgraded to "auto" or failing later.
+    const cinematic = resolveCinematicStyle(visualControls?.cinematicStyle);
+    if (cinematic.error) {
+      return NextResponse.json({ success: false, error: cinematic.error }, { status: 400 });
+    }
+
     // ── Visual Production Controls (optional) ───────────────────────────────
     // Normalize untrusted client input; unknown values collapse to "auto" and
     // are omitted from prompt serialization. Never throws on bad input.
@@ -423,9 +432,8 @@ export async function POST(request, { params }) {
       : userInput;
 
     // ── Append cinematic style block ─────────────────────────────────────────
-    const cinematicStyle = normalizedVisualControls?.cinematicStyle;
-    if (cinematicStyle && cinematicStyle !== "auto") {
-      const styleBlock = buildImageStyleBlock(cinematicStyle);
+    if (cinematic.style !== "auto") {
+      const styleBlock = buildImageStyleBlock(cinematic.style);
       if (styleBlock) {
         baseUserInput += "\n\n" + styleBlock;
       }

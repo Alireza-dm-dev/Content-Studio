@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
-import { buildVideoStyleBlock } from "@/lib/cinematic-styles";
+import { buildVideoStyleBlock, resolveCinematicStyle } from "@/lib/cinematic-styles";
 
 // The video-prompt-enhancer-raw-idea template always starts its final
 // structured prompt with this exact sentence. If the model instead detects
@@ -83,8 +83,16 @@ export async function POST(request) {
       return NextResponse.json({ success: false, error: "Video type is required." }, { status: 400 });
     }
 
+    // ── Cinematic style validation ─────────────────────────────────────────────
+    // Invalid explicit selections return a clean 400 instead of being silently
+    // downgraded to "auto" or failing later. Missing/blank/"auto" → AI decides.
+    const cinematic = resolveCinematicStyle(cinematicStyle);
+    if (cinematic.error) {
+      return NextResponse.json({ success: false, error: cinematic.error }, { status: 400 });
+    }
+
     // ── Cinematic Controls (optional requested values) ──────────────────────────
-    const effectiveCamStyle = cinematicStyle && cinematicStyle !== "auto" ? cinematicStyle : videoType;
+    const effectiveCamStyle = cinematic.style !== "auto" ? cinematic.style : videoType;
     const cameraMovementLine = resolveCameraMovement(cameraMovement, {
       genre: videoType,
       style: effectiveCamStyle,
@@ -120,8 +128,8 @@ export async function POST(request) {
       cinematicLine("Aperture", cinematicControls.aperture),
     ];
 
-    if (cinematicStyle && cinematicStyle !== "auto") {
-      const styleBlock = buildVideoStyleBlock(cinematicStyle);
+    if (cinematic.style !== "auto") {
+      const styleBlock = buildVideoStyleBlock(cinematic.style);
       if (styleBlock) {
         userInputParts.push("", styleBlock);
       }

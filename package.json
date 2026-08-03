@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "node --import ./tests/setup.mjs --test --experimental-test-module-mocks tests/*.test.mjs",
     "seed": "node prisma/seed.js",
     "seed:admin": "node scripts/seed-admin.js",
     "admin:ensure-owner": "node scripts/ensure-owner-admin.js",
