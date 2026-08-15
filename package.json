@@ -28,7 +28,8 @@
     "verify:brand-chat-api": "node scripts/run-verify-api.mjs",
     "verify:content-language": "node scripts/verify-content-language.js",
     "verify:calendar-content-language": "node scripts/verify-calendar-content-language.js",
-    "verify:calendar-exact-post-count": "node scripts/verify-calendar-exact-post-count.js"
+    "verify:calendar-exact-post-count": "node scripts/verify-calendar-exact-post-count.js",
+    "verify:sftp-upload": "node scripts/verify-sftp-upload.mjs"
   },
   "type": "module",
   "prisma": {
