@@ -185,6 +185,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
     try {
+      console.log("[SendToN8n] sending", { brandId, postId: post.id });
       const res = await fetch(`/api/brands/${brandId}/published-posts/${post.id}/send-webhook`, {
         method: "POST",
         signal: controller.signal,
@@ -213,9 +214,26 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
           }
         }
         if (data.webhookResult?.success) {
+          console.log("[SendToN8n] success", { postId: post.id });
           toast.success("Sent to n8n.");
         } else if (data.webhookResult?.success === false) {
-          toast.warning(data.webhookResult.error || "Sent to n8n with warnings.");
+          const wr = data.webhookResult;
+          console.error("[SendToN8n] failed", {
+            httpStatus: res.status,
+            code: wr.code || null,
+            detailCode: wr.detailCode || null,
+            details: wr.details || null,
+            skipped: wr.skipped || false,
+            webhookStatus: wr.webhookStatus ?? null,
+            error: wr.error || null,
+          });
+          const reason =
+            wr.details || wr.detailCode || (wr.webhookStatus ? `HTTP ${wr.webhookStatus}` : wr.code);
+          toast.warning(
+            reason
+              ? `${wr.error || "Sent to n8n with warnings."} (${reason})`
+              : wr.error || "Sent to n8n with warnings.",
+          );
         }
       } else {
         throw new Error(data?.error || `Send failed with status ${res.status}`);

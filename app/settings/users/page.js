@@ -9,10 +9,10 @@ import { PageContainer } from "@/components/ui/page-container";
 import { PageHeader } from "@/components/ui/page-header";
 import { toast } from "sonner";
 import {
-  Plus, UserPlus, UserX, Shield, ShieldOff, Trash2, Loader2,
+  Plus, UserPlus, UserX, Shield, ShieldOff, Trash2, Loader2, Pencil,
 } from "lucide-react";
 
-function UserRow({ user, onToggleActive, onDelete, onManageMemberships }) {
+function UserRow({ user, onToggleActive, onDelete, onManageMemberships, onEdit }) {
   return (
     <div
       style={{
@@ -73,6 +73,14 @@ function UserRow({ user, onToggleActive, onDelete, onManageMemberships }) {
           title="Manage brand memberships"
         >
           <Plus className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onEdit(user)}
+          title="Edit user"
+        >
+          <Pencil className="w-3.5 h-3.5" />
         </Button>
         <Button
           variant="ghost"
@@ -434,11 +442,133 @@ function MembershipModal({ user, brands, onClose }) {
   );
 }
 
+function EditUserModal({ user, onClose, onSaved }) {
+  const [email, setEmail] = useState(user.email);
+  const [name, setName] = useState(user.name);
+  const [role, setRole] = useState(user.role);
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const body = { email: email.trim(), name: name.trim(), role };
+      if (password.trim()) body.password = password;
+
+      const res = await fetch(`/api/admin/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to update user.");
+      }
+      toast.success("User updated.");
+      onSaved();
+      onClose();
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.4)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          background: "var(--sketch-paper-bright)",
+          borderRadius: 8,
+          padding: 24,
+          maxWidth: 420,
+          width: "90%",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3
+          style={{
+            fontFamily: "var(--font-mono-ink)",
+            fontSize: 14,
+            fontWeight: 600,
+            color: "var(--sketch-ink)",
+            margin: "0 0 16px",
+          }}
+        >
+          Edit User
+        </h3>
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <Input
+            placeholder="Name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+          <Input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 4,
+              border: "1px solid var(--sketch-line)",
+              fontFamily: "var(--font-mono-ink)",
+              fontSize: 11,
+              background: "var(--sketch-paper-bright)",
+              color: "var(--sketch-ink)",
+            }}
+          >
+            <option value="user">User</option>
+            <option value="admin">Admin</option>
+          </select>
+          <Input
+            type="password"
+            placeholder="New password (leave blank to keep current)"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            minLength={8}
+          />
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <Button type="button" variant="outline" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={saving} size="sm" className="gap-1.5">
+              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {saving ? "Saving…" : "Save Changes"}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function UserManagementPage() {
   const [users, setUsers] = useState([]);
   const [brands, setBrands] = useState([]);
   const [loading, setLoading] = useState(true);
   const [membershipUser, setMembershipUser] = useState(null);
+  const [editingUser, setEditingUser] = useState(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -547,6 +677,7 @@ export default function UserManagementPage() {
                   onToggleActive={handleToggleActive}
                   onDelete={handleDelete}
                   onManageMemberships={setMembershipUser}
+                  onEdit={setEditingUser}
                 />
               ))}
               {users.length === 0 && (
@@ -572,6 +703,14 @@ export default function UserManagementPage() {
           user={membershipUser}
           brands={brands}
           onClose={() => setMembershipUser(null)}
+        />
+      )}
+
+      {editingUser && (
+        <EditUserModal
+          user={editingUser}
+          onClose={() => setEditingUser(null)}
+          onSaved={fetchData}
         />
       )}
     </PageContainer>
