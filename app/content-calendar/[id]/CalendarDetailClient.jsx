@@ -18,8 +18,12 @@ import { ReferenceFileUpload } from "@/components/ReferenceFileUpload";
 
 // ─── Cell value renderer (shared) ─────────────────────────────────────────────
 
-function renderValue(key, value) {
+function renderValue(key, value, post) {
   if (key === "hashtags") {
+    // New-format posts already end their caption with the 5 hashtags — don't
+    // show them a second time here, or old-format posts wouldn't be able to
+    // tell the difference between "no hashtags" and "hashtags are elsewhere".
+    if (post?.hashtagsMergedIntoCaption) return "In caption";
     const arr = Array.isArray(value) ? value :
       (typeof value === "string" && value.trim() ? value.split(/\s+/).filter(Boolean) : []);
     return arr.length ? arr.join(" ") : null;
@@ -647,7 +651,7 @@ function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete })
                 isEditing ? "bg-primary/5" : idx % 2 === 0 ? "bg-background" : "bg-muted/20"
               }`}>
               {view.columns.map(col => {
-                const display = renderValue(col.key, norm[col.key]);
+                const display = renderValue(col.key, norm[col.key], norm);
                 const isImageText = col.key === "imageText";
                 return (
                   <td key={col.key} className={`px-3 py-2 ${col.width}`}>

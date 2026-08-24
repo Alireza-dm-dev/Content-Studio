@@ -7,6 +7,9 @@ import {
   buildFallbackOutputImageTextRequirements,
   normalizeOutputImageTextRequirementsStructured,
   formatOutputImageTextRequirementsForDisplay,
+  createCompactToneInformationSummary,
+  CAPTION_GENERATION_RULES_LINES,
+  mergeHashtagsIntoCaption,
 } from "@/lib/calendar-post-utils";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
@@ -104,12 +107,18 @@ function normalisePost(p, idx, defaultPlatform) {
     return [];
   })();
 
-  const caption = (() => {
+  const rawCaption = (() => {
     const c = get("caption", "suggestedCaption", "suggested_caption", "captionText", "copy", "text");
     const cta = get("cta", "CTA", "callToAction", "call_to_action");
     if (c && cta && !c.includes(cta)) return `${c}\n\n${cta}`;
     return c || cta;
   })();
+
+  // Single source of truth for hashtags is the caption's final line — the AI
+  // returns a structured hashtags array (reliable count control), and we
+  // deterministically merge it into the caption here rather than trusting the
+  // AI to embed exactly 5 hashtags inline (see lib/calendar-post-utils.js).
+  const { caption, hashtags: mergedHashtags } = mergeHashtagsIntoCaption(rawCaption, hashtags);
 
   // The AI returns the structured object (preferred — see the generation rules
   // below); normalize whatever shape it actually came back as, then derive the
@@ -134,7 +143,8 @@ function normalisePost(p, idx, defaultPlatform) {
     coreMessage: get("coreMessage", "core_message", "mainAngleAndCoreMessage", "core_idea", "message"),
     hookTitle:   get("hookTitle",   "hook_title",   "suggestedHook", "suggested_hook", "hook", "headline", "title", "topic"),
     caption,
-    hashtags,
+    hashtags: mergedHashtags,
+    hashtagsMergedIntoCaption: mergedHashtags.length > 0,
 
     contentStructure: get("contentStructure", "content_structure", "structure_detail"),
     visualDirection:  get("visualDirection",  "visual_direction"),
@@ -251,24 +261,6 @@ function applyFallbackDates(posts, { calendarPeriodStart, calendarPeriodEnd, pub
 // The calendar generator needs BOTH visual identity (for visual direction fields)
 // and tone/brand data (for hooks, captions, angles) — so unlike the image/video
 // prompt flows (visual-only), build a balanced summary covering both sections.
-
-function createCompactToneInformationSummary(tone) {
-  return [
-    tone.brandName               && `Brand name: ${tone.brandName}`,
-    tone.industry                && `Industry: ${tone.industry}`,
-    tone.servicesOrProducts.length && `Services/products: ${tone.servicesOrProducts.join(", ")}`,
-    tone.targetAudience          && `Target audience: ${tone.targetAudience}`,
-    tone.locationOrMarket        && `Location/market: ${tone.locationOrMarket}`,
-    tone.brandPersonality.length && `Brand personality: ${tone.brandPersonality.join(", ")}`,
-    tone.toneOfVoice.length      && `Tone of voice: ${tone.toneOfVoice.join(", ")}`,
-    tone.contentStyle            && `Content style: ${tone.contentStyle}`,
-    tone.businessGoals.length    && `Business goals: ${tone.businessGoals.join(", ")}`,
-    tone.keyMessages.length      && `Key messages: ${tone.keyMessages.join(", ")}`,
-    tone.offers.length           && `Offers: ${tone.offers.join(", ")}`,
-    tone.contentDoRules.length   && `Content do's: ${tone.contentDoRules.join("; ")}`,
-    tone.contentDontRules.length && `Content don'ts: ${tone.contentDontRules.join("; ")}`,
-  ].filter(Boolean).join("\n");
-}
 
 function buildIdentitySummary(identity, brand) {
   if (!identity) {
@@ -667,6 +659,8 @@ export async function POST(request) {
         row("Location",          brand.businessLocation),
         row("Website",           brand.website),
         row("Instagram",         brand.instagramPage),
+        row("LinkedIn",          brand.linkedinPage),
+        row("Facebook",          brand.facebookPage),
         row("Brand Tone",        brand.brandTone),
         row("Target Audience",   brand.targetAudience),
         row("Campaign Target Audience", formFields.targetAudience),
@@ -859,14 +853,7 @@ export async function POST(request) {
       "{ \"type\": \"static\", \"items\": [ { \"main_headline\": \"3 Checks Before We Recommend Any Security System\", \"subheadline\": \"Entry points, existing risks, and the right upgrade path for your property\", \"badge_or_label\": \"Consultation Checklist\" } ] }",
       "Why BETTER wins: main_headline turns the question into a numbered, concrete promise; subheadline lists the actual three things from contentStructure rather than restating coreMessage; badge_or_label names the format, not the angle category.",
       "",
-      "=== CAPTION GENERATION RULES ===",
-      "Captions must be substantive multi-paragraph content:",
-      "  - At least 5 visible lines of substantive content per post",
-      "  - Maximum 3 paragraphs, separated by natural blank line breaks",
-      "  - Always include a clear call-to-action in the final paragraph",
-      "  - Do not artificially shorten captions to a fixed character limit — let the content and depth dictate the length",
-      "  - Use natural line breaks between paragraphs to improve readability",
-      "  - Write for the platform's audience: LinkedIn posts should be professional and value-rich; other platforms can match their respective tone",
+      ...CAPTION_GENERATION_RULES_LINES,
       "",
       "CAPTION DEPTH BY POST TYPE:",
       "  - Educational posts (mainAngle: education): captions must be more detailed than regular posts. Use longer explanations, practical examples, steps, reasons, mini-frameworks, or key takeaways. Aim for at least 2 substantial paragraphs when the content supports it. Do not add filler — useful depth only.",
@@ -1038,8 +1025,8 @@ export async function POST(request) {
       '      "mainAngle": "strategic angle: education | trust | promotion | engagement | behind the scenes | objection handling | case study",',
       '      "coreMessage": "the single key message the audience must remember",',
       '      "hookTitle": "opening hook or first-slide headline",',
-      '      "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA. Educational and static posts get richer, more explanatory captions (see CAPTION DEPTH BY POST TYPE above).",',
-      '      "hashtags": ["#tag1", "#tag2", "#tag3"],',
+      '      "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA. Educational and static posts get richer, more explanatory captions (see CAPTION DEPTH BY POST TYPE above). Do NOT include hashtags in this field — they go in the separate hashtags field below and are appended automatically.",',
+      '      "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"],',
       '      "contentStructure": "slide-by-slide or scene-by-scene breakdown",',
       '      "visualDirection": "Creative direction for the designer. Static posts: describe layout, colors, composition, branding, CTA placement. Carousel posts: write Overall carousel visual system: [...] then Slide 1: [...] Slide 2: [...] etc. Video/Reel posts: describe thumbnail look, key visual frames, cover frame direction.",',
       '      "outputImageTextRequirementsStructured": <object — FOLLOW THE OUTPUT IMAGE TEXT REQUIREMENTS GENERATION RULES AND FORMAT-SPECIFIC RULES ABOVE EXACTLY. Return a real nested JSON object (not a string): { "type": "static"|"video", "items": [ { "main_headline": "...", ... } ] } OR { "type": "carousel", "slides": [ { "slideNumber": 1, "slideRole": "Hook", "fields": { "main_headline": "sharpened hook", "badge_or_label": "label" } }, { "slideNumber": 2, "slideRole": "Tip 1", "fields": { "main_headline": "specific claim from this slide in contentStructure", "supporting_text": "concrete detail or benefit — REQUIRED for every middle slide" } }, ... one entry per Content Structure slide — every middle slide MUST have main_headline + supporting_text or subheadline ] }. Use ONLY the 12 allowed field keys. Omit blank keys entirely. Carousel slide count MUST equal the Content Structure slide count.>,',
@@ -1069,7 +1056,7 @@ export async function POST(request) {
       "",
       "Strict rules:",
       `- posts array must contain exactly ${count} complete objects.`,
-      "- hashtags must always be a JSON array of strings starting with #.",
+      "- hashtags must always be a JSON array of exactly 5 strings, each starting with #, relevant to the post/brand/topic/platform — never fewer, never more, never generic/spam tags.",
       "- outputImageTextRequirementsStructured must be a real nested JSON object/array (NOT a stringified JSON, NOT plain text) following the schema and rules given above.",
       "- postNumber starts at 1 and increments by 1.",
       "- Every field must be present. Use empty string \"\" for fields that do not apply.",

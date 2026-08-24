@@ -10,6 +10,9 @@ import {
   buildFallbackOutputImageTextRequirements,
   normalizeOutputImageTextRequirementsStructured,
   formatOutputImageTextRequirementsForDisplay,
+  createCompactToneInformationSummary,
+  CAPTION_GENERATION_RULES_LINES,
+  mergeHashtagsIntoCaption,
 } from "@/lib/calendar-post-utils";
 
 // ── Scope → allowed updatable fields ──────────────────────────────────────────
@@ -36,24 +39,6 @@ const SCOPE_FIELDS = {
   image_text_only:    ["outputImageTextRequirementsStructured", "outputImageTextRequirements", "imageText"],
 };
 
-function createCompactToneInformationSummary(tone) {
-  return [
-    tone.brandName               && `Brand name: ${tone.brandName}`,
-    tone.industry                && `Industry: ${tone.industry}`,
-    tone.servicesOrProducts.length && `Services/products: ${tone.servicesOrProducts.join(", ")}`,
-    tone.targetAudience          && `Target audience: ${tone.targetAudience}`,
-    tone.locationOrMarket        && `Location/market: ${tone.locationOrMarket}`,
-    tone.brandPersonality.length && `Brand personality: ${tone.brandPersonality.join(", ")}`,
-    tone.toneOfVoice.length      && `Tone of voice: ${tone.toneOfVoice.join(", ")}`,
-    tone.contentStyle            && `Content style: ${tone.contentStyle}`,
-    tone.businessGoals.length    && `Business goals: ${tone.businessGoals.join(", ")}`,
-    tone.keyMessages.length      && `Key messages: ${tone.keyMessages.join(", ")}`,
-    tone.offers.length           && `Offers: ${tone.offers.join(", ")}`,
-    tone.contentDoRules.length   && `Content do's: ${tone.contentDoRules.join("; ")}`,
-    tone.contentDontRules.length && `Content don'ts: ${tone.contentDontRules.join("; ")}`,
-  ].filter(Boolean).join("\n");
-}
-
 function buildBrandSummary(identity, brand) {
   if (!identity) {
     return [
@@ -63,6 +48,11 @@ function buildBrandSummary(identity, brand) {
       brand.targetAudience && `Audience: ${brand.targetAudience}`,
       brand.mainServicesOrProducts && `Services: ${brand.mainServicesOrProducts}`,
       brand.brandVisualStyle && `Visual style: ${brand.brandVisualStyle}`,
+      brand.website         && `Website: ${brand.website}`,
+      brand.instagramPage   && `Instagram: ${brand.instagramPage}`,
+      brand.linkedinPage    && `LinkedIn: ${brand.linkedinPage}`,
+      brand.facebookPage    && `Facebook: ${brand.facebookPage}`,
+      brand.businessLocation && `Location: ${brand.businessLocation}`,
     ].filter(Boolean).join(". ");
   }
 
@@ -176,8 +166,8 @@ function buildJsonHint(isCarousel, isVideo) {
     '  "hookTitle": "...",',
     '  "mainAngle": "...",',
     '  "coreMessage": "...",',
-    '  "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA",',
-    '  "hashtags": ["#tag1", "#tag2"],',
+    '  "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA. Do NOT include hashtags in this field — they go in the separate hashtags field below and are appended automatically.",',
+    '  "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"],',
     '  "contentStructure": "...",',
     isCarousel
       ? '  "visualDirection": "Overall carousel visual system: [...]. Slide 1: [...]. Slide 2: [...]. etc.",'
@@ -244,8 +234,8 @@ function buildJsonHintForCustomInstruction() {
     '  "hookTitle": "...",',
     '  "mainAngle": "...",',
     '  "coreMessage": "...",',
-    '  "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA",',
-    '  "hashtags": ["#tag1", "#tag2"],',
+    '  "caption": "detailed caption — at least 5 lines, maximum 3 paragraphs, ending with CTA. Do NOT include hashtags in this field — they go in the separate hashtags field below and are appended automatically.",',
+    '  "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"],',
     '  "contentStructure": "updated to match final format if it changed",',
     '  "visualDirection": "updated to describe the final format",',
     oitrHint + ",",
@@ -437,13 +427,8 @@ export async function POST(request) {
         "8. Return only valid JSON. Do not use markdown. Do not use code blocks.",
         "9. If the instruction asks to change Image Text, image copy, on-image text, headline text, overlay text, slide text, or visual copy, you MUST return a new outputImageTextRequirementsStructured object. Follow the OUTPUT IMAGE TEXT REQUIREMENTS rules below exactly.",
         "",
-        "=== CAPTION GENERATION RULES ===",
         "If the instruction modifies or regenerates the caption, the new caption must follow these rules:",
-        "  - At least 5 visible lines of substantive content",
-        "  - Maximum 3 paragraphs, separated by natural blank line breaks",
-        "  - Always include a clear call-to-action in the final paragraph",
-        "  - Do not artificially shorten captions to a fixed character limit — let content and depth dictate the length",
-        "  - Use natural line breaks between paragraphs to improve readability",
+        ...CAPTION_GENERATION_RULES_LINES,
         "",
         "CAPTION DEPTH BY POST TYPE:",
         "  - Educational posts (mainAngle: education): captions must be more detailed than regular posts. Use longer explanations, practical examples, steps, reasons, mini-frameworks, or key takeaways. Aim for at least 2 substantial paragraphs when the content supports it. Do not add filler — useful depth only.",
@@ -551,12 +536,7 @@ export async function POST(request) {
           ? "IMPORTANT: narrationOrDialogueOfCharacterOrCharacters MUST be regenerated as a complete voiceover or dialogue script — cover hook/title, core message, main angle, promised value, key supporting points, and CTA/closing line where relevant. A one-line placeholder is not acceptable."
           : null,
         "",
-        "=== CAPTION GENERATION RULES ===",
-        "  - At least 5 visible lines of substantive content",
-        "  - Maximum 3 paragraphs, separated by natural blank line breaks",
-        "  - Always include a clear call-to-action in the final paragraph",
-        "  - Do not artificially shorten captions to a fixed character limit — let content and depth dictate the length",
-        "  - Use natural line breaks between paragraphs to improve readability",
+        ...CAPTION_GENERATION_RULES_LINES,
         "",
         "CAPTION DEPTH BY POST TYPE:",
         "  - Educational posts (mainAngle: education): captions must be more detailed than regular posts. Use longer explanations, practical examples, steps, reasons, mini-frameworks, or key takeaways. Aim for at least 2 substantial paragraphs when the content supports it. Do not add filler — useful depth only.",
@@ -632,13 +612,25 @@ export async function POST(request) {
     merged.outputImageTextRequirements = formatOutputImageTextRequirementsForDisplay(finalOitrStructured) || "";
 
     // ── Normalize hashtags ────────────────────────────────────────────────────
-    const hashtags = (() => {
-      const v = merged.hashtags;
-      if (Array.isArray(v)) return v;
-      if (typeof v === "string" && v.trim()) return v.split(/[\s,]+/).filter(Boolean);
-      return [];
-    })();
-    merged.hashtags = hashtags;
+    // Only scopes that actually regenerate caption/hashtags run the merge —
+    // visual_only/visual_ideas_only/image_text_only promise to leave caption
+    // and hashtags untouched, so re-running the merge there would risk
+    // silently reformatting an old-format post's caption outside its scope.
+    const scopeTouchesCaption = scope === "entire_post" || scope === "custom_instruction";
+    if (scopeTouchesCaption) {
+      const mergeResult = mergeHashtagsIntoCaption(merged.caption, merged.hashtags);
+      merged.caption = mergeResult.caption;
+      merged.hashtags = mergeResult.hashtags;
+      merged.hashtagsMergedIntoCaption = mergeResult.hashtags.length > 0;
+    } else {
+      merged.hashtags = (() => {
+        const v = merged.hashtags;
+        if (Array.isArray(v)) return v;
+        if (typeof v === "string" && v.trim()) return v.split(/[\s,]+/).filter(Boolean);
+        return [];
+      })();
+      merged.hashtagsMergedIntoCaption = current.hashtagsMergedIntoCaption ?? false;
+    }
 
     // ── Return regenerated post — no DB write ─────────────────────────────────
     console.log("[RegeneratePost] Done. scope:", scope, "postNumber:", merged.postNumber);
