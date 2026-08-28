@@ -66,7 +66,9 @@ export default function ImageVisualProductionControls({ value, onChange, disable
   const controls = value ?? defaultVisualControls();
 
   function handlePreset(presetValue) {
-    onChange(applyPreset(presetValue));
+    // Pass the current state so an explicitly chosen cinematic style survives
+    // preset selection (applyPreset merges instead of replacing).
+    onChange(applyPreset(presetValue, controls));
   }
 
   function handleControlChange(key, v) {

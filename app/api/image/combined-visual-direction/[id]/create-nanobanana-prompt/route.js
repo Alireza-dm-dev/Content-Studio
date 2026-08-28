@@ -3,6 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import {
+  resolveImageStyleAndPreset,
+  imageStylePresetErrorResponse,
+  buildProductionControlsSection,
+} from "@/lib/image-style-preset-resolution";
 
 function stripRatioMentions(prompt) {
   return prompt
@@ -209,7 +214,24 @@ export async function POST(request, { params }) {
     console.log("[NanobananaPrompt] POST for CombinedVisualDirection id:", id);
     const body = await request.json().catch(() => ({}));
     const useEditedJson = body.useEditedJson !== false;
+
+    // ── Shared style/preset resolution ───────────────────────────────────────
+    // Invalid explicit selections return a structured 400 JSON instead of being
+    // silently dropped (previously the reference flow never resolved the
+    // cinematic style at all, so the selection was lost from the final prompt).
+    if (body?.visualControls !== undefined && body?.visualControls !== null && typeof body.visualControls !== "object") {
+      return NextResponse.json(
+        { success: false, code: "INVALID_VISUAL_CONTROLS", error: "visualControls must be an object." },
+        { status: 400 }
+      );
+    }
+    const resolved = resolveImageStyleAndPreset(body?.visualControls);
+    if (!resolved.ok) {
+      const { body: errorBody, status } = imageStylePresetErrorResponse(resolved.errors);
+      return NextResponse.json(errorBody, { status });
+    }
     const visualControls = normalizeVisualControls(body.visualControls);
+    const visualControlsBlock = serializeVisualControls(visualControls);
 
     // ── Load CombinedVisualDirection ──────────────────────────────────────────
     const cvd = await prisma.combinedVisualDirection.findUnique({ where: { id } });
@@ -454,17 +476,35 @@ export async function POST(request, { params }) {
       avoidSection,
     ];
 
-    // ── Selected Visual Production Controls (user constraints) ─────────────────
-    // Only non-auto selections are serialized; auto is never sent to the AI.
-    // Appended as explicit production constraints that must not override the
-    // reference image's required identity or brand-preserved assets.
-    const visualControlsBlock = serializeVisualControls(visualControls);
-    if (visualControlsBlock) {
+    // ── Shared style/preset production section ─────────────────────────────────
+    // Combined block: manual controls (1) > visual preset (2) > cinematic style (3).
+    // Previously this route NEVER resolved the cinematic style and had no preset
+    // support, so explicit selections were silently dropped from the prompt.
+    const productionSection = buildProductionControlsSection({
+      manualControlsBlock: visualControlsBlock, // already serialized above
+      cinematicStyle: resolved.cinematicStyle,
+      preset: resolved.preset,
+    });
+    if (productionSection) {
       userInputParts.push(
         "",
-        visualControlsBlock,
+        productionSection,
         "",
-        "These selected Visual Production Controls are intentional user constraints. Apply them as production/style direction only. They must NOT alter the reference image's required identity — objects, logos, products, people, artwork, colours, and text — nor the brand's preserved assets or structural composition. Where a control conflicts with required reference or brand preservation, apply it in the closest compatible way (for example, a lighting or colour-treatment choice may shift mood and grade but must not redesign the product or replace brand assets). Never invent a different subject or asset.",
+        "These selections are intentional user constraints. Apply them as production/style direction only. They must NOT alter the reference image's required identity — objects, logos, products, people, artwork, colours, and text — nor the brand's preserved assets or structural composition. Where a selection conflicts with required reference or brand preservation, apply it in the closest compatible way (for example, a lighting or colour-treatment choice may shift mood and grade but must not redesign the product or replace brand assets). Never invent a different subject or asset.",
+      );
+    }
+
+    // ── Preserve / Change instruction (the user's attractionNotes) ─────────────
+    // This is the explicit "what to keep vs. what to change" the user authored
+    // in the 6-step reference flow. It is REQUIRED to reach the final prompt.
+    const attractionNotes = (cvd?.attractionNotes || "").toString().trim();
+    if (attractionNotes) {
+      userInputParts.push(
+        "",
+        "=== REFERENCE IMAGE — PRESERVE / CHANGE INSTRUCTIONS ===",
+        attractionNotes,
+        "",
+        "Follow these preserve/change instructions precisely. Preserve every element the user marked as 'keep' or 'preserve' exactly (objects, logos, products, people, artwork, colours, text, and structural composition). Apply only the changes the user explicitly requested, and apply them in the closest compatible manner without altering anything else.",
       );
     }
 
@@ -492,6 +532,7 @@ export async function POST(request, { params }) {
       console.error("[NanobananaPrompt] AI error:", aiErr.message);
       return NextResponse.json({
         success: false,
+        code: "PROMPT_BUILD_FAILED",
         error: "Prompt generation failed. Please try again.",
         details: aiErr.message,
       }, { status: 500 });

@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { getAdminAccess } from "@/lib/auth";
-import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
-import { resolveCinematicStyle } from "@/lib/cinematic-styles";
+import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import {
+  resolveImageStyleAndPreset,
+  imageStylePresetErrorResponse,
+  buildProductionControlsSection,
+} from "@/lib/image-style-preset-resolution";
 
 const ALLOWED_TEMPLATE_SLUGS = new Set([
   "image-prompt-booster-raw-idea",
@@ -54,26 +58,36 @@ export async function POST(request) {
   }
 
   try {
+    // ── Shared style/preset resolution ──────────────────────────────────────
+    // Invalid explicit selections return a structured 400 JSON instead of
+    // being silently downgraded to "auto" or crashing later.
+    if (visualControls !== undefined && visualControls !== null && typeof visualControls !== "object") {
+      return NextResponse.json(
+        { success: false, code: "INVALID_VISUAL_CONTROLS", error: "visualControls must be an object." },
+        { status: 400 }
+      );
+    }
+    const resolved = resolveImageStyleAndPreset(visualControls);
+    if (!resolved.ok) {
+      const { body, status } = imageStylePresetErrorResponse(resolved.errors);
+      return NextResponse.json(body, { status });
+    }
+
     const controls = normalizeVisualControls(visualControls);
     const controlsBlock = serializeVisualControls(controls);
 
     const rawIdeaText = typeof userInput === "string" ? userInput.trim() : "";
     const ideaBlock = `Raw image idea:\n${rawIdeaText}`;
 
-    // ── Cinematic style validation ─────────────────────────────────────────────
-    // Invalid explicit selections return a clean 400 instead of being silently
-    // downgraded to "auto" or crashing later.
-    const cinematic = resolveCinematicStyle(visualControls?.cinematicStyle);
-    if (cinematic.error) {
-      return NextResponse.json({ success: false, error: cinematic.error }, { status: 400 });
-    }
-    const styleBlock = cinematic.style !== "auto" ? buildImageStyleBlock(cinematic.style) : "";
-
     let finalUserInput;
     const parts = [];
     if (rawIdeaText) parts.push(ideaBlock);
-    if (controlsBlock) parts.push(controlsBlock);
-    if (styleBlock) parts.push(styleBlock);
+    const productionSection = buildProductionControlsSection({
+      manualControlsBlock: controlsBlock,
+      cinematicStyle: resolved.cinematicStyle,
+      preset: resolved.preset,
+    });
+    if (productionSection) parts.push(productionSection);
     finalUserInput = parts.length > 0 ? parts.join("\n\n") : null;
 
     const result = await generateWithPromptTemplate({
@@ -85,8 +99,9 @@ export async function POST(request) {
     });
     return NextResponse.json(result);
   } catch (err) {
+    console.error("[generate/test]", err);
     return NextResponse.json(
-      { error: err.message ?? "Generation failed" },
+      { success: false, code: "PROMPT_BUILD_FAILED", error: err.message ?? "Generation failed" },
       { status: 500 }
     );
   }

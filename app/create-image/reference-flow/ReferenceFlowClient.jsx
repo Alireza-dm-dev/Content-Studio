@@ -19,6 +19,7 @@ import HiggsfieldImageGenerationCard from "@/components/HiggsfieldImageGeneratio
 import GenerationReferenceImageInput from "@/components/GenerationReferenceImageInput";
 import ImageVisualProductionControls from "@/components/ImageVisualProductionControls";
 import { defaultVisualControls } from "@/lib/image-visual-controls";
+import { parseApiResponse, getApiErrorMessage } from "@/lib/http";
 
 // ── Step indicator ─────────────────────────────────────────────────────────────
 
@@ -244,10 +245,10 @@ export default function ReferenceFlowClient({
         }),
       });
 
-      const data = await res.json();
+      const data = parseApiResponse(await res.text());
       if (!data.success) {
-        setCombineError(data.error ?? "Combination failed.");
-        toast.error(data.error ?? "Combination failed.");
+        setCombineError(getApiErrorMessage(data));
+        toast.error(getApiErrorMessage(data));
         return;
       }
 
@@ -333,8 +334,8 @@ export default function ReferenceFlowClient({
       if (!res.ok && res.headers.get("content-type")?.includes("text/html")) {
         throw new Error(`Server error: HTTP ${res.status}`);
       }
-      const data = await res.json();
-      if (!data.success) { toast.error(data.error ?? "Prompt creation failed."); return; }
+      const data = parseApiResponse(await res.text());
+      if (!data.success) { toast.error(getApiErrorMessage(data)); return; }
       setFinalPrompt(data.finalNanobananaPrompt ?? "");
       toast.success("Nanobanana prompt created!");
     } catch (err) {

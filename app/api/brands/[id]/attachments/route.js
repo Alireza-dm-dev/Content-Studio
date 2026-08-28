@@ -21,8 +21,8 @@ function expiryFor(calendarId, calendarPostId) {
   return new Date(Date.now() + 24 * 60 * 60 * 1000);
 }
 
-function safeError(msg, status) {
-  return NextResponse.json({ success: false, error: msg }, { status });
+function safeError(msg, status, code) {
+  return NextResponse.json({ success: false, error: msg, code: code || undefined }, { status });
 }
 
 export async function POST(request, { params }) {
@@ -144,7 +144,7 @@ export async function POST(request, { params }) {
   });
 
   if (!validation.ok) {
-    return safeError(validation.error, 400);
+    return safeError(validation.error, 400, validation.code);
   }
 
   // ── 7. Extract text ───────────────────────────────────────────────────────
@@ -156,7 +156,7 @@ export async function POST(request, { params }) {
   });
 
   if (!extraction.ok) {
-    return safeError(extraction.error, 400);
+    return safeError(extraction.error, 400, extraction.code);
   }
 
   // ── 8. AI interpretation ──────────────────────────────────────────────────
@@ -169,7 +169,12 @@ export async function POST(request, { params }) {
   });
 
   if (!interpretation.ok) {
-    return safeError('The uploaded document could not be interpreted', 502);
+    const status = interpretation.code === 'AI_NOT_CONFIGURED' || interpretation.code === 'INTERPRETER_NOT_CONFIGURED' ? 503 : 502;
+    return safeError(
+      interpretation.error || 'The uploaded document could not be interpreted',
+      status,
+      interpretation.code || 'INTERPRETATION_FAILED'
+    );
   }
 
   // ── 9. Write private file ─────────────────────────────────────────────────

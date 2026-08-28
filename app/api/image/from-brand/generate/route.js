@@ -3,8 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
-import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
-import { resolveCinematicStyle } from "@/lib/cinematic-styles";
+import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import {
+  resolveImageStyleAndPreset,
+  imageStylePresetErrorResponse,
+  buildProductionControlsSection,
+} from "@/lib/image-style-preset-resolution";
 
 const TEMPLATE_SLUG = "image-prompt-from-brand-and-post-without-reference";
 
@@ -56,13 +60,20 @@ export async function POST(request) {
     textDensity = "Headline plus short supporting text",
   } = body ?? {};
 
-  // ── Cinematic style validation ─────────────────────────────────────────────
-  // Resolve the shared preset BEFORE any other work so an invalid explicit
-  // selection returns a clean 400 JSON error instead of failing later. Missing,
-  // blank, or "auto" resolve to { style: "auto" } (AI decides).
-  const cinematic = resolveCinematicStyle(body?.visualControls?.cinematicStyle);
-  if (cinematic.error) {
-    return NextResponse.json({ success: false, error: cinematic.error }, { status: 400 });
+  // ── Shared style/preset resolution ─────────────────────────────────────────
+  // Resolve BEFORE any other work so an invalid explicit selection returns a
+  // clean structured 400 JSON error instead of failing later. Missing, blank,
+  // or "auto" resolve to AI-decides.
+  if (body?.visualControls !== undefined && body?.visualControls !== null && typeof body.visualControls !== "object") {
+    return NextResponse.json(
+      { success: false, code: "INVALID_VISUAL_CONTROLS", error: "visualControls must be an object." },
+      { status: 400 }
+    );
+  }
+  const resolved = resolveImageStyleAndPreset(body?.visualControls);
+  if (!resolved.ok) {
+    const { body: errorBody, status } = imageStylePresetErrorResponse(resolved.errors);
+    return NextResponse.json(errorBody, { status });
   }
 
   if (!brandId) {
@@ -117,8 +128,11 @@ export async function POST(request) {
       creativeGoal,
       visualStyleDirection,
       textDensity,
-      visualControlsBlock: serializeVisualControls(normalizedVisualControls),
-      cinematicStyle: cinematic.style,
+      productionSection: buildProductionControlsSection({
+        manualControlsBlock: serializeVisualControls(normalizedVisualControls),
+        cinematicStyle: resolved.cinematicStyle,
+        preset: resolved.preset,
+      }),
     });
 
     const result = await generateWithPromptTemplate({
@@ -194,8 +208,7 @@ function buildUserInput({
   creativeGoal,
   visualStyleDirection,
   textDensity,
-  visualControlsBlock,
-  cinematicStyle,
+  productionSection,
 }) {
   const lines = [
     `Brand identity summary: ${brandIdentitySummary}`,
@@ -214,22 +227,15 @@ function buildUserInput({
     lines.push("", `Image text requirements:\n${outputImageTextRequirements}`);
   }
 
-  // ── Selected Visual Production Controls (explicit user constraints) ──────
-  if (visualControlsBlock) {
+  // ── Selected Visual Production Controls / Preset / Cinematic Style ────────
+  // One shared section implementing manual > preset > cinematic precedence.
+  if (productionSection) {
     lines.push(
       "",
-      visualControlsBlock,
+      productionSection,
       "",
-      "These selected Visual Production Controls are intentional user constraints. Apply them as production/style direction only. They must NOT alter the brand's required identity — brand colors, logo rules, typography, photography/illustration style, tone, products, or services. Where a control conflicts with required brand identity, apply it in the closest compatible way (for example, a lighting or colour-treatment choice may shift mood and grade but must not redesign the product or replace brand assets). Never invent a different logo, palette, product, or brand style.",
+      "These selections are intentional user constraints. Apply them as production/style direction only. They must NOT alter the brand's required identity — brand colors, logo rules, typography, photography/illustration style, tone, products, or services. Where a selection conflicts with required brand identity, apply it in the closest compatible way (for example, a lighting or colour-treatment choice may shift mood and grade but must not redesign the product or replace brand assets). Never invent a different logo, palette, product, or brand style.",
     );
-  }
-
-  // ── Cinematic Style ──────────────────────────────────────────────────────
-  if (cinematicStyle && cinematicStyle !== "auto") {
-    const styleBlock = buildImageStyleBlock(cinematicStyle);
-    if (styleBlock) {
-      lines.push("", styleBlock);
-    }
   }
 
   return lines.join("\n");
