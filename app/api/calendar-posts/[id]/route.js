@@ -8,7 +8,7 @@ export async function PATCH(request, { params }) {
 
   const post = await prisma.calendarPost.findUnique({
     where: { id },
-    select: { id: true, calendar: { select: { brandId: true, status: true } } },
+    select: { id: true, postData: true, calendar: { select: { brandId: true, status: true } } },
   });
   if (!post) return NextResponse.json({ error: "Post not found" }, { status: 404 });
 
@@ -33,6 +33,16 @@ export async function PATCH(request, { params }) {
     return [];
   })();
 
+  // Manual edits from the (legacy) hashtags/caption UI fields don't know about
+  // the merged-caption format — preserve whatever flag value already existed
+  // on the record unless the caller explicitly sends one, so a plain metadata
+  // edit (e.g. just changing the date) can't silently reset it.
+  let existingMeta = {};
+  if (post.postData) {
+    try { existingMeta = typeof post.postData === "string" ? JSON.parse(post.postData) : post.postData; }
+    catch { /* ignore malformed JSON */ }
+  }
+
   // Build postData object (Prisma Json field) with all camelCase fields
   const meta = {
     mainAngle:   body.mainAngle   ?? null,
@@ -40,6 +50,7 @@ export async function PATCH(request, { params }) {
     hookTitle:   body.hookTitle   ?? null,
     caption:     body.caption     ?? null,
     hashtags,
+    hashtagsMergedIntoCaption: body.hashtagsMergedIntoCaption ?? existingMeta.hashtagsMergedIntoCaption ?? false,
     imageText:   body.imageText   ?? null,
     outputImageTextRequirements: body.outputImageTextRequirements ?? null,
     // If the edit form supplies a structured object directly, use it; otherwise

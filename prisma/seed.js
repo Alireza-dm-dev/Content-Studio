@@ -2,10 +2,17 @@ import { PrismaClient } from "../lib/generated/prisma/client.ts";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
-import { IMAGE_PROMPT_BOOSTER_RAW_IDEA_TEXT } from "../lib/default-prompt-templates.js";
+import {
+  IMAGE_PROMPT_BOOSTER_RAW_IDEA_TEXT,
+  CALENDAR_ATTACHMENT_INTERPRETER_TEMPLATE_TEXT,
+} from "../lib/default-prompt-templates.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dbUrl = "file:" + path.join(__dirname, "../dev.db");
+// Honor DATABASE_URL like every other provisioning script (prisma.config.ts
+// reads the same variable for migrations), so seeding can target a staging or
+// production database file instead of always hitting the local dev.db.
+const dbUrl =
+  process.env.DATABASE_URL ?? "file:" + path.join(__dirname, "../dev.db");
 
 const adapter = new PrismaBetterSqlite3({ url: dbUrl });
 const prisma = new PrismaClient({ adapter });
@@ -206,6 +213,18 @@ const TEMPLATES = [
     category: "content-calendar",
     outputType: "json",
   },
+  {
+    // Required system template — the calendar reference-attachment upload
+    // flow fails without it (lib/calendar-attachment-interpreter.js). Must
+    // stay in this list: the deleteMany below removes any slug not listed
+    // here, which previously wiped the manually-provisioned row on every
+    // re-seed.
+    id: "tpl-calendar-reference-attachment-interpreter",
+    name: "Calendar Reference Attachment Interpreter",
+    slug: "calendar-reference-attachment-interpreter",
+    category: "calendar",
+    outputType: "json",
+  },
 ];
 
 const HIGGSFIELD_MODELS = [
@@ -269,7 +288,7 @@ async function main() {
   });
   if (deleted.count > 0) console.log(`Removed ${deleted.count} old template(s)`);
 
-  // Upsert the 8 canonical templates
+  // Upsert the canonical system templates
   for (const tpl of TEMPLATES) {
     const text = tpl.slug === "video-prompt-enhancer-raw-idea"
       ? VIDEO_PROMPT_ENHANCER_RAW_IDEA_TEXT
@@ -279,6 +298,8 @@ async function main() {
       ? LINKEDIN_POST_FROM_REFERENCE_TEXT
       : tpl.slug === "image-prompt-booster-raw-idea"
       ? IMAGE_PROMPT_BOOSTER_RAW_IDEA_TEXT
+      : tpl.slug === "calendar-reference-attachment-interpreter"
+      ? CALENDAR_ATTACHMENT_INTERPRETER_TEMPLATE_TEXT
       : placeholder(tpl.name);
     await prisma.promptTemplate.upsert({
       where: { slug: tpl.slug },

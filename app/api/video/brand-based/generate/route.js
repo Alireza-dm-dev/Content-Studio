@@ -4,7 +4,7 @@ import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
-import { buildVideoStyleBlock, CINEMATIC_STYLE_MOVEMENT_MAP } from "@/lib/cinematic-styles";
+import { buildVideoStyleBlock, resolveCinematicStyle } from "@/lib/cinematic-styles";
 
 const EXPECTED_PROMPT_PREFIX = "Generate a video with the following prompt";
 
@@ -89,6 +89,14 @@ export async function POST(request) {
     if (!duration)                         return NextResponse.json({ success: false, error: "Duration is required." }, { status: 400 });
     if (!aspectRatio)                      return NextResponse.json({ success: false, error: "Aspect ratio is required." }, { status: 400 });
 
+    // ── Cinematic style validation ─────────────────────────────────────────────
+    // Invalid explicit selections return a clean 400 instead of being silently
+    // downgraded to "auto" or failing later. Missing/blank/"auto" → AI decides.
+    const cinematic = resolveCinematicStyle(cinematicStyle);
+    if (cinematic.error) {
+      return NextResponse.json({ success: false, error: cinematic.error }, { status: 400 });
+    }
+
     console.log("[VideoBrandBased] brandId:", brandId, "| model:", targetVideoCreatorModel);
 
     // ── Load brand + identity ───────────────────────────────────────────
@@ -123,7 +131,7 @@ export async function POST(request) {
 
     // If camera movement is not explicit, resolve it deterministically
     // Cinematic style influences camera selection when provided
-    const effectiveStyle = cinematicStyle && cinematicStyle !== "auto" ? cinematicStyle : (videoGoal || videoFormat || "social-media-reel");
+    const effectiveStyle = cinematic.style !== "auto" ? cinematic.style : (videoGoal || videoFormat || "social-media-reel");
     if (!isExplicitControl(body.cameraMovement)) {
       const genre = (videoGoal || videoFormat || "social-media-reel").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
       const selected = selectCameraMovement({
@@ -186,8 +194,8 @@ export async function POST(request) {
     }
 
     // 4b. Cinematic Style Block
-    if (cinematicStyle && cinematicStyle !== "auto") {
-      const styleBlock = buildVideoStyleBlock(cinematicStyle);
+    if (cinematic.style !== "auto") {
+      const styleBlock = buildVideoStyleBlock(cinematic.style);
       if (styleBlock) {
         parts.push("", styleBlock);
       }

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageContainer } from "@/components/ui/page-container";
 import { PageHeader } from "@/components/ui/page-header";
-import { Sparkles, Briefcase } from "lucide-react";
+import { Sparkles, Briefcase, ImageIcon } from "lucide-react";
 
 const options = [
   {
@@ -17,6 +17,12 @@ const options = [
     title: "Create image based on brand",
     description: "Pick a brand, review its visual identity, and generate a branded image prompt.",
   },
+  {
+    href: "/create-image/reference-flow",
+    icon: ImageIcon,
+    title: "Create image based on reference image",
+    description: "Upload a reference image and direct the AI what to keep and what to change — guided, brand-aware.",
+  },
 ];
 
 export default function CreateImagePage() {
@@ -29,7 +35,7 @@ export default function CreateImagePage() {
         backHref="/"
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {options.map(({ href, icon: Icon, title, description }) => (
           <Link key={href} href={href} className="group">
             <Card className="h-full transition-colors hover:border-foreground hover:bg-muted/40 cursor-pointer">

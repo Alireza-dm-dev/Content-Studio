@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
-import { buildVideoStyleBlock } from "@/lib/cinematic-styles";
+import { buildVideoStyleBlock, resolveCinematicStyle } from "@/lib/cinematic-styles";
 
 // ── Cinematic Controls helpers ────────────────────────────────────────────────
 const CINEMATIC_FALLBACK = "Auto — infer from context";
@@ -98,6 +98,14 @@ export async function POST(request, { params }) {
       return NextResponse.json({ success: false, error: "Target video creator model is required." }, { status: 400 });
     }
 
+    // ── Cinematic style validation ─────────────────────────────────────────────
+    // Invalid explicit selections return a clean 400 instead of being silently
+    // downgraded to "auto" or failing later. Missing/blank/"auto" → AI decides.
+    const cinematic = resolveCinematicStyle(cinematicStyle);
+    if (cinematic.error) {
+      return NextResponse.json({ success: false, error: cinematic.error }, { status: 400 });
+    }
+
     // ── Load required data ────────────────────────────────────────────────────
     const [calendar, post, brand, identity] = await Promise.all([
       prisma.contentCalendar.findUnique({ where: { id: calendarId } }),
@@ -119,7 +127,7 @@ export async function POST(request, { params }) {
     const brandSummary = createCompactBrandVisualIdentitySummaryForVideoPrompt(brandVisualIdentity);
 
     // ── Cinematic Controls (resolved from postData, deterministic camera movement) ─
-    const effectiveCamStyle = cinematicStyle && cinematicStyle !== "auto" ? cinematicStyle : (norm.visualMood || "social-media");
+    const effectiveCamStyle = cinematic.style !== "auto" ? cinematic.style : (norm.visualMood || "social-media");
     const genre = (norm.videoRawIdea || norm.format || "social-media-reel").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const cameraMovementLine = resolveCameraMovement(norm.cameraMovement, {
       genre,
@@ -187,8 +195,8 @@ export async function POST(request, { params }) {
     ];
 
     // ── Cinematic Style Block ──────────────────────────────────────────────────
-    if (cinematicStyle && cinematicStyle !== "auto") {
-      const styleBlock = buildVideoStyleBlock(cinematicStyle);
+    if (cinematic.style !== "auto") {
+      const styleBlock = buildVideoStyleBlock(cinematic.style);
       if (styleBlock) {
         combinedRawVideoInput.push("", styleBlock);
       }
@@ -210,13 +218,16 @@ export async function POST(request, { params }) {
 
     console.log("[VideoPrompt] Combined input length:", combinedRawVideoInput.length);
 
+    // generateWithPromptTemplate expects a string; join the assembled lines.
+    const combinedUserInput = combinedRawVideoInput.filter(Boolean).join("\n");
+
     // ── Call AI ───────────────────────────────────────────────────────────────
     let finalPrompt;
     try {
       const result = await generateWithPromptTemplate({
         templateSlug: "video-prompt-enhancer-raw-idea",
         variables: {},
-        userInput: combinedRawVideoInput,
+        userInput: combinedUserInput,
       });
 
       finalPrompt = typeof result.content === "string"

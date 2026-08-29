@@ -25,6 +25,7 @@ function buildPostData(p) {
     hookTitle:   p.hookTitle   || p.suggestedHook || null,
     caption:     p.caption     || p.suggestedCaption || null,
     hashtags,
+    hashtagsMergedIntoCaption: p.hashtagsMergedIntoCaption ?? false,
     imageText:   p.imageText   || null,
     outputImageTextRequirements: p.outputImageTextRequirements || null,
     outputImageTextRequirementsStructured: normalizeOutputImageTextRequirementsStructured(

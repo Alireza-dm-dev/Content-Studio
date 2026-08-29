@@ -4,7 +4,12 @@ import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
-import { normalizeVisualControls, serializeVisualControls, buildImageStyleBlock } from "@/lib/image-visual-controls";
+import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import {
+  resolveImageStyleAndPreset,
+  imageStylePresetErrorResponse,
+  buildProductionControlsSection,
+} from "@/lib/image-style-preset-resolution";
 
 function stripRatioMentions(prompt) {
   return prompt
@@ -268,6 +273,21 @@ export async function POST(request, { params }) {
 
     const isRefinement = currentPrompt.trim().length > 0 && refinementFeedback.trim().length > 0;
 
+    // ── Shared style/preset resolution ─────────────────────────────────────────
+    // Invalid explicit selections return a clean structured 400 instead of being
+    // silently downgraded to "auto" or failing later.
+    if (visualControls !== undefined && visualControls !== null && typeof visualControls !== "object") {
+      return NextResponse.json(
+        { success: false, code: "INVALID_VISUAL_CONTROLS", error: "visualControls must be an object." },
+        { status: 400 }
+      );
+    }
+    const resolved = resolveImageStyleAndPreset(visualControls);
+    if (!resolved.ok) {
+      const { body, status } = imageStylePresetErrorResponse(resolved.errors);
+      return NextResponse.json(body, { status });
+    }
+
     // ── Visual Production Controls (optional) ───────────────────────────────
     // Normalize untrusted client input; unknown values collapse to "auto" and
     // are omitted from prompt serialization. Never throws on bad input.
@@ -417,19 +437,18 @@ export async function POST(request, { params }) {
       ] : []),
     ].filter(v => v !== null && v !== false && v !== undefined && v !== "").join("\n");
 
-    // ── Append visual production controls block (non-auto selections) ────────
-    let baseUserInput = visualControlsBlock
-      ? `${userInput}\n\n${visualControlsBlock}\n\nPriority: treat the selected visual production controls as explicit user constraints, but never override required brand identity, supplied reference composition, or visible text/logos/products. If a control conflicts with required identity, preserve the required identity and apply the control in the closest compatible manner without redesigning logos, products, people, artwork, or required text.`
+    // ── Append shared style/preset production section ──────────────────────
+    // One combined block: manual controls (1) > visual preset (2) > cinematic
+    // style (3), all surfaced as explicit instructions — never just the id — with
+    // the documented precedence rule. Missing/auto selections contribute nothing.
+    const productionSection = buildProductionControlsSection({
+      manualControlsBlock: visualControlsBlock,
+      cinematicStyle: resolved.cinematicStyle,
+      preset: resolved.preset,
+    });
+    const baseUserInput = productionSection
+      ? `${userInput}\n\n${productionSection}\n\nPriority: treat the selected visual production controls, preset, and cinematic style as explicit user constraints, but never override required brand identity, supplied reference composition, or visible text/logos/products. If a selection conflicts with required identity, preserve the required identity and apply the control in the closest compatible manner without redesigning logos, products, people, artwork, or required text.`
       : userInput;
-
-    // ── Append cinematic style block ─────────────────────────────────────────
-    const cinematicStyle = normalizedVisualControls?.cinematicStyle;
-    if (cinematicStyle && cinematicStyle !== "auto") {
-      const styleBlock = buildImageStyleBlock(cinematicStyle);
-      if (styleBlock) {
-        baseUserInput += "\n\n" + styleBlock;
-      }
-    }
 
     // ── Append refinement block when refining an existing prompt ────────────
     const finalUserInput = isRefinement

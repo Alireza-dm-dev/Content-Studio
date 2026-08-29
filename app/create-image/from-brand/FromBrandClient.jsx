@@ -25,6 +25,7 @@ import {
   createCompactBrandVisualIdentitySummaryForImagePrompt,
 } from "@/lib/brand-identity-utils";
 import { defaultVisualControls } from "@/lib/image-visual-controls";
+import { parseApiResponse, getApiErrorMessage } from "@/lib/http";
 import {
   ArrowLeft,
   Briefcase,
@@ -198,8 +199,8 @@ export default function FromBrandClient({ brands }) {
         }),
       });
 
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error ?? "Generation failed.");
+      const data = await parseApiResponse(res);
+      if (!data.success) throw new Error(getApiErrorMessage(data) ?? "Generation failed.");
 
       setOutput(data.generatedPrompt.finalPrompt);
       setSavedId(data.generatedPrompt.id);

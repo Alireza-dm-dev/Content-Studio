@@ -827,6 +827,11 @@ export async function POST(request, { params }) {
           success: false,
           code: "REMOTE_MEDIA_UPLOAD_FAILED",
           error: "The adapted post was saved, but its media could not be uploaded to the public media server.",
+          detailCode: remoteResult?.detailCode || "SFTP_UPLOAD_FAILED",
+          details: remoteResult?.error || remoteResult?.details || remoteResult?.detailCode || null,
+          ...(remoteResult?.fileSize != null ? { fileSize: remoteResult.fileSize } : {}),
+          ...(remoteResult?.duration != null ? { duration: remoteResult.duration } : {}),
+          ...(remoteResult?.skipped ? { skipped: true } : {}),
         };
       }
     }

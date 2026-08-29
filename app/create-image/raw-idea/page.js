@@ -16,6 +16,7 @@ import OpenAIImageGenerationCard from "@/components/OpenAIImageGenerationCard";
 import GenerationReferenceImageInput from "@/components/GenerationReferenceImageInput";
 import ImageVisualProductionControls from "@/components/ImageVisualProductionControls";
 import { defaultVisualControls } from "@/lib/image-visual-controls";
+import { parseApiResponse, getApiErrorMessage } from "@/lib/http";
 
 const TARGET_TOOLS = ["Nanobanana", "Midjourney", "DALL-E 3", "Stable Diffusion", "Ideogram", "Flux"];
 
@@ -60,8 +61,8 @@ export default function CreateImageRawIdeaPage() {
           visualControls,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Generation failed.");
+      const data = await parseApiResponse(res);
+      if (!res.ok) throw new Error(getApiErrorMessage(data) ?? "Generation failed.");
 
       const result = typeof data.content === "string"
         ? data.content
