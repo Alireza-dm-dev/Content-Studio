@@ -118,7 +118,11 @@ function EditPanel({ draft, onChange, onSave, onCancel, saving }) {
 
       {EDIT_SECTIONS.filter(s => s.label === openSection).map(section => (
         <div key={section.label} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {section.fields.map(f => (
+          {section.fields
+            // Hide the separate Hashtags field once hashtags live in the
+            // caption's final line — keep it for legacy (pre-merge) posts.
+            .filter(f => f.type !== "hashtags" || !draft.hashtagsMergedIntoCaption)
+            .map(f => (
             <div key={f.key} className={colClass(f.col)}>
               <label className="text-xs font-medium text-muted-foreground block mb-1">{f.label}</label>
               {f.type === "hashtags" ? (
