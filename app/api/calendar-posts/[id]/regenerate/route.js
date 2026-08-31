@@ -363,7 +363,17 @@ export async function POST(request, { params }) {
     let hashtags;
     let hashtagsMergedIntoCaption;
     if (scopeTouchesCaption) {
-      const mergeResult = mergeHashtagsIntoCaption(merged.caption, merged.hashtags);
+      const mergeResult = mergeHashtagsIntoCaption(merged.caption, merged.hashtags, {
+        platform: merged.platform,
+        context: {
+          brandName:              brand.name,
+          mainServicesOrProducts: brand.mainServicesOrProducts,
+          businessLocation:       brand.businessLocation,
+          businessType:           brand.businessType,
+          campaignSubject:        post.calendar?.mainMonthlySubject,
+          mainAngle:              merged.mainAngle,
+        },
+      });
       merged.caption = mergeResult.caption;
       hashtags = mergeResult.hashtags;
       hashtagsMergedIntoCaption = hashtags.length > 0;

@@ -226,7 +226,17 @@ export async function POST(request) {
     // silently reformatting an old-format post's caption outside its scope.
     const scopeTouchesCaption = scope === "entire_post" || scope === "custom_instruction";
     if (scopeTouchesCaption) {
-      const mergeResult = mergeHashtagsIntoCaption(merged.caption, merged.hashtags);
+      const mergeResult = mergeHashtagsIntoCaption(merged.caption, merged.hashtags, {
+        platform: merged.platform,
+        context: {
+          brandName:              brand.name,
+          mainServicesOrProducts: brand.mainServicesOrProducts,
+          businessLocation:       brand.businessLocation,
+          businessType:           brand.businessType,
+          campaignSubject:        calendarContext?.mainMonthlySubject,
+          mainAngle:              merged.mainAngle,
+        },
+      });
       merged.caption = mergeResult.caption;
       merged.hashtags = mergeResult.hashtags;
       merged.hashtagsMergedIntoCaption = mergeResult.hashtags.length > 0;

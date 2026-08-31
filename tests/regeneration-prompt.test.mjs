@@ -410,3 +410,49 @@ test("image_text_only prompt keeps post context read-only and preservation-first
   assert.ok(input.includes("Preserve the existing slide concept — do not replace the post idea"));
 });
 
+// ─── Caption generation rules reach the real provider input ───────────────────
+// CAPTION_GENERATION_RULES_LINES is the single shared source for the generate
+// route and both regeneration routes — asserting against the assembled
+// userInput (not the exported array in isolation) proves these rules actually
+// reach the model for every scope that touches the caption.
+
+test("caption rules include the Instagram-vs-LinkedIn hashtag split, not a flat 5-always rule", () => {
+  const input = buildVisualOrEntirePostUserInput({ ...basePromptContext(), scope: "entire_post" });
+  assert.ok(input.includes("Instagram posts: return exactly 5 hashtags, each starting with #, no more and no fewer."));
+  assert.ok(input.includes("LinkedIn posts: hashtags are optional and secondary to Instagram"));
+  assert.ok(input.includes("never force the count up to 5 on LinkedIn"));
+});
+
+test("caption rules guide hashtag quality (SEO mix, no invented branding, no near-duplicates)", () => {
+  const input = buildCustomInstructionUserInput({
+    ...basePromptContext(),
+    customInstruction: "Refresh the caption.",
+  });
+  assert.ok(input.includes("service/product-specific tags"));
+  assert.ok(input.includes("local/geographic tag when the business serves a specific area"));
+  assert.ok(input.includes("never invent a branded hashtag"));
+  assert.ok(input.includes("Never return near-duplicate hashtags"));
+});
+
+test("caption rules limit contact info to 1-3 details and forbid repeating a contact line", () => {
+  const input = buildVisualOrEntirePostUserInput({ ...basePromptContext(), scope: "entire_post" });
+  assert.ok(input.includes("Choose only the most useful 1-3 contact/business details for this specific post"));
+  assert.ok(input.includes("Never repeat the same contact detail more than once in the caption."));
+});
+
+test("caption rules include emoji-usage guidance to avoid the stereotypical AI pattern", () => {
+  const input = buildCustomInstructionUserInput({
+    ...basePromptContext(),
+    customInstruction: "Refresh the caption.",
+  });
+  assert.ok(input.includes("EMOJI USAGE"));
+  assert.ok(input.includes("Usually 1-4 emojis in the entire caption"));
+  assert.ok(input.includes("never one at the start of every sentence or paragraph"));
+  assert.ok(input.includes("professional/B2B brands should use fewer emojis"));
+});
+
+test("caption rules require the CTA/contact paragraph to be visually separated from the main body", () => {
+  const input = buildVisualOrEntirePostUserInput({ ...basePromptContext(), scope: "entire_post" });
+  assert.ok(input.includes("The CTA + contact-info paragraph must be its own short paragraph, visually separated"));
+});
+

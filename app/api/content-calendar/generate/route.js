@@ -66,7 +66,7 @@ function parseAiJsonOutput(raw) {
 // Maps AI output (any field naming convention) → unified camelCase shape used
 // across the UI and saved to postData.
 
-function normalisePost(p, idx, defaultPlatform) {
+function normalisePost(p, idx, defaultPlatform, brandFallbackContext) {
   const get = (...keys) => {
     for (const k of keys) {
       if (p[k] !== undefined && p[k] !== null && p[k] !== "") return String(p[k]);
@@ -115,11 +115,19 @@ function normalisePost(p, idx, defaultPlatform) {
     return c || cta;
   })();
 
+  const platform   = get("platform") || defaultPlatform || "";
+  const mainAngle  = get("mainAngle", "main_angle", "contentPillar", "content_pillar", "angle");
+
   // Single source of truth for hashtags is the caption's final line — the AI
   // returns a structured hashtags array (reliable count control), and we
   // deterministically merge it into the caption here rather than trusting the
   // AI to embed exactly 5 hashtags inline (see lib/calendar-post-utils.js).
-  const { caption, hashtags: mergedHashtags } = mergeHashtagsIntoCaption(rawCaption, hashtags);
+  // If the AI came back short (Instagram requires exactly 5), the shortfall is
+  // filled deterministically from known brand/post context — never invented.
+  const { caption, hashtags: mergedHashtags } = mergeHashtagsIntoCaption(rawCaption, hashtags, {
+    platform,
+    context: { ...brandFallbackContext, mainAngle },
+  });
 
   // The AI returns the structured object (preferred — see the generation rules
   // below); normalize whatever shape it actually came back as, then derive the
@@ -137,10 +145,10 @@ function normalisePost(p, idx, defaultPlatform) {
   return {
     postNumber: Number(get("postNumber", "post_number", "number")) || idx + 1,
     date:       get("date", "scheduledDate", "scheduled_date", "publish_date"),
-    platform:   get("platform") || defaultPlatform || "",
+    platform,
     format:     get("format", "contentType", "content_type", "postFormat"),
 
-    mainAngle:   get("mainAngle",   "main_angle",   "contentPillar", "content_pillar", "angle"),
+    mainAngle,
     coreMessage: get("coreMessage", "core_message", "mainAngleAndCoreMessage", "core_idea", "message"),
     hookTitle:   get("hookTitle",   "hook_title",   "suggestedHook", "suggested_hook", "hook", "headline", "title", "topic"),
     caption,
@@ -560,6 +568,17 @@ export async function POST(request) {
 
     const contentLanguage = normalizeLanguageCode(brand.contentLanguage);
 
+    // Known-context source for deterministic hashtag fallback derivation
+    // (see mergeHashtagsIntoCaption / deriveFallbackHashtags) — real brand and
+    // campaign facts only, never invented.
+    const brandFallbackContext = {
+      brandName:              brand.name,
+      mainServicesOrProducts: brand.mainServicesOrProducts,
+      businessLocation:       brand.businessLocation,
+      businessType:           brand.businessType,
+      campaignSubject:        formFields.mainMonthlySubject,
+    };
+
     // ── 3. Derive safe post count ────────────────────────────────────────────
     // Source of truth: Calendar Setup numberOfPostsNeeded from the user.
     // Selected post ideas are inspiration inputs, not a hard cap.
@@ -725,7 +744,7 @@ export async function POST(request) {
       console.log(`[ContentCalendar] Batch ${batchContext.current} raw: ${result.raw?.length ?? 0} chars, finish=${result.finishReason}`);
 
       const rawPosts = extractPostsFromResult(result);
-      const normalized = rawPosts.map((p, i) => normalisePost(p, i, formFields.platforms));
+      const normalized = rawPosts.map((p, i) => normalisePost(p, i, formFields.platforms, brandFallbackContext));
       return normalized;
     }
 
@@ -918,7 +937,7 @@ export async function POST(request) {
         console.log(`[ContentCalendar] Supplemental ${s + 1} raw chars=${supResult.raw?.length ?? 0} finish=${supResult.finishReason}`);
 
         const rawPosts = extractPostsFromResult(supResult);
-        const normalized = rawPosts.map((p, i) => normalisePost(p, i, formFields.platforms));
+        const normalized = rawPosts.map((p, i) => normalisePost(p, i, formFields.platforms, brandFallbackContext));
 
         console.log(`[ContentCalendar] Supplemental ${s + 1}: parsed ${normalized.length} raw candidates`);
 
