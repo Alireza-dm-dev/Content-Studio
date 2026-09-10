@@ -10,6 +10,7 @@ import {
   buildN8nPayload,
   deletePublishedPostFiles,
   normalizePublishedPostPlatform,
+  serializePublishedPost,
   MAX_FILE_SIZE,
   IMAGE_TYPES,
   VIDEO_TYPES,
@@ -849,7 +850,11 @@ export async function POST(request, { params }) {
     }
 
     // ── JSON serialization safety check ────────────────────────────────────
-    const responsePayload = { post: cleanPost, webhookResult, remoteResult };
+    const responsePayload = {
+      post: serializePublishedPost(cleanPost),
+      webhookResult,
+      remoteResult,
+    };
     try {
       JSON.stringify(responsePayload);
     } catch (serializeError) {

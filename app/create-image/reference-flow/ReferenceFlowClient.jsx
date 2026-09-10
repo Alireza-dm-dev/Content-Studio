@@ -245,7 +245,7 @@ export default function ReferenceFlowClient({
         }),
       });
 
-      const data = parseApiResponse(await res.text());
+      const data = parseApiResponse(res);
       if (!data.success) {
         setCombineError(getApiErrorMessage(data));
         toast.error(getApiErrorMessage(data));
@@ -334,7 +334,7 @@ export default function ReferenceFlowClient({
       if (!res.ok && res.headers.get("content-type")?.includes("text/html")) {
         throw new Error(`Server error: HTTP ${res.status}`);
       }
-      const data = parseApiResponse(await res.text());
+      const data = parseApiResponse(res);
       if (!data.success) { toast.error(getApiErrorMessage(data)); return; }
       setFinalPrompt(data.finalNanobananaPrompt ?? "");
       toast.success("Nanobanana prompt created!");

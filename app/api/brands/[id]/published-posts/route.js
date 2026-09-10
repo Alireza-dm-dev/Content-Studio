@@ -10,6 +10,8 @@ import {
   buildN8nPayload,
   deletePublishedPostFiles,
   normalizePublishedPostPlatform,
+  serializePublishedPost,
+  serializePublishedPosts,
   MAX_FILE_SIZE,
   POST_TYPE_STATIC,
   POST_TYPE_CAROUSEL,
@@ -51,12 +53,9 @@ export async function GET(request, { params }) {
     },
   });
 
-  const serialized = posts.map((p) => {
-    const { _count, ...rest } = p;
-    return { ...rest, commentCount: _count?.comments ?? 0 };
-  });
-
-  return NextResponse.json(serialized);
+  // Normalize on read: media rows hold local /uploads paths, the public URLs
+  // live in jsonPayload. Without this the grid renders paths that 404.
+  return NextResponse.json(serializePublishedPosts(posts));
 }
 
 async function enforcePublishedPostsLimit(brandId) {
@@ -497,7 +496,10 @@ export async function POST(request, { params }) {
 
   await enforcePublishedPostsLimit(id);
 
-  return NextResponse.json({ post: result, webhookResult, remoteResult }, { status: 201 });
+  return NextResponse.json(
+    { post: serializePublishedPost(result), webhookResult, remoteResult },
+    { status: 201 },
+  );
   } catch (error) {
     console.error("[PublishedPosts] upload failed", error);
     return NextResponse.json(

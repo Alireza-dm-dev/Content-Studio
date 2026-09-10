@@ -9,6 +9,7 @@ import {
   normalizePostType,
   isValidStatus,
   normalizePublishedPostPlatform,
+  serializePublishedPost,
   POST_TYPE_STATIC,
   POST_TYPE_CAROUSEL,
   POST_TYPE_REEL,
@@ -35,8 +36,7 @@ export async function GET(request, { params }) {
     return NextResponse.json({ error: "Published post not found" }, { status: 404 });
   }
 
-  const { _count, ...rest } = post;
-  return NextResponse.json({ ...rest, commentCount: _count?.comments ?? 0 });
+  return NextResponse.json(serializePublishedPost(post));
 }
 
 export async function DELETE(request, { params }) {
@@ -75,7 +75,10 @@ export async function PATCH(request, { params }) {
 
     const existing = await prisma.publishedPost.findFirst({
       where: { id: postId, brandId: id },
-      include: { media: { orderBy: { order: "asc" } } },
+      include: {
+        media: { orderBy: { order: "asc" } },
+        _count: { select: { comments: true } },
+      },
     });
 
     if (!existing) {
@@ -296,11 +299,14 @@ export async function PATCH(request, { params }) {
       data: { jsonPayload: payloadJson },
     });
 
-    const result = {
+    // Same serializer as the list/single-item read paths, so an edited post is
+    // shaped exactly like it will be on the next page load.
+    const result = serializePublishedPost({
       ...updated,
       jsonPayload: payloadJson,
       media: remoteAwareMedia,
-    };
+      _count: existing._count,
+    });
 
     return NextResponse.json(result);
   } catch (error) {

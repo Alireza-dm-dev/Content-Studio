@@ -33,6 +33,23 @@ const inkBtn = {
   gap: 4,
 };
 
+function MediaPlaceholder() {
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "repeating-linear-gradient(45deg, var(--sketch-paper-raw) 0 6px, var(--sketch-paper-bright) 6px 12px)",
+      }}
+    >
+      <span style={{ ...lbl, fontSize: 9 }}>No preview</span>
+    </div>
+  );
+}
+
 function GridCard({ post, onClick, onCommentClick }) {
   const firstMedia = post.media?.[0];
   const isCarousel = post.postType === "carousel" || (post.media?.length || 0) > 1;
@@ -40,6 +57,18 @@ function GridCard({ post, onClick, onCommentClick }) {
   const thumbnailUrl = post.thumbnailUrl;
   const postId = formatPostIdShort(post.postNumber);
   const footerState = getPublishedPostFooterState(post);
+  // A media file can still be unreachable (an old post whose upload to the
+  // public media server never completed). Fall back to the placeholder rather
+  // than leaving a broken-image icon in the grid. Tracking the failed URL
+  // rather than a flag means a later edit that changes the URL retries it.
+  const [failedSrc, setFailedSrc] = useState(null);
+  const previewSrc =
+    firstMedia?.mediaType === "IMAGE"
+      ? firstMedia.url
+      : isVideo
+      ? thumbnailUrl || firstMedia?.url || null
+      : null;
+  const mediaFailed = previewSrc != null && failedSrc === previewSrc;
 
   return (
     <div
@@ -55,11 +84,14 @@ function GridCard({ post, onClick, onCommentClick }) {
         cursor: "pointer",
       }}
     >
-      {firstMedia && firstMedia.mediaType === "IMAGE" ? (
+      {mediaFailed ? (
+        <MediaPlaceholder />
+      ) : firstMedia && firstMedia.mediaType === "IMAGE" ? (
         /* eslint-disable-next-line @next/next/no-img-element */
         <img
           src={firstMedia.url}
           alt={post.caption || "Post media"}
+          onError={() => setFailedSrc(previewSrc)}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
       ) : isVideo && thumbnailUrl ? (
@@ -67,28 +99,19 @@ function GridCard({ post, onClick, onCommentClick }) {
         <img
           src={thumbnailUrl}
           alt={post.caption || "Video thumbnail"}
+          onError={() => setFailedSrc(previewSrc)}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
-      ) : isVideo ? (
+      ) : isVideo && firstMedia?.url ? (
         <video
-          src={firstMedia?.url}
+          src={firstMedia.url}
           muted
           preload="metadata"
+          onError={() => setFailedSrc(previewSrc)}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
       ) : (
-        <div
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "repeating-linear-gradient(45deg, var(--sketch-paper-raw) 0 6px, var(--sketch-paper-bright) 6px 12px)",
-          }}
-        >
-          <span style={{ ...lbl, fontSize: 9 }}>No preview</span>
-        </div>
+        <MediaPlaceholder />
       )}
 
       {/* Bottom overlay with post ID, publishing state, comment button, media indicators */}
