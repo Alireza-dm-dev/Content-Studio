@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { uploadPublishedPostMedia, isCanonicalMediaUrl } from "@/lib/published-post-remote-media";
-import { buildN8nPayload } from "@/lib/published-post-utils";
+import { buildN8nPayload, serializePublishedPost } from "@/lib/published-post-utils";
 
 function hasCanonicalUrlsInStoredPayload(post) {
   if (!post.jsonPayload) return false;
@@ -81,7 +81,7 @@ export async function POST(request, { params }) {
               ...(remoteResult.duration != null ? { duration: remoteResult.duration } : {}),
               ...(remoteResult.skipped ? { skipped: true } : {}),
             },
-            post: savedPost,
+            post: serializePublishedPost(savedPost),
           },
           { status: 503 },
         );
@@ -166,7 +166,7 @@ export async function POST(request, { params }) {
 
     // Reload post to get the latest persisted state
     const latestPost = await reloadPost(postId);
-    const responsePost = latestPost || post;
+    const responsePost = serializePublishedPost(latestPost || post);
 
     return NextResponse.json({
       success: webhookResult.success,
