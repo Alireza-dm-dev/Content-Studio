@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
+import { getAccessibleBrandIds } from "@/lib/brand-access";
 import { cn } from "@/lib/utils";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +21,20 @@ const STATUS_CONFIG = {
 };
 
 export default async function GeneratedMediaPage() {
+  const user = await getCurrentUser();
+  const brandIds = await getAccessibleBrandIds(user);
+  const mediaScope =
+    brandIds === null
+      ? {}
+      : {
+          OR: [
+            { brandId: { in: brandIds } },
+            { calendarPost: { calendar: { brandId: { in: brandIds } } } },
+          ],
+        };
+
   const media = await prisma.generatedMedia.findMany({
+    where: mediaScope,
     include: {
       higgsfieldModel: true,
       brand: true,

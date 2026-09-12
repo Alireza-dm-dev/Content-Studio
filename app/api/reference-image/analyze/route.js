@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
+import { requireBrandAccess, requireResourceBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
@@ -42,6 +44,34 @@ export async function POST(request) {
     const brandId    = formData.get("brandId")    || null;
     const calendarId = formData.get("calendarId") || null;
     const calendarPostId = formData.get("calendarPostId") || null;
+
+    // Both identifiers are client-supplied; neither may point outside the
+    // user's brands. Requests with no brand attach to nothing brand-owned.
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required" },
+        { status: 401 },
+      );
+    }
+    if (brandId) {
+      const access = await requireBrandAccess(brandId, { user });
+      if (!access.ok) {
+        return NextResponse.json(
+          { success: false, error: access.error },
+          { status: access.status },
+        );
+      }
+    }
+    if (calendarId) {
+      const access = await requireResourceBrandAccess("calendar", calendarId, { user });
+      if (!access.ok) {
+        return NextResponse.json(
+          { success: false, error: access.error },
+          { status: access.status },
+        );
+      }
+    }
     const focusInstruction = formData.get("focusInstruction") || "";
 
     // ── Validate ──────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAdminAccess } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
@@ -59,9 +60,12 @@ async function callOpenAI(userInput) {
 // ─────────────────────────────────────────────────────────────────────────
 
 export async function POST(request) {
-  const access = await getAdminAccess();
-  if (!access.user) {
-    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: "Authentication required" },
+      { status: 401 },
+    );
   }
 
   console.log("[VideoBrandBased] POST /api/video/brand-based/generate");
@@ -88,6 +92,16 @@ export async function POST(request) {
     if (!targetVideoCreatorModel?.trim())  return NextResponse.json({ success: false, error: "Target video creator model is required." }, { status: 400 });
     if (!duration)                         return NextResponse.json({ success: false, error: "Duration is required." }, { status: 400 });
     if (!aspectRatio)                      return NextResponse.json({ success: false, error: "Aspect ratio is required." }, { status: 400 });
+
+    // brandId is client-supplied, so it must be checked against membership
+    // here; the path-level guard in proxy.js cannot see request bodies.
+    const brandAccess = await requireBrandAccess(brandId.trim(), { user });
+    if (!brandAccess.ok) {
+      return NextResponse.json(
+        { success: false, error: brandAccess.error },
+        { status: brandAccess.status },
+      );
+    }
 
     // ── Cinematic style validation ─────────────────────────────────────────────
     // Invalid explicit selections return a clean 400 instead of being silently

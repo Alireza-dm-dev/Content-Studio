@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAdminAccess } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
@@ -36,9 +37,12 @@ Rules:
 - Make it production-ready and immediately usable in Nanobanana.`;
 
 export async function POST(request) {
-  const access = await getAdminAccess();
-  if (!access.user) {
-    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: "Authentication required" },
+      { status: 401 },
+    );
   }
 
   let body;
@@ -78,6 +82,16 @@ export async function POST(request) {
 
   if (!brandId) {
     return NextResponse.json({ success: false, error: "Please choose a brand." }, { status: 400 });
+  }
+
+  // brandId comes from the request body, so the path-level check in proxy.js
+  // cannot cover it. Never trust a client-supplied brand.
+  const brandAccess = await requireBrandAccess(brandId, { user });
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { success: false, error: brandAccess.error },
+      { status: brandAccess.status },
+    );
   }
   if (!rawIdeaOrPostInformation?.trim()) {
     return NextResponse.json({ success: false, error: "Please enter your raw idea or post information." }, { status: 400 });

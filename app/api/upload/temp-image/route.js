@@ -2,15 +2,17 @@ import { NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
-import { getAdminAccess } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
 
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export async function POST(request) {
-  const access = await getAdminAccess();
-  if (!access.user) {
-    return NextResponse.json({ error: access.error }, { status: access.status });
+  // Staging a temporary image is not brand-scoped: the upload holds no brand
+  // data and is only consumed by flows that run their own brand checks.
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   try {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
 import {
   normalizeResourceUrl,
   fetchAndExtractResource,
@@ -43,6 +44,13 @@ function classifyFetchError(err) {
 
 export async function POST(request) {
   console.log("[LinkedInResolveResource] POST /api/content-calendar/linkedin/resolve-resource");
+
+  // Not brand-scoped: this resolves a public URL the user pasted. It still
+  // requires a session so it cannot be used anonymously as a fetch proxy.
+  const user = await getCurrentUser();
+  if (!user) {
+    return errorResponse(401, "Authentication required.");
+  }
 
   let body;
   try {

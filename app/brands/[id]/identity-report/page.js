@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
+import { NotAuthorized } from "@/components/NotAuthorized";
 import { normalizeBrandIdentityOutput } from "@/lib/brand-identity-utils";
 import { DraftStamp } from "@/components/content-report/DraftStamp";
 
@@ -82,6 +84,12 @@ function deriveRadar(vi, tone) {
 
 export default async function IdentityReportPage({ params }) {
   const { id } = await params;
+
+  const access = await requireBrandAccess(id);
+  if (!access.ok) {
+    if (access.status === 404) notFound();
+    return <NotAuthorized />;
+  }
 
   const [brand, identity] = await Promise.all([
     prisma.brand.findUnique({ where: { id } }),

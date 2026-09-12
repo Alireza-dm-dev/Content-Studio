@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
+import { getAccessibleBrandIds } from "@/lib/brand-access";
 import { StatBlock } from "@/components/content-report/StatBlock";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { ClassBadge } from "@/components/content-report/ClassBadge";
@@ -7,17 +9,30 @@ import { DraftStamp } from "@/components/content-report/DraftStamp";
 export const dynamic = "force-dynamic";
 
 export default async function ContentReportPage() {
+  const user = await getCurrentUser();
+  const brandIds = await getAccessibleBrandIds(user);
+  const scope = brandIds === null ? {} : { brandId: { in: brandIds } };
+  const mediaScope =
+    brandIds === null
+      ? {}
+      : {
+          OR: [
+            { brandId: { in: brandIds } },
+            { calendarPost: { calendar: { brandId: { in: brandIds } } } },
+          ],
+        };
+
   const [promptCount, mediaCount, templateCount] = await Promise.all([
-    prisma.generatedPrompt.count(),
-    prisma.generatedMedia.count(),
+    prisma.generatedPrompt.count({ where: scope }),
+    prisma.generatedMedia.count({ where: mediaScope }),
     prisma.promptTemplate.count(),
   ]);
 
   const imageCount = await prisma.generatedMedia.count({
-    where: { mediaType: "image" },
+    where: { ...mediaScope, mediaType: "image" },
   });
   const videoCount = await prisma.generatedMedia.count({
-    where: { mediaType: "video" },
+    where: { ...mediaScope, mediaType: "video" },
   });
 
   const channels = [];

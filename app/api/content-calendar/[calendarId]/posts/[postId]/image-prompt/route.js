@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAdminAccess } from "@/lib/auth";
+import { requireResourceBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
@@ -244,12 +244,13 @@ function resolvePost(post) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(request, { params }) {
-  const access = await getAdminAccess();
-  if (!access.user) {
-    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
-  }
-
   const { calendarId, postId } = await params;
+
+  // The calendar owns the brand; authorize against it before doing any work.
+  const access = await requireResourceBrandAccess("calendar", calendarId);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
   console.log("[ImagePrompt] POST calendarId:", calendarId, "postId:", postId);
 
   try {

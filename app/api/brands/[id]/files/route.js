@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 import { PURPOSE_SLUGS } from "@/lib/uploads";
 
 export async function GET(request, { params }) {
   const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
   const { searchParams } = new URL(request.url);
   const purpose = searchParams.get("purpose");
 
@@ -18,6 +27,14 @@ export async function GET(request, { params }) {
 
 export async function POST(request, { params }) {
   const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
   const brand = await prisma.brand.findUnique({ where: { id } });
   if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });

@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireResourceBrandAccess } from "@/lib/brand-access";
 import { buildExportRows, generateXlsx, safeFileName, VALID_AUDIENCES } from "@/lib/calendar-export";
 
 // POST /api/content-calendar/[calendarId]/export/google-drive
 // Body: { format: "xlsx", audience: "creator" | "client" }
 export async function POST(request, { params }) {
   const { calendarId } = await params;
+
+  // The calendar owns the brand; authorize against it before doing any work.
+  const access = await requireResourceBrandAccess("calendar", calendarId);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
   const body = await request.json().catch(() => ({}));
   const audienceRaw = body?.audience ?? "creator";
   const audience = VALID_AUDIENCES.includes(audienceRaw) ? audienceRaw : "creator";

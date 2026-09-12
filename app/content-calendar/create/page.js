@@ -77,8 +77,12 @@ function StepSelectBrand({ initialBrandId, onNext }) {
       .then(data => {
         if (!Array.isArray(data)) throw new Error("Invalid response from server");
         setBrands(data);
-        if (initialBrandId) {
-          setSelectedId(initialBrandId);
+        // A user with exactly one assigned brand has nothing to choose, so
+        // preselect it. The list is already scoped server-side, so this can
+        // only ever select a brand the user belongs to.
+        const preselect = initialBrandId || (data.length === 1 ? data[0].id : null);
+        if (preselect) {
+          setSelectedId(preselect);
           setCheckingIdentity(true);
           setIdentity(null);
           setCheckTrigger(t => t + 1);

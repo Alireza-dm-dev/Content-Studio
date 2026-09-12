@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 import {
   deletePublishedPostFiles,
   buildN8nPayload,
@@ -18,6 +19,14 @@ import { normalizeScheduledDate } from "@/lib/timezone";
 
 export async function GET(request, { params }) {
   const { id, postId } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
   const brand = await prisma.brand.findUnique({ where: { id } });
   if (!brand) {
@@ -41,6 +50,14 @@ export async function GET(request, { params }) {
 
 export async function DELETE(request, { params }) {
   const { id, postId } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
   const brand = await prisma.brand.findUnique({ where: { id } });
   if (!brand) {
@@ -67,6 +84,14 @@ export async function DELETE(request, { params }) {
 export async function PATCH(request, { params }) {
   try {
     const { id, postId } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
     const brand = await prisma.brand.findUnique({ where: { id } });
     if (!brand) {

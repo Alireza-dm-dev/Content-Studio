@@ -20,6 +20,22 @@ const state = {
 mock.module("@/lib/auth", {
   exports: {
     getAdminAccess: async () => ({ user: { id: "u1", role: "admin" }, error: null, status: 200 }),
+    getCurrentUser: async () => ({ id: "u1", role: "admin" }),
+  },
+});
+
+// These tests cover prompt construction, not authorization. An admin passes
+// every brand check, so the guard is stubbed open here; the brand-authorization
+// rules themselves are covered by tests/brand-access.test.mjs.
+mock.module("@/lib/brand-access", {
+  exports: {
+    requireBrandAccess: async (brandId) => ({
+      ok: true,
+      user: { id: "u1", role: "admin" },
+      brandId,
+      status: 200,
+      error: null,
+    }),
   },
 });
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { writeFile, mkdir, rm } from "fs/promises";
 import path from "path";
 import { randomUUID } from "node:crypto";
@@ -25,6 +26,14 @@ const MAX_POSTS_PER_BRAND = 21;
 
 export async function GET(request, { params }) {
   const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
   const brand = await prisma.brand.findUnique({ where: { id } });
   if (!brand) {
@@ -86,6 +95,14 @@ async function enforcePublishedPostsLimit(brandId) {
 export async function POST(request, { params }) {
   try {
     const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
     const brand = await prisma.brand.findUnique({ where: { id } });
     if (!brand) {
