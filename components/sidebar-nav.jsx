@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { LogoutButton } from "@/components/LogoutButton";
 
 // adminOnly entries are hidden from normal users. Hiding is presentation only:
 // proxy.js refuses these paths and each route enforces its own check, so a
@@ -211,6 +212,11 @@ export function SidebarNav({ isAdmin = false }) {
             </Link>
           );
         })}
+
+        {/* Global action, available to every signed-in user. The sidebar sits
+            in the root layout, so this is present on the dashboard and on every
+            main page regardless of role or how many brands are assigned. */}
+        <LogoutButton variant="sidebar" />
       </nav>
 
       <div

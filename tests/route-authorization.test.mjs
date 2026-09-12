@@ -241,6 +241,143 @@ test("the public review surface stays reachable without a session", async () => 
   }
 });
 
+// ── Static media and assets ───────────────────────────────────────────────────
+//
+// The deny-by-default rule originally swept these up, so every <img>/<video>
+// on an already-authorized page 307'd to /brands and rendered "No preview".
+// Static assets are not product routes and must be classified separately.
+
+test("a normal user can load their own brand's local media", async () => {
+  const res = await runProxy(
+    `/uploads/${BRAND_A}/published-posts/post-1/image.png`,
+    { token: "token-a" },
+  );
+  assert.equal(res.location, null, "own-brand media must not redirect");
+  assert.notEqual(res.status, 403);
+});
+
+test("a normal user cannot load another brand's local media", async () => {
+  const res = await runProxy(
+    `/uploads/${BRAND_B}/published-posts/post-1/image.png`,
+    { token: "token-a" },
+  );
+  assert.equal(res.status, 403);
+  // A denial, not a redirect: an <img> must not receive an HTML page.
+  assert.equal(res.location, null);
+});
+
+test("a user with no brands cannot load any brand's local media", async () => {
+  for (const brand of [BRAND_A, BRAND_B]) {
+    const res = await runProxy(`/uploads/${brand}/published-posts/p/i.png`, {
+      token: "token-none",
+    });
+    assert.equal(res.status, 403);
+  }
+});
+
+test("shared upload directories are not treated as brand ids", async () => {
+  // Generation output and staging live beside the brand folders and belong to
+  // no brand, so membership cannot be the gate for them.
+  for (const dir of ["images", "reference-images", "temp-images"]) {
+    const res = await runProxy(`/uploads/${dir}/openai-abc.png`, {
+      token: "token-none",
+    });
+    assert.equal(res.location, null, `/uploads/${dir} must not redirect`);
+    assert.notEqual(res.status, 403);
+  }
+});
+
+test("app chrome assets load for every signed-in user", async () => {
+  for (const path of ["/brand-icons/instagram.png", "/brand-icons/linkedin.png"]) {
+    for (const token of ["token-a", "token-none", "token-admin"]) {
+      const res = await runProxy(path, { token });
+      assert.equal(res.location, null, `${path} must not redirect for ${token}`);
+      assert.notEqual(res.status, 403);
+    }
+  }
+});
+
+test("an admin can load any brand's local media", async () => {
+  for (const brand of [BRAND_A, BRAND_B]) {
+    const res = await runProxy(`/uploads/${brand}/published-posts/p/i.png`, {
+      token: "token-admin",
+    });
+    assert.equal(res.location, null);
+    assert.notEqual(res.status, 403);
+  }
+});
+
+test("media still requires a session", async () => {
+  const res = await runProxy(`/uploads/${BRAND_A}/published-posts/p/i.png`, {});
+  assert.match(res.location ?? "", /\/login/);
+});
+
+test("opening media up did not open the API surface", async () => {
+  // Guard against a fix that allowed too much: the admin APIs and another
+  // brand's data must still be refused.
+  for (const path of ["/api/admin/users", "/api/settings", "/api/prompt-templates"]) {
+    assert.equal((await runProxy(path, { token: "token-a" })).status, 403, path);
+  }
+  assert.equal(
+    (await runProxy(`/api/brands/${BRAND_B}/published-posts`, { token: "token-a" })).status,
+    403,
+  );
+});
+
+// ── After sign-out, the old session is worthless ──────────────────────────────
+//
+// clearSession() nulls the user's sessionToken, so getSessionUserByToken stops
+// resolving the cookie the browser still holds. These assert the proxy treats
+// that exactly like no session at all.
+
+test("a cleared session can no longer reach protected pages", async () => {
+  for (const path of ["/", "/brands", "/brand-workspace", "/content-calendar"]) {
+    const res = await runProxy(path, { token: "token-revoked" });
+    assert.match(
+      res.location ?? "",
+      /\/login/,
+      `${path} should bounce a cleared session to login`,
+    );
+  }
+});
+
+test("a cleared session is rejected by protected APIs", async () => {
+  for (const path of [
+    "/api/brands",
+    `/api/brands/${BRAND_A}/published-posts`,
+    "/api/prompts",
+    "/api/admin/users",
+  ]) {
+    const res = await runProxy(path, { token: "token-revoked" });
+    assert.equal(res.status, 401, `${path} should be 401 for a cleared session`);
+  }
+});
+
+test("a cleared session cannot reach brand media either", async () => {
+  const res = await runProxy(
+    `/uploads/${BRAND_A}/published-posts/p/image.png`,
+    { token: "token-revoked" },
+  );
+  assert.match(res.location ?? "", /\/login/);
+});
+
+test("the login page stays reachable after signing out", async () => {
+  // The redirect target must not itself require a session, or sign-out loops.
+  const res = await runProxy("/login", { token: "token-revoked" });
+  assert.equal(res.location, null);
+  assert.notEqual(res.status, 401);
+});
+
+test("the logout endpoint is reachable for every role", async () => {
+  // Sign-out must never be gated by role or membership.
+  for (const token of ["token-admin", "token-a", "token-none", "token-revoked"]) {
+    const res = await runProxy("/api/auth/logout", { token, method: "POST" });
+    assert.equal(res.location, null, `logout must not redirect for ${token}`);
+    assert.notEqual(res.status, 403, `logout must not be 403 for ${token}`);
+    assert.notEqual(res.status, 401, `logout must not be 401 for ${token}`);
+  }
+});
+
 // ── Route handlers scope their own responses ──────────────────────────────────
 
 test("GET /api/brands returns only the caller's brands", async () => {

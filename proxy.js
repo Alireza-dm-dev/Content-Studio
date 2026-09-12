@@ -96,6 +96,39 @@ const USER_API_PREFIXES = [
   "/api/upload/temp-image",
 ];
 
+/**
+ * Static assets served out of public/.
+ *
+ * These are not product routes and must never be swept up by the deny-by-default
+ * rule: an authorized page requests them as <img>/<video> sources, and a redirect
+ * to /brands turns into a broken preview rather than a visible denial.
+ *
+ * Two kinds live under /uploads:
+ *   /uploads/<brandId>/...   brand-owned media, membership enforced below
+ *   /uploads/images|reference-images|temp-images/...
+ *                            generation output and staging, not brand-owned
+ */
+const UPLOADS_SHARED_DIRS = new Set(["images", "reference-images", "temp-images"]);
+
+const STATIC_ASSET_PREFIXES = ["/brand-icons", "/_next", "/uploads"];
+
+function isStaticAssetPath(pathname) {
+  return matchesPrefix(pathname, STATIC_ASSET_PREFIXES);
+}
+
+/**
+ * The brand that owns a local media path, or null when the path is not
+ * brand-owned. Uploads are laid out as
+ * /uploads/<brandId>/published-posts/<postId>/<file>.
+ */
+function brandIdFromUploadPath(pathname) {
+  const match = pathname.match(/^\/uploads\/([^/]+)\//);
+  if (!match) return null;
+  const segment = match[1];
+  if (UPLOADS_SHARED_DIRS.has(segment)) return null;
+  return segment;
+}
+
 function matchesPrefix(pathname, prefixes) {
   return prefixes.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
@@ -196,6 +229,22 @@ export async function proxy(request) {
       return NextResponse.json({ error: "Admin access required" }, { status: 403 });
     }
     return NextResponse.redirect(new URL("/brands", request.url));
+  }
+
+  // Static assets. Checked before the deny-by-default rule, because an already
+  // authorized page loads these as image/video sources: refusing them produces
+  // a broken preview instead of a denial the user can act on.
+  if (isStaticAssetPath(pathname)) {
+    const uploadBrandId = brandIdFromUploadPath(pathname);
+    if (uploadBrandId) {
+      // Brand-owned local media still requires membership, so another brand's
+      // uploads stay unreachable through the app.
+      const access = await requireBrandAccess(uploadBrandId, { user });
+      if (!access.ok) {
+        return new NextResponse(null, { status: 403 });
+      }
+    }
+    return NextResponse.next();
   }
 
   // Dashboard root is part of the normal product.

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { getAccessibleBrandIds } from "@/lib/brand-access";
+import { NoBrandsAssigned } from "@/components/NotAuthorized";
 import { StatBlock } from "@/components/content-report/StatBlock";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { ClassBadge } from "@/components/content-report/ClassBadge";
@@ -43,6 +44,13 @@ export default async function HomePage() {
           ],
         };
   const brandWhere = brandIds === null ? {} : { id: { in: brandIds } };
+  const soleBrandId = brandIds !== null && brandIds.length === 1 ? brandIds[0] : null;
+
+  // A normal user with no membership has nothing to show here. Admins still
+  // see the dashboard even with no brands, so they can create the first one.
+  if (brandIds !== null && brandIds.length === 0) {
+    return <NoBrandsAssigned />;
+  }
 
   const [brandCount, calendarCount, promptCount, mediaCount, templateCount, recentMedia, recentPrompts] =
     await Promise.all([
@@ -219,8 +227,11 @@ export default async function HomePage() {
               }}
             >
               No recent activity yet &mdash;{" "}
-              <Link href="/brands" style={{ color: "var(--sketch-vermilion)", textDecoration: "underline" }}>
-                create a brand
+              <Link
+                href={soleBrandId ? `/brand-workspace?brandId=${soleBrandId}` : "/brands"}
+                style={{ color: "var(--sketch-vermilion)", textDecoration: "underline" }}
+              >
+                {soleBrandId ? "open your brand workspace" : "create a brand"}
               </Link>{" "}
               to get started
             </div>

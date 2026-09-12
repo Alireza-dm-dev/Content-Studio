@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { PageContainer } from "@/components/ui/page-container";
+import { resolvePostLoginPath } from "@/lib/post-login-redirect";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -34,7 +35,14 @@ export default function LoginPage() {
         return;
       }
 
-      router.push(data.role === "admin" ? "/" : "/calendar-portal");
+      // Everyone lands in the main application. Normal users used to be sent
+      // to /calendar-portal, which was the last piece of the calendar-only
+      // model; the dashboard is brand-scoped, so it is safe for every role.
+      // Every role lands in the main app. Read "next" from the URL at submit
+      // time rather than via useSearchParams, so /login stays statically
+      // prerenderable (useSearchParams would need a Suspense boundary).
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.push(resolvePostLoginPath(next, data.role));
     } catch {
       setError("Connection error. Please try again.");
     } finally {
