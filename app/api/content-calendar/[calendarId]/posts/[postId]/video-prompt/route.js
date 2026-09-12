@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireResourceBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
@@ -73,6 +74,12 @@ function resolvePost(post) {
 
 export async function POST(request, { params }) {
   const { calendarId, postId } = await params;
+
+  // The calendar owns the brand; authorize against it before doing any work.
+  const access = await requireResourceBrandAccess("calendar", calendarId);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
   console.log("[VideoPrompt] POST calendarId:", calendarId, "postId:", postId);
 
   try {

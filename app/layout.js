@@ -3,13 +3,15 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { SidebarWrapper } from "@/components/SidebarWrapper";
 import { Toaster } from "@/components/ui/sonner";
+import { getCurrentUser } from "@/lib/auth";
 
 export const metadata = {
   title: "Content Studio",
   description: "Social media content creation workflow",
 };
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
+  const user = await getCurrentUser();
   return (
     <html
       lang="en"
@@ -29,7 +31,7 @@ export default function RootLayout({ children }) {
         />
       </head>
       <body className="min-h-full flex" suppressHydrationWarning>
-        <SidebarWrapper />
+        <SidebarWrapper isAdmin={user?.role === "admin"} />
         <main className="flex-1 overflow-auto">
           {children}
         </main>

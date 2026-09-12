@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+// adminOnly entries are hidden from normal users. Hiding is presentation only:
+// proxy.js refuses these paths and each route enforces its own check, so a
+// hand-typed URL is still denied.
 const NAV = [
   { n: "01", label: "BRANDS", sub: "brand profiles", href: "/brands" },
   { n: "02", label: "CALENDAR", sub: "content schedule", href: "/content-calendar" },
@@ -10,16 +13,19 @@ const NAV = [
   { n: "04", label: "CREATE VIDEO", sub: "video prompts", href: "/create-video" },
   { n: "05", label: "MEDIA", sub: "generated assets", href: "/generated-media" },
   { n: "06", label: "PROMPTS", sub: "output library", href: "/generated-prompts" },
-  { n: "07", label: "LIBRARY", sub: "templates", href: "/prompt-library" },
+  { n: "07", label: "LIBRARY", sub: "templates", href: "/prompt-library", adminOnly: true },
   { n: "08", label: "REPORT", sub: "campaign report", href: "/content-report" },
 ];
 
 const UTILITY = [
-  { n: "09", label: "SETTINGS", sub: "config", href: "/settings" },
+  { n: "09", label: "SETTINGS", sub: "config", href: "/settings", adminOnly: true },
 ];
 
-export function SidebarNav() {
+export function SidebarNav({ isAdmin = false }) {
   const pathname = usePathname();
+  const visible = (items) => items.filter((item) => !item.adminOnly || isAdmin);
+  const navItems = visible(NAV);
+  const utilityItems = visible(UTILITY);
   const isActive = (href) => pathname === href || (href !== "/" && pathname.startsWith(href));
 
   return (
@@ -73,7 +79,7 @@ export function SidebarNav() {
       </Link>
 
       <nav style={{ flex: 1, padding: "4px 0" }}>
-        {NAV.map((item) => {
+        {navItems.map((item) => {
           const active = isActive(item.href);
           return (
             <Link key={item.n} href={item.href} style={{ textDecoration: "none" }}>
@@ -138,8 +144,10 @@ export function SidebarNav() {
             </Link>
           );
         })}
-        <div style={{ height: 1, background: "var(--sketch-line)", margin: "4px 20px" }} />
-        {UTILITY.map((item) => {
+        {utilityItems.length > 0 && (
+          <div style={{ height: 1, background: "var(--sketch-line)", margin: "4px 20px" }} />
+        )}
+        {utilityItems.map((item) => {
           const active = isActive(item.href);
           return (
             <Link key={item.n} href={item.href} style={{ textDecoration: "none" }}>

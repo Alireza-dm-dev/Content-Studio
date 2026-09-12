@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import {
   uploadPublishedPostMedia,
@@ -44,6 +45,14 @@ async function reloadPost(postId) {
 export async function POST(request, { params }) {
   try {
     const { id, postId } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
     const startedAt = Date.now();
     console.log("[SendWebhook] request received", { brandId: id, postId });
 

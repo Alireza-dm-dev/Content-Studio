@@ -4,6 +4,7 @@ import { writeFile, mkdir, readFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 
 // gpt-image-1 is the current ChatGPT image model. It always returns b64_json.
 const MODEL = "gpt-image-1";
@@ -40,6 +41,13 @@ function buildPresetInstruction({ platformPreset, targetWidth, targetHeight, asp
 // ── POST /api/openai/edit-image ───────────────────────────────────────────────
 
 export async function POST(request) {
+
+  // Not brand-scoped; requires a session only. Any brand data used by the
+  // calling flow is authorized by that flow's own brand-scoped route.
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
   let body;
   try {
     body = await request.json();

@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 
 export async function POST(request, { params }) {
   try {
     const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
     const brand = await prisma.brand.findUnique({ where: { id } });
     if (!brand) {

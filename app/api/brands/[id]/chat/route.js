@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser, assertBrandAccess } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
+import { canUserAccessBrand } from "@/lib/brand-access";
 import { buildBrandChatContext, BrandChatContextError } from "@/lib/brand-chat-context";
 import { generateBrandChatAnswer } from "@/lib/brand-chat-ai";
 import { createRateLimiter } from "@/lib/rate-limiter";
@@ -114,7 +115,7 @@ export async function POST(request, { params }) {
       return json(mapChatError("AUTH_REQUIRED").body, 401);
     }
 
-    const hasAccess = await assertBrandAccess(brandId);
+    const hasAccess = await canUserAccessBrand(user, brandId);
     if (!hasAccess) {
       return json(mapChatError("BRAND_ACCESS_DENIED").body, 403);
     }

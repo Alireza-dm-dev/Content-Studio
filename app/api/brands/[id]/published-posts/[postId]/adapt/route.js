@@ -34,12 +34,13 @@ export async function POST(request, { params }) {
     const { id, postId } = await params;
 
     // ── Authenticate ──────────────────────────────────────────────────────────
-    const { getCurrentUser, assertBrandAccess } = await import("@/lib/auth");
+    const { getCurrentUser } = await import("@/lib/auth");
+    const { canUserAccessBrand } = await import("@/lib/brand-access");
     const user = await getCurrentUser();
     if (!user) {
       return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     }
-    const hasAccess = await assertBrandAccess(id);
+    const hasAccess = await canUserAccessBrand(user, id);
     if (!hasAccess) {
       return NextResponse.json({ error: "Brand access denied." }, { status: 403 });
     }

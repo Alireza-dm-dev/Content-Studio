@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { requireResourceBrandAccess } from "@/lib/brand-access";
 import { buildExportRows, generateCsv, generateXlsx, generatePdf, safeFileName, VALID_AUDIENCES } from "@/lib/calendar-export";
 import { NextResponse } from "next/server";
 import { readFile } from "node:fs/promises";
@@ -9,6 +10,12 @@ import { join } from "node:path";
 // GET /api/content-calendar/[calendarId]/export?format=pdf
 export async function GET(request, { params }) {
   const { calendarId } = await params;
+
+  // The calendar owns the brand; authorize against it before doing any work.
+  const access = await requireResourceBrandAccess("calendar", calendarId);
+  if (!access.ok) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
   const { searchParams } = new URL(request.url);
   const format = searchParams.get("format") ?? "csv";
   const audienceRaw = searchParams.get("audience") ?? "creator";

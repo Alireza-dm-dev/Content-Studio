@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
+import { getAccessibleBrandIds } from "@/lib/brand-access";
 import { StatBlock } from "@/components/content-report/StatBlock";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { ClassBadge } from "@/components/content-report/ClassBadge";
@@ -25,19 +27,38 @@ const TYPE_ICON_MAP = {
 };
 
 export default async function HomePage() {
+  // The dashboard counts and the recent-activity feed are scoped to the
+  // viewer's brands, so the tiles never hint at the size of the wider
+  // workspace and the feed never names another brand's work.
+  const user = await getCurrentUser();
+  const brandIds = await getAccessibleBrandIds(user);
+  const scope = brandIds === null ? {} : { brandId: { in: brandIds } };
+  const mediaScope =
+    brandIds === null
+      ? {}
+      : {
+          OR: [
+            { brandId: { in: brandIds } },
+            { calendarPost: { calendar: { brandId: { in: brandIds } } } },
+          ],
+        };
+  const brandWhere = brandIds === null ? {} : { id: { in: brandIds } };
+
   const [brandCount, calendarCount, promptCount, mediaCount, templateCount, recentMedia, recentPrompts] =
     await Promise.all([
-      prisma.brand.count(),
-      prisma.contentCalendar.count(),
-      prisma.generatedPrompt.count(),
-      prisma.generatedMedia.count(),
+      prisma.brand.count({ where: brandWhere }),
+      prisma.contentCalendar.count({ where: scope }),
+      prisma.generatedPrompt.count({ where: scope }),
+      prisma.generatedMedia.count({ where: mediaScope }),
       prisma.promptTemplate.count(),
       prisma.generatedMedia.findMany({
+        where: mediaScope,
         take: 3,
         orderBy: { createdAt: "desc" },
         select: { mediaType: true, status: true, createdAt: true, sourcePrompt: true },
       }),
       prisma.generatedPrompt.findMany({
+        where: scope,
         take: 3,
         orderBy: { createdAt: "desc" },
         include: { brand: { select: { name: true } } },
