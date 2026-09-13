@@ -292,16 +292,38 @@ export default function StepCalendarForm({
   const activePlatforms = form.platforms.split(",").map(s => s.trim()).filter(Boolean);
   const activeFormats = form.requiredPostFormats.split(",").map(s => s.trim()).filter(Boolean);
 
+  // The generate endpoint always answers with JSON, whatever goes wrong inside
+  // it. So a non-JSON or empty body means the response never came from the route
+  // at all — typically a reverse-proxy/gateway timeout page in front of the app,
+  // since calendar generation is by far the longest request this product makes.
+  // Say that explicitly rather than blaming "the server", and always name the
+  // HTTP status so the failure can be identified from a screenshot alone.
   async function safeParseJsonResponse(response) {
     const text = await response.text();
+    const status = response.status;
+
     if (!text || !text.trim()) {
-      throw new Error(`Empty response from server (status ${response.status}). Please try again.`);
+      throw new Error(
+        `The server closed the connection without a response (HTTP ${status}). ` +
+        `Calendar generation is a long request — this is usually a gateway or proxy timeout.`
+      );
     }
+
     try {
       return JSON.parse(text);
     } catch {
-      console.error("[CalendarForm] Server returned non-JSON:", text.slice(0, 300));
-      throw new Error("Server returned an unexpected response. Check the browser console for details.");
+      console.error(
+        `[CalendarForm] Non-JSON response from /api/content-calendar/generate (HTTP ${status}):`,
+        text.slice(0, 1000)
+      );
+      const isGatewayError = status === 502 || status === 503 || status === 504;
+      throw new Error(
+        isGatewayError
+          ? `The request did not reach the app (HTTP ${status} from the server in front of it). ` +
+            `Calendar generation runs for several minutes; the gateway timed out before it finished.`
+          : `The server returned a non-JSON response (HTTP ${status}). ` +
+            `The first part of it has been logged to the browser console.`
+      );
     }
   }
 
@@ -354,7 +376,16 @@ export default function StepCalendarForm({
         formData: form,
       });
     } catch (err) {
-      toast.error("An unexpected error occurred. Please check the browser console for details.");
+      // Never swallow this. Reaching here means the response was not valid JSON
+      // or the request never completed, so `err` carries the only description of
+      // what actually happened.
+      console.error("[CalendarForm] Calendar generation failed:", err);
+      const isNetworkFailure = err instanceof TypeError;
+      toast.error(
+        isNetworkFailure
+          ? "Could not reach the server. The connection dropped before the calendar finished generating — please check your connection and try again."
+          : err?.message || "Calendar generation failed. Please try again."
+      );
     } finally {
       setGenerating(false);
       isSubmitting.current = false;
