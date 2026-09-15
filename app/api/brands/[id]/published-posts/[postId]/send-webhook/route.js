@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
-import { uploadPublishedPostMedia, isCanonicalMediaUrl } from "@/lib/published-post-remote-media";
+import {
+  uploadPublishedPostMedia,
+  isCanonicalMediaUrl,
+  getEnvConfig,
+} from "@/lib/published-post-remote-media";
 import { buildN8nPayload, serializePublishedPost } from "@/lib/published-post-utils";
 
 function hasCanonicalUrlsInStoredPayload(post) {
@@ -41,19 +46,64 @@ export async function POST(request, { params }) {
   try {
     const { id, postId } = await params;
 
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
+    const startedAt = Date.now();
+    console.log("[SendWebhook] request received", { brandId: id, postId });
+
     let post = await reloadPost(postId);
 
     if (!post || post.brandId !== id) {
+      console.warn("[SendWebhook] post not found or brand mismatch", {
+        brandId: id,
+        postId,
+        found: Boolean(post),
+        postBrandId: post?.brandId ?? null,
+      });
       return NextResponse.json({ error: "Published post not found." }, { status: 404 });
     }
 
     const brand = await prisma.brand.findUnique({ where: { id: post.brandId } });
     if (!brand) {
+      console.warn("[SendWebhook] brand not found", { brandId: post.brandId, postId });
       return NextResponse.json({ error: "Brand not found" }, { status: 404 });
     }
 
+    const payloadHasCanonicalUrls = hasCanonicalUrlsInStoredPayload(post);
+    console.log("[SendWebhook] post loaded", {
+      postId,
+      postNumber: post.postNumber,
+      brand: brand.name,
+      mediaCount: (post.media || []).length,
+      hasThumbnail: Boolean(post.thumbnailUrl),
+      hasStoredPayload: Boolean(post.jsonPayload),
+      payloadHasCanonicalUrls,
+      willUploadMedia: !payloadHasCanonicalUrls,
+    });
+
     // Upload to remote media server when stored payload lacks canonical public URLs
-    if (!hasCanonicalUrlsInStoredPayload(post)) {
+    if (!payloadHasCanonicalUrls) {
+      const sftpConfig = getEnvConfig();
+      console.log("[SendWebhook] uploading media to remote server", {
+        postId,
+        host: sftpConfig.host || "(missing)",
+        port: sftpConfig.port,
+        user: sftpConfig.user || "(missing)",
+        passwordSet: Boolean(sftpConfig.password),
+        remoteBase: sftpConfig.remoteBase,
+        publicBase: sftpConfig.publicBase,
+        files: (post.media || []).map((m) => ({
+          order: m.order,
+          type: m.mediaType,
+          url: m.url,
+        })),
+      });
+
       const remoteResult = await uploadPublishedPostMedia({
         post,
         mediaRecords: post.media || [],
@@ -62,9 +112,12 @@ export async function POST(request, { params }) {
 
       if (!remoteResult.success) {
         console.error("[SendWebhook] remote media upload failed", {
+          postId,
           detailCode: remoteResult.detailCode,
           error: remoteResult.error,
           skipped: remoteResult.skipped,
+          localPath: remoteResult.localPath,
+          durationMs: Date.now() - startedAt,
         });
         // Still return the saved post with the error
         const savedPost = await reloadPost(postId);
@@ -79,7 +132,7 @@ export async function POST(request, { params }) {
               details: remoteResult.error || remoteResult.details || remoteResult.detailCode || null,
               ...(remoteResult.fileSize != null ? { fileSize: remoteResult.fileSize } : {}),
               ...(remoteResult.duration != null ? { duration: remoteResult.duration } : {}),
-              ...(remoteResult.skipped ? { skipped: true } : {}),
+              skipped: Boolean(remoteResult.skipped),
             },
             post: serializePublishedPost(savedPost),
           },
@@ -111,6 +164,14 @@ export async function POST(request, { params }) {
           { status: 503 },
         );
       }
+
+      console.log("[SendWebhook] remote media upload succeeded", {
+        postId,
+        uploaded: remoteResult.media.length,
+        thumbnailUrl: remoteResult.thumbnailUrl || null,
+        urls: remoteResult.media.map((m) => m.fileUrl),
+        durationMs: Date.now() - startedAt,
+      });
 
       // Rebuild payload with remote URLs and persist
       const remoteUrlByOrder = {};
@@ -158,11 +219,32 @@ export async function POST(request, { params }) {
       }
     }
 
+    console.log("[SendWebhook] posting payload to n8n", {
+      postId,
+      brand: brand.name,
+      mediaCount: (post.media || []).length,
+    });
+
     const webhookResult = await sendPublishedPostToN8n({
       post,
       media: post.media || [],
       brandName: brand.name,
     });
+
+    const webhookLog = {
+      postId,
+      success: webhookResult.success,
+      code: webhookResult.code || null,
+      httpStatus: webhookResult.webhookStatus ?? null,
+      error: webhookResult.error || null,
+      details: webhookResult.details || null,
+      durationMs: Date.now() - startedAt,
+    };
+    if (webhookResult.success) {
+      console.log("[SendWebhook] n8n accepted the payload", webhookLog);
+    } else {
+      console.error("[SendWebhook] n8n rejected the payload", webhookLog);
+    }
 
     // Reload post to get the latest persisted state
     const latestPost = await reloadPost(postId);

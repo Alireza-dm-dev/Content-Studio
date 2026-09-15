@@ -386,7 +386,12 @@ function BrandBasedView({ onBack }) {
   useEffect(() => {
     fetch("/api/brands")
       .then(r => r.json())
-      .then(data => setBrands(Array.isArray(data) ? data : []))
+      .then(data => {
+        const list = Array.isArray(data) ? data : [];
+        setBrands(list);
+        // Sole assigned brand: skip the picker. The list is scoped server-side.
+        if (list.length === 1) selectBrand(list[0]);
+      })
       .catch(() => toast.error("Failed to load brands."))
       .finally(() => setLoadingBrands(false));
   }, []);

@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
+import { brandScopeWhere, requireBrandAccess } from "@/lib/brand-access";
+import { NotAuthorized } from "@/components/NotAuthorized";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { StatusPill } from "@/components/content-report/StatusPill";
 
@@ -17,9 +20,16 @@ export default async function ContentCalendarPage({ searchParams }) {
   const params = await searchParams;
   const brandId = params?.brandId;
 
+  const user = await getCurrentUser();
+
+  if (brandId) {
+    const access = await requireBrandAccess(brandId, { user });
+    if (!access.ok) return <NotAuthorized />;
+  }
+
   const [calendars, brand] = await Promise.all([
     prisma.contentCalendar.findMany({
-      where: brandId ? { brandId } : undefined,
+      where: brandId ? { brandId } : await brandScopeWhere(user),
       include: { brand: true, _count: { select: { posts: true } } },
       orderBy: { createdAt: "desc" },
     }),

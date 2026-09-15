@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { spendTokens, refundTokens, completeGeneratedMedia, generateImage } from "@/lib/higgsfield";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 
 // Matches Higgsfield's "not enough real credits" failures (NotEnoughCreditsError
 // and similar wording), as opposed to other generation errors.
@@ -9,6 +10,13 @@ const CREDIT_ERROR_PATTERN = /not enough credits|notenoughcredits|insufficient c
 // ── POST /api/higgsfield/generate-image ───────────────────────────────────
 
 export async function POST(request) {
+
+  // Not brand-scoped; requires a session only. Any brand data used by the
+  // calling flow is authorized by that flow's own brand-scoped route.
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
   let body;
   try {
     body = await request.json();

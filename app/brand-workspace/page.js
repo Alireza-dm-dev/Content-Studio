@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import WorkspaceClient from "./WorkspaceClient";
+import { requireBrandAccess } from "@/lib/brand-access";
+import { NotAuthorized } from "@/components/NotAuthorized";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +36,19 @@ export default async function BrandWorkspacePage({ searchParams }) {
           to get started.
         </div>
       </div>
+    );
+  }
+
+  const access = await requireBrandAccess(brandId);
+  if (!access.ok) {
+    return (
+      <NotAuthorized
+        message={
+          access.status === 404
+            ? "That brand no longer exists."
+            : "You do not have access to this brand's workspace."
+        }
+      />
     );
   }
 

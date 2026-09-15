@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput } from "@/lib/brand-identity-utils";
 
@@ -8,6 +9,14 @@ const TEMPLATE_SLUG = "brand-identity-regeneration";
 export async function POST(request, { params }) {
   try {
     const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
     const { feedback = "", referenceImageIds = [] } = await request.json().catch(() => ({}));
     const hasFeedback = feedback.trim().length > 0;

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAdminAccess } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
+import { brandScopeWhere, requireBrandAccess } from "@/lib/brand-access";
 
 const WRITABLE_FIELDS = new Set([
   "type",
@@ -15,20 +16,33 @@ const WRITABLE_FIELDS = new Set([
 ]);
 
 export async function GET(request) {
-  const access = await getAdminAccess();
-  if (!access.user) {
+  const user = await getCurrentUser();
+  if (!user) {
     return NextResponse.json(
-      { success: false, error: access.error },
-      { status: access.status }
+      { success: false, error: "Authentication required" },
+      { status: 401 }
     );
   }
 
   const { searchParams } = new URL(request.url);
   const brandId = searchParams.get("brandId");
   const type = searchParams.get("type");
+
+  // An explicit brand filter must be one the user may see; an absent filter
+  // falls back to every brand they can access, never to every brand.
+  if (brandId) {
+    const access = await requireBrandAccess(brandId, { user });
+    if (!access.ok) {
+      return NextResponse.json(
+        { success: false, error: access.error },
+        { status: access.status }
+      );
+    }
+  }
+
   const prompts = await prisma.generatedPrompt.findMany({
     where: {
-      ...(brandId ? { brandId } : {}),
+      ...(brandId ? { brandId } : await brandScopeWhere(user)),
       ...(type ? { type } : {}),
     },
     include: { brand: true },
@@ -38,11 +52,11 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  const access = await getAdminAccess();
-  if (!access.user) {
+  const user = await getCurrentUser();
+  if (!user) {
     return NextResponse.json(
-      { success: false, error: access.error },
-      { status: access.status }
+      { success: false, error: "Authentication required" },
+      { status: 401 }
     );
   }
 
@@ -73,6 +87,17 @@ export async function POST(request) {
   data.brandId = data.brandId || null;
   data.calendarId = data.calendarId || null;
   data.calendarPostId = data.calendarPostId || null;
+
+  // A client may not file a prompt under a brand it has no membership for.
+  if (data.brandId) {
+    const access = await requireBrandAccess(data.brandId, { user });
+    if (!access.ok) {
+      return NextResponse.json(
+        { success: false, error: access.error },
+        { status: access.status }
+      );
+    }
+  }
 
   const prompt = await prisma.generatedPrompt.create({ data });
   return NextResponse.json(prompt, { status: 201 });

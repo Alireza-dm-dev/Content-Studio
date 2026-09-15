@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 
 const TEMPLATE_SLUG = "brand-visual-identity-extractor";
@@ -101,6 +102,14 @@ function needsTemplateUpdate(text) {
 
 export async function POST(request, { params }) {
   const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
 
   const brand = await prisma.brand.findUnique({ where: { id } });
   if (!brand) return NextResponse.json({ error: "Brand not found" }, { status: 404 });

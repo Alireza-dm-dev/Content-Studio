@@ -1,9 +1,20 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireResourceBrandAccess } from "@/lib/brand-access";
 
 // GET /api/video-storyboards/[id]
 export async function GET(request, { params }) {
   const { id } = await params;
+
+  // Indirect id: resolve the record's owning brand, then authorize. This is
+  // what stops a user reaching another brand's data by guessing an id.
+  const access = await requireResourceBrandAccess("videoStoryboard", id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { success: false, error: access.error },
+      { status: access.status },
+    );
+  }
   try {
     const storyboard = await prisma.videoStoryboard.findUnique({ where: { id } });
     if (!storyboard) {
@@ -22,6 +33,16 @@ export async function GET(request, { params }) {
 // PATCH /api/video-storyboards/[id]
 export async function PATCH(request, { params }) {
   const { id } = await params;
+
+  // Indirect id: resolve the record's owning brand, then authorize. This is
+  // what stops a user reaching another brand's data by guessing an id.
+  const access = await requireResourceBrandAccess("videoStoryboard", id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { success: false, error: access.error },
+      { status: access.status },
+    );
+  }
   console.log("[VideoStoryboard] PATCH id:", id);
 
   try {

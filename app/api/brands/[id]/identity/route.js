@@ -1,8 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireBrandAccess } from "@/lib/brand-access";
 
 export async function GET(request, { params }) {
   const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
   const identities = await prisma.brandIdentity.findMany({
     where: { brandId: id },
     orderBy: { createdAt: "desc" },
@@ -12,6 +21,14 @@ export async function GET(request, { params }) {
 
 export async function POST(request, { params }) {
   const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
   const { jsonOutput, editableSummary } = await request.json();
 
   if (!jsonOutput) {
@@ -34,6 +51,14 @@ export async function POST(request, { params }) {
 
 export async function DELETE(request, { params }) {
   const { id } = await params;
+
+  const brandAccess = await requireBrandAccess(id);
+  if (!brandAccess.ok) {
+    return NextResponse.json(
+      { error: brandAccess.error },
+      { status: brandAccess.status },
+    );
+  }
   const { searchParams } = new URL(request.url);
   const identityId = searchParams.get("identityId");
   if (!identityId) return NextResponse.json({ error: "identityId required" }, { status: 400 });

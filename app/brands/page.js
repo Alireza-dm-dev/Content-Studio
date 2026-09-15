@@ -2,11 +2,22 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import BrandCard from "./BrandCard";
+import { getCurrentUser } from "@/lib/auth";
+import { brandScopeWhere } from "@/lib/brand-access";
+import { NoBrandsAssigned } from "@/components/NotAuthorized";
 
 export const dynamic = "force-dynamic";
 
 export default async function BrandsPage() {
-  const brands = await prisma.brand.findMany({ orderBy: { createdAt: "desc" } });
+  const user = await getCurrentUser();
+  const brands = await prisma.brand.findMany({
+    where: await brandScopeWhere(user, "id"),
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (brands.length === 0 && user?.role !== "admin") {
+    return <NoBrandsAssigned />;
+  }
 
   return (
     <div style={{ padding: "36px 44px 48px" }}>

@@ -546,3 +546,58 @@ test("buildRemoteAwareMedia and serializePublishedPost agree on every URL", () =
     );
   }
 });
+
+// ─── Serialization does not depend on who is asking ────────────────────────────
+//
+// Brand authorization decides WHETHER a caller may read a post; it must never
+// change WHAT a readable post looks like. When normal users first gained access
+// to Brand Workspace their cards showed "No preview", which looked like an
+// authorization-shaped serializer bug. It was not: the cause was the proxy
+// refusing the media files themselves. These lock the distinction in.
+
+test("an assigned user's image post carries the canonical image URL", () => {
+  const post = legacyInstagramImagePost();
+  const serialized = serializePublishedPost(post);
+
+  assert.equal(serialized.imageUrl, post.expectedUrl);
+  assert.match(serialized.imageUrl, /^https:\/\/files\.leadsagna\.com\//);
+  assert.equal(serialized.media[0].isCanonicalUrl, true);
+});
+
+test("an assigned user's video post carries the canonical video URL", () => {
+  const post = legacyInstagramVideoPost();
+  const serialized = serializePublishedPost(post);
+
+  assert.equal(serialized.videoUrl, post.expectedUrl);
+  assert.match(serialized.videoUrl, /^https:\/\/files\.leadsagna\.com\//);
+  assert.equal(serialized.thumbnailUrl, post.expectedThumb);
+});
+
+test("serialization takes no user or role input", () => {
+  // A second argument only ever carries options. If a role could reach this
+  // function it could produce a different shape per caller, which is exactly
+  // the bug class this test exists to prevent.
+  for (const build of [
+    legacyInstagramImagePost,
+    legacyInstagramVideoPost,
+    legacyLinkedInPdfPost,
+  ]) {
+    const plain = serializePublishedPost(build());
+    const withRoleShaped = serializePublishedPost(build(), { role: "user" });
+    const withAdminShaped = serializePublishedPost(build(), { role: "admin" });
+
+    assert.deepEqual(withRoleShaped, plain);
+    assert.deepEqual(withAdminShaped, plain);
+  }
+});
+
+test("the same stored record serializes identically on every call", () => {
+  // The list API and the single-item API run the same function over the same
+  // row, so an admin and an assigned member must receive byte-identical media.
+  for (const build of [legacyInstagramImagePost, legacyInstagramVideoPost]) {
+    const first = serializePublishedPost(build());
+    const second = serializePublishedPost(build());
+    assert.equal(JSON.stringify(first.media), JSON.stringify(second.media));
+    assert.equal(first.posterUrl, second.posterUrl);
+  }
+});

@@ -1,7 +1,17 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 
 export async function GET() {
+
+  // Prompt templates are global configuration, not brand content.
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+  if (currentUser.role !== "admin") {
+    return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  }
   const balance = await prisma.operatorTokenBalance.findUnique({
     where: { provider: "higgsfield" },
     select: { provider: true, balance: true },
@@ -32,6 +42,15 @@ export async function GET() {
 }
 
 export async function POST(request) {
+
+  // Prompt templates are global configuration, not brand content.
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+  if (currentUser.role !== "admin") {
+    return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  }
   let body;
   try {
     body = await request.json();

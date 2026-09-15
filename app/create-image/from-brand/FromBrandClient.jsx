@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -138,6 +138,18 @@ export default function FromBrandClient({ brands }) {
   const [referenceImageUrl, setReferenceImageUrl] = useState(null);
   const [referenceImageDescription, setReferenceImageDescription] = useState("");
   const [copied, setCopied] = useState(false);
+
+  // A user with exactly one assigned brand has nothing to pick, so open their
+  // brand directly. `brands` is scoped server-side, so this can only ever
+  // select a brand the user belongs to. The ref keeps it to a single run.
+  const autoSelected = useRef(false);
+  useEffect(() => {
+    if (autoSelected.current) return;
+    if (selectedBrand) return;
+    if (brands?.length !== 1) return;
+    autoSelected.current = true;
+    handleSelectBrand(brands[0]);
+  }, [brands, selectedBrand]);
 
   async function handleSelectBrand(brand) {
     setSelectedBrand(brand);

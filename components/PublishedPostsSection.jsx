@@ -62,11 +62,17 @@ function GridCard({ post, onClick, onCommentClick }) {
   // than leaving a broken-image icon in the grid. Tracking the failed URL
   // rather than a flag means a later edit that changes the URL retries it.
   const [failedSrc, setFailedSrc] = useState(null);
+  // A video's poster and the video itself are separate fetches. If only the
+  // poster is unreachable, fall through to the video rather than giving up:
+  // the poster is decoration, the video is the content.
+  const [posterFailed, setPosterFailed] = useState(null);
+
+  const usePoster = isVideo && thumbnailUrl && posterFailed !== thumbnailUrl;
   const previewSrc =
     firstMedia?.mediaType === "IMAGE"
       ? firstMedia.url
       : isVideo
-      ? thumbnailUrl || firstMedia?.url || null
+      ? (usePoster ? thumbnailUrl : firstMedia?.url) || null
       : null;
   const mediaFailed = previewSrc != null && failedSrc === previewSrc;
 
@@ -94,12 +100,12 @@ function GridCard({ post, onClick, onCommentClick }) {
           onError={() => setFailedSrc(previewSrc)}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
-      ) : isVideo && thumbnailUrl ? (
+      ) : usePoster ? (
         /* eslint-disable-next-line @next/next/no-img-element */
         <img
           src={thumbnailUrl}
           alt={post.caption || "Video thumbnail"}
-          onError={() => setFailedSrc(previewSrc)}
+          onError={() => setPosterFailed(thumbnailUrl)}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
       ) : isVideo && firstMedia?.url ? (

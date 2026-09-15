@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAdminAccess } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
+import { requireBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 
@@ -17,21 +18,32 @@ function parseAiJson(raw) {
 
 // ── GET: reference-flow history (latest 10 per brand) ───────────────────────
 export async function GET(request) {
-  const access = await getAdminAccess();
-  if (!access.user) {
-    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json(
+      { success: false, code: "UNAUTHORIZED", error: "Authentication required" },
+      { status: 401 },
+    );
   }
 
   const { searchParams } = new URL(request.url);
   const history = searchParams.get("history");
 
   if (history !== "reference-flow") {
-    return NextResponse.json({ success: false, error: "Unsupported or missing history query." }, { status: 400 });
+    return NextResponse.json({ success: false, code: "INVALID_HISTORY_QUERY", error: "Unsupported or missing history query." }, { status: 400 });
   }
 
   const brandId = searchParams.get("brandId");
   if (!brandId) {
-    return NextResponse.json({ success: false, error: "brandId is required." }, { status: 400 });
+    return NextResponse.json({ success: false, code: "MISSING_BRAND_ID", error: "brandId is required." }, { status: 400 });
+  }
+
+  const getAccess = await requireBrandAccess(brandId, { user });
+  if (!getAccess.ok) {
+    return NextResponse.json(
+      { success: false, code: "BRAND_FORBIDDEN", error: getAccess.error },
+      { status: getAccess.status },
+    );
   }
 
   let limit = parseInt(searchParams.get("limit"), 10);
@@ -72,6 +84,7 @@ export async function GET(request) {
     console.error("[CombinedVisualDir] GET history error:", err);
     return NextResponse.json({
       success: false,
+      code: "HISTORY_LOAD_FAILED",
       error: "Failed to load reference-flow history.",
       details: err instanceof Error ? err.message : String(err),
     }, { status: 500 });
@@ -79,9 +92,12 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
-  const access = await getAdminAccess();
-  if (!access.user) {
-    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json(
+      { success: false, code: "UNAUTHORIZED", error: "Authentication required" },
+      { status: 401 },
+    );
   }
 
   console.log("[CombinedVisualDir] POST /api/image/combined-visual-direction");
@@ -90,7 +106,7 @@ export async function POST(request) {
     let body;
     try { body = await request.json(); }
     catch (e) {
-      return NextResponse.json({ success: false, error: "Invalid request body.", details: e.message }, { status: 400 });
+      return NextResponse.json({ success: false, code: "INVALID_REQUEST_BODY", error: "Invalid request body.", details: e.message }, { status: 400 });
     }
 
     const {
@@ -106,10 +122,18 @@ export async function POST(request) {
     } = body;
 
     if (!brandId) {
-      return NextResponse.json({ success: false, error: "brandId is required." }, { status: 400 });
+      return NextResponse.json({ success: false, code: "MISSING_BRAND_ID", error: "brandId is required." }, { status: 400 });
+    }
+
+    const brandAccess = await requireBrandAccess(brandId, { user });
+    if (!brandAccess.ok) {
+      return NextResponse.json(
+        { success: false, code: "BRAND_FORBIDDEN", error: brandAccess.error },
+        { status: brandAccess.status },
+      );
     }
     if (!referenceImageAnalysisId) {
-      return NextResponse.json({ success: false, error: "Please upload and analyze a reference image first." }, { status: 400 });
+      return NextResponse.json({ success: false, code: "MISSING_REFERENCE_ANALYSIS", error: "Please upload and analyze a reference image first." }, { status: 400 });
     }
 
     // ── Load data ─────────────────────────────────────────────────────────────
@@ -120,16 +144,17 @@ export async function POST(request) {
     ]);
 
     if (!brand) {
-      return NextResponse.json({ success: false, error: "Brand not found." }, { status: 404 });
+      return NextResponse.json({ success: false, code: "BRAND_NOT_FOUND", error: "Brand not found." }, { status: 404 });
     }
     if (!brandIdentity) {
       return NextResponse.json({
         success: false,
+        code: "BRAND_IDENTITY_MISSING",
         error: "Please create or approve brand identity before using this flow.",
       }, { status: 400 });
     }
     if (!referenceAnalysis) {
-      return NextResponse.json({ success: false, error: "Reference image analysis not found." }, { status: 404 });
+      return NextResponse.json({ success: false, code: "REFERENCE_ANALYSIS_NOT_FOUND", error: "Reference image analysis not found." }, { status: 404 });
     }
 
     // ── Resolve JSON sources ──────────────────────────────────────────────────
@@ -191,6 +216,7 @@ export async function POST(request) {
       console.error("[CombinedVisualDir] AI error:", aiErr.message);
       return NextResponse.json({
         success: false,
+        code: "AI_COMBINATION_FAILED",
         error: "AI combination failed. Please try again.",
         details: aiErr.message,
       }, { status: 500 });
@@ -242,7 +268,8 @@ export async function POST(request) {
     console.error("[CombinedVisualDir] Unhandled error:", err);
     return NextResponse.json({
       success: false,
-      error: "Failed to combine visual direction. Please try again.",
+      code: "REFERENCE_COMBINE_FAILED",
+      error: "Could not generate the combined reference-image prompt.",
       details: err instanceof Error ? err.message : String(err),
     }, { status: 500 });
   }

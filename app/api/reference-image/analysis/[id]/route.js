@@ -1,8 +1,19 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireResourceBrandAccess } from "@/lib/brand-access";
 
 export async function PATCH(request, { params }) {
   const { id } = await params;
+
+  // Indirect id: resolve the record's owning brand, then authorize. This is
+  // what stops a user reaching another brand's data by guessing an id.
+  const access = await requireResourceBrandAccess("referenceImageAnalysis", id);
+  if (!access.ok) {
+    return NextResponse.json(
+      { success: false, error: access.error },
+      { status: access.status },
+    );
+  }
 
   try {
     const body = await request.json();

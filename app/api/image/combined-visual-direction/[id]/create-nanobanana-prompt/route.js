@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getAdminAccess } from "@/lib/auth";
+import { requireResourceBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
 import {
@@ -204,13 +204,16 @@ function buildConcreteReferenceCompositionBlock(refAnalysis, cvdObj) {
 }
 
 export async function POST(request, { params }) {
-  const access = await getAdminAccess();
-  if (!access.user) {
-    return NextResponse.json({ success: false, error: access.error }, { status: access.status });
-  }
-
   try {
     const { id } = await params;
+
+    const access = await requireResourceBrandAccess("combinedVisualDirection", id);
+    if (!access.ok) {
+      return NextResponse.json(
+        { success: false, error: access.error },
+        { status: access.status },
+      );
+    }
     console.log("[NanobananaPrompt] POST for CombinedVisualDirection id:", id);
     const body = await request.json().catch(() => ({}));
     const useEditedJson = body.useEditedJson !== false;

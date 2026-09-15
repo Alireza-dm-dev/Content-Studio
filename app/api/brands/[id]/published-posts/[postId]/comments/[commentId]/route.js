@@ -1,23 +1,22 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireBrandAccess } from "@/lib/brand-access";
 
-async function requireAdminOrReject() {
-  const user = await getCurrentUser();
-  if (!user) {
-    return { error: NextResponse.json({ error: "Authentication required" }, { status: 401 }) };
+// Commenting on a post is normal workspace functionality, so any member of the
+// owning brand may do it. The brand id is the [id] path segment.
+async function requireBrandMemberOrReject(brandId) {
+  const access = await requireBrandAccess(brandId);
+  if (!access.ok) {
+    return { error: NextResponse.json({ error: access.error }, { status: access.status }) };
   }
-  if (user.role !== "admin") {
-    return { error: NextResponse.json({ error: "Admin access required" }, { status: 403 }) };
-  }
-  return { admin: user };
+  return { admin: access.user };
 }
 
 export async function DELETE(request, { params }) {
-  const auth = await requireAdminOrReject();
-  if (auth.error) return auth.error;
-
   const { id, postId, commentId } = await params;
+
+  const auth = await requireBrandMemberOrReject(id);
+  if (auth.error) return auth.error;
 
   const post = await prisma.publishedPost.findFirst({
     where: { id: postId, brandId: id },
