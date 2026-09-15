@@ -504,13 +504,19 @@ function mergeSourceFields(generatedPosts, selectedPosts, platforms) {
 export async function POST(request) {
   console.log("[ContentCalendar] POST /api/content-calendar/generate");
 
-  // ── 1. Authenticate ────────────────────────────────────────────────────────
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 });
-  }
+  // Declared out here so the error handler below can still report the requested
+  // post count after a failure part-way through generation.
+  let safeCount;
 
   try {
+    // ── 1. Authenticate ──────────────────────────────────────────────────────
+    // Inside the try: a session/DB failure here must still leave as JSON, or the
+    // browser receives a non-JSON error page and can only show a generic message.
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Authentication required" }, { status: 401 });
+    }
+
     // ── 2. Parse request body ────────────────────────────────────────────────
     let body;
     try {
@@ -583,7 +589,6 @@ export async function POST(request) {
     // Source of truth: Calendar Setup numberOfPostsNeeded from the user.
     // Selected post ideas are inspiration inputs, not a hard cap.
     const rawCount = parseInt(String(formFields.numberOfPostsNeeded ?? ""), 10);
-    let safeCount;
     let countSource;
 
     if (!isNaN(rawCount) && rawCount >= 1) {
