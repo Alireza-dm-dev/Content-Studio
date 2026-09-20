@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { assertCalendarAccess } from "@/lib/auth";
+import { requireResourceBrandAccess } from "@/lib/brand-access";
+import { deleteCalendarCascade } from "@/lib/calendar-deletion";
 
 export async function GET(request, { params }) {
   const { id } = await params;
@@ -95,23 +97,19 @@ export async function PATCH(request, { params }) {
 
 export async function DELETE(request, { params }) {
   const { id } = await params;
-  const access = await assertCalendarAccess(id);
-  if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
 
-  if (!access.isAdmin) {
-    const calendar = await prisma.contentCalendar.findUnique({
-      where: { id },
-      select: { status: true },
-    });
-    if (!calendar) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    if (calendar.status !== "draft") {
-      return NextResponse.json(
-        { error: "Only draft calendars can be deleted by Calendar Editors" },
-        { status: 403 }
-      );
-    }
+  // id → calendar → owning brand → authorization. Resolving through the
+  // centralized helper means a guessed calendar id can never be deleted by a
+  // user who has no access to its brand: unknown → 404, other brand → 403.
+  const access = await requireResourceBrandAccess("calendar", id);
+  if (!access.ok) return NextResponse.json({ error: access.error }, { status: access.status });
+
+  try {
+    await deleteCalendarCascade(id);
+  } catch (err) {
+    console.error("[Calendar DELETE] Error:", err?.message || err);
+    return NextResponse.json({ error: "Failed to delete calendar." }, { status: 500 });
   }
 
-  await prisma.contentCalendar.delete({ where: { id } });
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, id });
 }
