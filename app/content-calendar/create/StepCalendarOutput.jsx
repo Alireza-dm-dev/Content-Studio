@@ -224,6 +224,11 @@ const REGEN_OPTIONS = [
     desc: "Regenerate all content, visuals, and video fields",
   },
   {
+    value: "enrich_post",
+    label: "Enrich post",
+    desc: "Add depth, expertise, specificity, and professional detail while preserving the original idea",
+  },
+  {
     value: "custom_instruction",
     label: "Custom instruction",
     desc: "Tell AI exactly what to change",
@@ -241,6 +246,7 @@ function buildSummaryText(scope, customInstruction) {
     case "visual_ideas_only":  return "Visual ideas and Image Text were regenerated.";
     case "image_text_only":    return "Image Text was regenerated based on the selected guidance.";
     case "entire_post":        return "Content, visuals, Image Text, and video production fields were regenerated.";
+    case "enrich_post":        return "The hook, core message, and caption were enriched. Visuals, Image Text, hashtags, and video fields were preserved.";
     case "custom_instruction": {
       const instr = (customInstruction || "").trim();
       const preview = instr.slice(0, 120);
@@ -259,6 +265,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
   const [guidedReasons, setGuidedReasons] = useState([]);
   const [guidedFeatures, setGuidedFeatures] = useState([]);
   const [imageTextInstruction, setImageTextInstruction] = useState("");
+  const [enrichmentInstruction, setEnrichmentInstruction] = useState("");
   const [applyToAllPosts, setApplyToAllPosts] = useState(false);
   const [bulkProgress, setBulkProgress] = useState("");
   const [loading, setLoading] = useState(false);
@@ -270,6 +277,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
     setGuidedReasons([]);
     setGuidedFeatures([]);
     setImageTextInstruction("");
+    setEnrichmentInstruction("");
     setApplyToAllPosts(false);
     setSummary(null);
   }
@@ -302,6 +310,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
               post: p, brandId, calendarContext, scope, customInstruction: customInstruction.trim(),
               attachmentIds,
               ...(scope === "image_text_only" && { guidedReasons, guidedFeatures, imageTextInstruction }),
+              ...(scope === "enrich_post" && { enrichmentInstruction: enrichmentInstruction.trim() }),
             }),
           });
           const text = await res.text();
@@ -337,6 +346,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
           post, brandId, calendarContext, scope, customInstruction: customInstruction.trim(),
           attachmentIds,
           ...(scope === "image_text_only" && { guidedReasons, guidedFeatures, imageTextInstruction }),
+          ...(scope === "enrich_post" && { enrichmentInstruction: enrichmentInstruction.trim() }),
         }),
       });
       const text = await res.text();
@@ -449,6 +459,30 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
           </div>
         </div>
       )}
+      {/* Enrich post explanation + optional guidance */}
+      {scope === "enrich_post" && (
+        <div className="space-y-1.5 border border-border rounded-lg p-3 bg-background">
+          <p className="text-xs text-muted-foreground">
+            Deepen this post with more useful information, expertise, context, and specificity
+            while preserving its original idea and intent.
+          </p>
+          <label className="text-xs font-medium text-muted-foreground block pt-1">
+            What should be enriched?{" "}
+            <span className="text-muted-foreground/50">(optional)</span>
+          </label>
+          <textarea
+            rows={3}
+            disabled={loading}
+            value={enrichmentInstruction}
+            onChange={e => setEnrichmentInstruction(e.target.value)}
+            placeholder="e.g. Add more technical detail, explain the practical benefits, make the educational section more useful…"
+            className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-xs resize-none shadow-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
+          />
+          <p className="text-xs text-muted-foreground/70">
+            Visual direction, Image Text, video fields, hashtags, format, platform, and schedule are left untouched.
+          </p>
+        </div>
+      )}
       {scope === "custom_instruction" && (
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground block">What should AI change?</label>
@@ -500,10 +534,10 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
           <button type="button" onClick={handleRegenerate} disabled={loading}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
             {loading
-              ? <><Loader2 className="w-3 h-3 animate-spin" />Regenerating…</>
+              ? <><Loader2 className="w-3 h-3 animate-spin" />{scope === "enrich_post" ? "Enriching…" : "Regenerating…"}</>
               : applyToAllPosts
                 ? <><Sparkles className="w-3 h-3" />Regenerate All Posts</>
-                : <><Sparkles className="w-3 h-3" />Regenerate Post</>}
+                : <><Sparkles className="w-3 h-3" />{scope === "enrich_post" ? "Enrich Post" : "Regenerate Post"}</>}
           </button>
           <button type="button" onClick={onCancel} disabled={loading}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-60">

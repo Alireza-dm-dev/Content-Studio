@@ -19,6 +19,7 @@ import {
   buildCustomInstructionUserInput,
   buildImageTextOnlyUserInput,
   buildVisualOrEntirePostUserInput,
+  buildEnrichPostUserInput,
 } from "@/lib/calendar-regeneration-prompt";
 
 // ── Scope validation ──────────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ export async function POST(request) {
     }
 
     // ── 3. Validate required fields ──────────────────────────────────────────
-    const { post, brandId, calendarContext, scope = "visual_only", customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, attachmentIds } = body;
+    const { post, brandId, calendarContext, scope = "visual_only", customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, enrichmentInstruction, attachmentIds } = body;
 
     if (!post || typeof post !== "object") {
       return NextResponse.json(
@@ -152,6 +153,11 @@ export async function POST(request) {
         guidedFeatures,
         imageTextInstruction,
       });
+    } else if (scope === "enrich_post") {
+      userInput = buildEnrichPostUserInput({
+        ...promptContext,
+        enrichmentInstruction,
+      });
     } else {
       userInput = buildVisualOrEntirePostUserInput({
         ...promptContext,
@@ -193,38 +199,44 @@ export async function POST(request) {
     const merged = applyScopedPostRegeneration(current, aiPost, scope);
 
     // ── Validate / fall back for outputImageTextRequirements ──────────────────
-    const candidateStructured =
-      normalizeOutputImageTextRequirementsStructured(merged.outputImageTextRequirementsStructured) ||
-      normalizeOutputImageTextRequirementsStructured(merged.outputImageTextRequirements);
+    // Enrichment is a text-only operation: on-image text belongs to the visual
+    // work it must preserve, so it is carried through untouched rather than
+    // re-derived (which would rewrite image text nobody asked to change).
+    if (scope !== "enrich_post") {
+      const candidateStructured =
+        normalizeOutputImageTextRequirementsStructured(merged.outputImageTextRequirementsStructured) ||
+        normalizeOutputImageTextRequirementsStructured(merged.outputImageTextRequirements);
 
-    const oitrCheck = validateOutputImageTextRequirements({
-      format: merged.format,
-      contentStructure: merged.contentStructure,
-      outputImageTextRequirementsStructured: candidateStructured,
-      outputImageTextRequirements: null,
-    });
-
-    let finalOitrStructured = candidateStructured;
-    if (!oitrCheck.valid) {
-      console.log(`[RegeneratePost] outputImageTextRequirements validation failed (${oitrCheck.reason}), applying fallback`);
-      finalOitrStructured = buildFallbackOutputImageTextRequirements({
+      const oitrCheck = validateOutputImageTextRequirements({
         format: merged.format,
         contentStructure: merged.contentStructure,
-        hookTitle: merged.hookTitle,
-        coreMessage: merged.coreMessage,
-        mainAngle: merged.mainAngle,
-        caption: merged.caption,
+        outputImageTextRequirementsStructured: candidateStructured,
+        outputImageTextRequirements: null,
       });
+
+      let finalOitrStructured = candidateStructured;
+      if (!oitrCheck.valid) {
+        console.log(`[RegeneratePost] outputImageTextRequirements validation failed (${oitrCheck.reason}), applying fallback`);
+        finalOitrStructured = buildFallbackOutputImageTextRequirements({
+          format: merged.format,
+          contentStructure: merged.contentStructure,
+          hookTitle: merged.hookTitle,
+          coreMessage: merged.coreMessage,
+          mainAngle: merged.mainAngle,
+          caption: merged.caption,
+        });
+      }
+      merged.outputImageTextRequirementsStructured = finalOitrStructured;
+      merged.outputImageTextRequirements = formatOutputImageTextRequirementsForDisplay(finalOitrStructured) || "";
     }
-    merged.outputImageTextRequirementsStructured = finalOitrStructured;
-    merged.outputImageTextRequirements = formatOutputImageTextRequirementsForDisplay(finalOitrStructured) || "";
 
     // ── Normalize hashtags ────────────────────────────────────────────────────
     // Only scopes that actually regenerate caption/hashtags run the merge —
     // visual_only/visual_ideas_only/image_text_only promise to leave caption
     // and hashtags untouched, so re-running the merge there would risk
     // silently reformatting an old-format post's caption outside its scope.
-    const scopeTouchesCaption = scope === "entire_post" || scope === "custom_instruction";
+    const scopeTouchesCaption =
+      scope === "entire_post" || scope === "custom_instruction" || scope === "enrich_post";
     if (scopeTouchesCaption) {
       const mergeResult = mergeHashtagsIntoCaption(merged.caption, merged.hashtags, {
         platform: merged.platform,
