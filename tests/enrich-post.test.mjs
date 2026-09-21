@@ -489,8 +489,49 @@ test("the protected-fact list covers prices, certifications, specs, dates and co
   }
 });
 
+test("the prompt requires a supplied offer/service name to be reused exactly", () => {
+  const input = buildEnrichPostUserInput(enrichContext());
+
+  assert.ok(input.includes("NAMED OFFERS AND SERVICES — USE THE SUPPLIED NAME, EXACTLY AS GIVEN:"));
+  assert.ok(input.includes("Refer to it using the supplied name, character for character."));
+  assert.ok(input.includes("Do NOT rename it, shorten it, expand it, translate it, generalize it, upgrade it, soften it, or substitute a near-synonym"));
+  // Omission is the sanctioned escape hatch — never a rename.
+  assert.ok(input.includes("If the exact named offer does not fit the enriched post, OMIT it entirely. Leaving it out is always correct; renaming it never is."));
+});
+
+test("every kind of named label is covered by the exact-name rule", () => {
+  const input = buildEnrichPostUserInput(enrichContext());
+  const ruleLine = input.split("\n").find(l => l.includes("that name is the thing itself"));
+  assert.ok(ruleLine, "the named-label rule line must exist");
+  for (const label of [
+    "offer", "promotion", "service", "package", "product",
+    "tier", "plan", "assessment", "course", "guarantee", "certification",
+  ]) {
+    assert.ok(ruleLine.includes(label), `named-label rule must cover: ${label}`);
+  }
+});
+
+test("the real rename failure is named as prohibited, generically", () => {
+  const input = buildEnrichPostUserInput(enrichContext());
+
+  // The exact drift observed against the real provider: a listed
+  // "Free site visit" referred to as a "free consultation".
+  assert.ok(input.includes('Context lists "Free site visit" → write "Book your Free site visit"'));
+  assert.ok(input.includes('Do NOT write "book a free consultation"'));
+  // A second, unrelated example keeps it a rule about names, not about one brand.
+  assert.ok(input.includes('Context lists "Starter Plan" → write "Starter Plan"'));
+  assert.ok(input.includes('Do NOT write "Basic Plan"'));
+  // Still no brand-specific hardcoding anywhere in the prompt.
+  assert.ok(!input.includes("British Engineers"));
+});
+
 test("the existing anti-hallucination rules are still intact alongside the new rule", () => {
   const input = buildEnrichPostUserInput(enrichContext());
+  // Guarantee-wording protection and the named-offer rule coexist, in order.
+  assert.ok(input.indexOf("PRECISE CLAIMS — REUSE THE EXACT WORDING") < input.indexOf("NAMED OFFERS AND SERVICES"));
+  assert.ok(input.includes("NEVER swap one commercial promise for a different-but-similar one."));
+  assert.ok(input.includes("A guarantee about getting money back is not a guarantee about being satisfied"));
+  assert.ok(input.includes("  - guarantee, warranty, and refund wording"));
   assert.ok(input.includes("FACTUAL SAFETY (CRITICAL)"));
   assert.ok(input.includes("Invented statistics, percentages, survey results, studies, research citations, or expert quotes."));
   assert.ok(input.includes("do not invent it"));
