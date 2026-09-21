@@ -36,6 +36,45 @@ test("normalizeHashtagList drops blanks and trims whitespace inside a tag", () =
   assert.deepEqual(result, ["#ManchesterTraining", "#Real"]);
 });
 
+// A stored `hashtags` DB column holds every tag in ONE delimited string. It
+// used to be treated as a single tag, collapsing "#A #B #C" into "#A#B#C" —
+// which on Instagram then looked like a one-hashtag post and had four fallback
+// tags derived for it. See the saved-route regression in tests/enrich-post-route.test.mjs.
+
+test("normalizeHashtagList splits a space-separated string into individual tags", () => {
+  const result = normalizeHashtagList("#ClientTestimonials #BritishEngineers #CustomerJoy");
+  assert.deepEqual(result, ["#ClientTestimonials", "#BritishEngineers", "#CustomerJoy"]);
+  assert.ok(!result.some(t => t.slice(1).includes("#")), "no tag may contain a concatenated second tag");
+});
+
+test("normalizeHashtagList handles repeated whitespace, tabs and newlines in a string", () => {
+  assert.deepEqual(
+    normalizeHashtagList("  #One   #Two\t#Three \n #Four  "),
+    ["#One", "#Two", "#Three", "#Four"]
+  );
+});
+
+test("normalizeHashtagList splits a comma-separated string, matching the routes' convention", () => {
+  assert.deepEqual(normalizeHashtagList("#One,#Two, #Three"), ["#One", "#Two", "#Three"]);
+  // Bare words in a string still gain their leading #.
+  assert.deepEqual(normalizeHashtagList("CCTV, Security"), ["#CCTV", "#Security"]);
+});
+
+test("normalizeHashtagList dedupes and caps a string input exactly like an array", () => {
+  assert.deepEqual(normalizeHashtagList("#a #A #b #c #d #e #f"), ["#a", "#b", "#c", "#d", "#e"]);
+});
+
+test("normalizeHashtagList returns an empty list for empty, blank, null and undefined input", () => {
+  for (const input of ["", "   ", "\n", null, undefined]) {
+    assert.deepEqual(normalizeHashtagList(input), [], `input ${JSON.stringify(input)}`);
+  }
+});
+
+test("normalizeHashtagList keeps an array element as ONE tag (internal spaces removed, not split)", () => {
+  // Pins the pre-existing array semantics the string fix must not disturb.
+  assert.deepEqual(normalizeHashtagList(["#Manchester Training", "#Real"]), ["#ManchesterTraining", "#Real"]);
+});
+
 // ─── mergeHashtagsIntoCaption ───────────────────────────────────────────────────
 
 const HASHTAGS = ["#CCTVTraining", "#ManchesterTraining", "#SecurityInstaller", "#CCTVCourse", "#BEAcademy"];

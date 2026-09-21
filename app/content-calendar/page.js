@@ -3,8 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { brandScopeWhere, requireBrandAccess } from "@/lib/brand-access";
 import { NotAuthorized } from "@/components/NotAuthorized";
-import { SectionLabel } from "@/components/content-report/SectionLabel";
-import { StatusPill } from "@/components/content-report/StatusPill";
+import CalendarBrandSections from "./CalendarBrandSections";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +36,18 @@ export default async function ContentCalendarPage({ searchParams }) {
       ? prisma.brand.findUnique({ where: { id: brandId }, select: { id: true, name: true } })
       : null,
   ]);
+
+  // Only plain, already brand-scoped fields cross into the client component.
+  const cards = calendars.map((cal) => ({
+    id: cal.id,
+    title: cal.title,
+    status: cal.status,
+    platform: cal.platform,
+    timePeriod: cal.timePeriod,
+    brandId: cal.brandId,
+    brandName: cal.brand?.name ?? null,
+    postCount: cal._count.posts,
+  }));
 
   return (
     <div style={{ padding: "36px 44px 48px" }}>
@@ -104,67 +115,8 @@ export default async function ContentCalendarPage({ searchParams }) {
         </div>
       </div>
 
-      {/* Calendar cards */}
-      {calendars.length === 0 ? (
-        <div style={{ marginTop: 40, textAlign: "center", ...lbl, fontSize: 12 }}>
-          No calendars yet &mdash; create one to get started
-        </div>
-      ) : (
-        <div style={{ marginTop: 32 }}>
-          <SectionLabel>{calendars.length} Calendars</SectionLabel>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20, marginTop: 16 }}>
-            {calendars.map((cal) => (
-              <Link key={cal.id} href={`/content-calendar/${cal.id}`} style={{ textDecoration: "none" }}>
-                <div
-                  style={{
-                    border: "1px solid var(--sketch-line)",
-                    background: "var(--sketch-paper-bright)",
-                    padding: "16px 18px",
-                    boxShadow: "2px 2px 0 rgba(28,24,18,0.10)",
-                    transition: "border-color 160ms ease",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                    <div
-                      style={{
-                        fontFamily: "var(--font-mono-ink)",
-                        fontSize: 13,
-                        fontWeight: 500,
-                        color: "var(--sketch-ink)",
-                        lineHeight: 1.3,
-                      }}
-                    >
-                      {cal.title}
-                    </div>
-                    <StatusPill status={cal.status} />
-                  </div>
-                  {cal.brand && (
-                    <div style={{ ...lbl, marginBottom: 6 }}>{cal.brand.name}</div>
-                  )}
-                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-                    <span style={lbl}>{cal._count.posts} posts</span>
-                    {cal.platform && <span style={lbl}>{cal.platform}</span>}
-                  </div>
-                  {cal.timePeriod && (
-                    <div style={{ ...lbl, marginTop: 4 }}>{cal.timePeriod}</div>
-                  )}
-                  <div
-                    style={{
-                      ...lbl,
-                      marginTop: 8,
-                      color: "var(--sketch-vermilion)",
-                      fontSize: 9,
-                    }}
-                  >
-                    View grid &rarr;
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* Calendar cards, grouped by brand */}
+      <CalendarBrandSections calendars={cards} />
     </div>
   );
 }

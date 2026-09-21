@@ -11,6 +11,7 @@ import {
   normalizeOutputImageTextRequirementsStructured,
   formatOutputImageTextRequirementsForDisplay,
   mergeHashtagsIntoCaption,
+  preserveHashtagsInCaption,
 } from "@/lib/calendar-post-utils";
 import {
   SCOPE_FIELDS,
@@ -20,6 +21,9 @@ import {
   buildCustomInstructionUserInput,
   buildImageTextOnlyUserInput,
   buildVisualOrEntirePostUserInput,
+  buildEnrichPostUserInput,
+  scopeRewritesCaption,
+  scopePreservesHashtags,
 } from "@/lib/calendar-regeneration-prompt";
 
 // ── Scope validation ──────────────────────────────────────────────────────────
@@ -163,7 +167,7 @@ export async function POST(request, { params }) {
       );
     }
 
-    const { scope = "visual_only", brandId: bodyBrandId, calendarId, customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, currentPost } = body;
+    const { scope = "visual_only", brandId: bodyBrandId, calendarId, customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, enrichmentInstruction, currentPost } = body;
 
     // ── 6. Reject context mismatches ─────────────────────────────────────
     if (bodyBrandId && bodyBrandId !== post.calendar.brandId) {
@@ -279,6 +283,11 @@ export async function POST(request, { params }) {
         guidedFeatures,
         imageTextInstruction,
       });
+    } else if (scope === "enrich_post") {
+      userInput = buildEnrichPostUserInput({
+        ...promptContext,
+        enrichmentInstruction,
+      });
     } else {
       userInput = buildVisualOrEntirePostUserInput({
         ...promptContext,
@@ -320,49 +329,64 @@ export async function POST(request, { params }) {
     const merged = applyScopedPostRegeneration(current, aiPost, scope);
 
     // ── Validate / fall back for outputImageTextRequirements ──────────────────
-    // Same safety net as initial generation: normalize whatever the AI (or the
-    // carried-over original) produced, validate it against the post's own
-    // contentStructure/format, and fall back to a derived structured object if
-    // it's empty, incomplete, mismatched in slide count, or duplicated. The
-    // clean display string is then derived from the final structured object —
-    // never asked from the AI redundantly — so the two can never disagree.
-    const candidateStructured =
-      normalizeOutputImageTextRequirementsStructured(merged.outputImageTextRequirementsStructured) ||
-      normalizeOutputImageTextRequirementsStructured(merged.outputImageTextRequirements);
+    // Enrichment is a text-only operation: the post's on-image text is part of
+    // the visual work it must preserve, so it is carried through untouched —
+    // no re-normalization, no validation, no fallback rebuild, which would
+    // otherwise rewrite image text the user never asked to change.
+    if (scope !== "enrich_post") {
+      // Same safety net as initial generation: normalize whatever the AI (or the
+      // carried-over original) produced, validate it against the post's own
+      // contentStructure/format, and fall back to a derived structured object if
+      // it's empty, incomplete, mismatched in slide count, or duplicated. The
+      // clean display string is then derived from the final structured object —
+      // never asked from the AI redundantly — so the two can never disagree.
+      const candidateStructured =
+        normalizeOutputImageTextRequirementsStructured(merged.outputImageTextRequirementsStructured) ||
+        normalizeOutputImageTextRequirementsStructured(merged.outputImageTextRequirements);
 
-    const oitrCheck = validateOutputImageTextRequirements({
-      format: merged.format,
-      contentStructure: merged.contentStructure,
-      outputImageTextRequirementsStructured: candidateStructured,
-      outputImageTextRequirements: null,
-    });
-
-    let finalOitrStructured = candidateStructured;
-    if (!oitrCheck.valid) {
-      console.log(`[PostRegenerate] outputImageTextRequirements validation failed (${oitrCheck.reason}), applying fallback`);
-      finalOitrStructured = buildFallbackOutputImageTextRequirements({
+      const oitrCheck = validateOutputImageTextRequirements({
         format: merged.format,
         contentStructure: merged.contentStructure,
-        hookTitle: merged.hookTitle,
-        coreMessage: merged.coreMessage,
-        mainAngle: merged.mainAngle,
-        caption: merged.caption,
+        outputImageTextRequirementsStructured: candidateStructured,
+        outputImageTextRequirements: null,
       });
+
+      let finalOitrStructured = candidateStructured;
+      if (!oitrCheck.valid) {
+        console.log(`[PostRegenerate] outputImageTextRequirements validation failed (${oitrCheck.reason}), applying fallback`);
+        finalOitrStructured = buildFallbackOutputImageTextRequirements({
+          format: merged.format,
+          contentStructure: merged.contentStructure,
+          hookTitle: merged.hookTitle,
+          coreMessage: merged.coreMessage,
+          mainAngle: merged.mainAngle,
+          caption: merged.caption,
+        });
+      }
+      merged.outputImageTextRequirementsStructured = finalOitrStructured;
+      merged.outputImageTextRequirements = formatOutputImageTextRequirementsForDisplay(finalOitrStructured) || "";
+      // Keep the displayed Image Text column in sync with regenerated OITR.
+      merged.imageText = merged.outputImageTextRequirements;
     }
-    merged.outputImageTextRequirementsStructured = finalOitrStructured;
-    merged.outputImageTextRequirements = formatOutputImageTextRequirementsForDisplay(finalOitrStructured) || "";
-    // Keep the displayed Image Text column in sync with regenerated OITR.
-    merged.imageText = merged.outputImageTextRequirements;
 
     // ── Prepare DB update ─────────────────────────────────────────────────────
     // Only scopes that actually regenerate caption/hashtags run the merge —
     // visual_only/visual_ideas_only/image_text_only promise to leave caption
     // and hashtags untouched, so re-running the merge there would risk
     // silently reformatting an old-format post's caption outside its scope.
-    const scopeTouchesCaption = scope === "entire_post" || scope === "custom_instruction";
+    // Which scopes rewrite the caption, and which of those may also change the
+    // hashtag list, is decided by lib/calendar-regeneration-prompt.
+    const scopeTouchesCaption = scopeRewritesCaption(scope);
     let hashtags;
     let hashtagsMergedIntoCaption;
-    if (scopeTouchesCaption) {
+    if (scopePreservesHashtags(scope)) {
+      // Enrichment rewrites the wording, never the hashtags: re-attach the
+      // post's own list verbatim, with no Instagram padding.
+      const preserved = preserveHashtagsInCaption(merged.caption, merged.hashtags);
+      merged.caption = preserved.caption;
+      hashtags = preserved.hashtags;
+      hashtagsMergedIntoCaption = hashtags.length > 0;
+    } else if (scopeTouchesCaption) {
       const mergeResult = mergeHashtagsIntoCaption(merged.caption, merged.hashtags, {
         platform: merged.platform,
         context: {
