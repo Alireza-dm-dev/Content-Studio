@@ -40,6 +40,11 @@ const POST_ROW = {
   status: "draft",
   visualDirection: "Single frame, engineer checking a camera on a wall mount, cool blue grade.",
   contentStructure: "Single image with headline and CTA badge.",
+  // A real row stores every tag in ONE space-separated string, and this column
+  // wins over postData.hashtags in `current = { ...meta, ...post }`. Enrichment
+  // never asks the model for hashtags, so this string is what reaches the
+  // hashtag merge — the exact path that used to collapse it into one tag.
+  hashtags: "#cctv #security #maintenance #london #cucctv",
   outputImageTextRequirements: ORIGINAL_META.outputImageTextRequirements,
   postData: JSON.stringify(ORIGINAL_META),
   calendar: {
@@ -231,6 +236,65 @@ test("an over-reaching model response cannot rewrite visuals through the route",
   assert.equal(meta.imageText, ORIGINAL_META.imageText);
   assert.deepEqual(meta.hashtags, ORIGINAL_META.hashtags);
   assert.ok(!("format" in written));
+});
+
+// ─── Hashtag preservation regression ─────────────────────────────────────────
+// Real-provider run of enrich_post corrupted the stored hashtags:
+//   ["#ClientTestimonials","#BritishEngineers","#CustomerJoy"]
+//   -> ["#ClientTestimonials#BritishEngineers#CustomerJoy","#AtBritishEngineers",...]
+// The DB column is a delimited string, enrichment excludes hashtags from its
+// scope, so that string reached normalizeHashtagList and was treated as one tag.
+
+test("a stored hashtag STRING survives enrichment as separate tags, with no concatenation and no padding", async () => {
+  state.aiImpl = async () => ({ raw: JSON.stringify(ENRICHED) });
+  await call({ scope: "enrich_post" });
+
+  const { data: written } = state.updates[0];
+  const meta = JSON.parse(written.postData);
+
+  // Logically identical to what the row held before enrichment.
+  assert.deepEqual(meta.hashtags, ["#cctv", "#security", "#maintenance", "#london", "#cucctv"]);
+  assert.equal(written.hashtags, "#cctv #security #maintenance #london #cucctv");
+
+  // No tag may carry a second tag glued onto it.
+  for (const tag of meta.hashtags) {
+    assert.ok(!tag.slice(1).includes("#"), `concatenated hashtag: ${tag}`);
+  }
+  // The post already had 5 on Instagram, so no fallback tag may be derived.
+  for (const derived of ["#AtBritishEngineers", "#FireAlarm", "#NetworkSystems"]) {
+    assert.ok(!meta.hashtags.includes(derived), `unexpected fallback hashtag: ${derived}`);
+  }
+
+  // Canonical placement: exactly one hashtag block, at the very end, once.
+  const caption = written.suggestedCaption;
+  assert.ok(caption.trimEnd().endsWith("#cctv #security #maintenance #london #cucctv"));
+  assert.equal(caption.match(/#cctv\b/gi).length, 1, "the tag block must appear exactly once");
+  const body = caption.slice(0, caption.lastIndexOf("#cctv"));
+  assert.ok(!body.includes("#"), "no hashtags may remain scattered in the caption body");
+});
+
+test("a short stored hashtag string keeps its own tags and pads per the unchanged Instagram rule", async () => {
+  // The real-world failing post held only three tags. The Instagram exactly-5
+  // rule is pre-existing policy for every caption-touching scope, so padding
+  // still happens — what must not happen is losing or mangling the originals.
+  const threeTagRow = { ...POST_ROW, hashtags: "#ClientTestimonials #BritishEngineers #CustomerJoy" };
+  const restore = POST_ROW.hashtags;
+  Object.assign(POST_ROW, threeTagRow);
+  try {
+    state.aiImpl = async () => ({ raw: JSON.stringify(ENRICHED) });
+    await call({ scope: "enrich_post" });
+    const meta = JSON.parse(state.updates[0].data.postData);
+
+    assert.deepEqual(
+      meta.hashtags.slice(0, 3),
+      ["#ClientTestimonials", "#BritishEngineers", "#CustomerJoy"],
+      "the original three tags survive, in order"
+    );
+    assert.ok(!meta.hashtags.includes("#ClientTestimonials#BritishEngineers#CustomerJoy"));
+    assert.equal(meta.hashtags.length, 5, "Instagram exactly-5 policy is unchanged");
+  } finally {
+    POST_ROW.hashtags = restore;
+  }
 });
 
 // ─── Failure behaviour ────────────────────────────────────────────────────────
