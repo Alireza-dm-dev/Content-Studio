@@ -10,6 +10,7 @@ import {
   normalizeOutputImageTextRequirementsStructured,
   formatOutputImageTextRequirementsForDisplay,
   mergeHashtagsIntoCaption,
+  preserveHashtagsInCaption,
 } from "@/lib/calendar-post-utils";
 import {
   SCOPE_FIELDS,
@@ -20,6 +21,8 @@ import {
   buildImageTextOnlyUserInput,
   buildVisualOrEntirePostUserInput,
   buildEnrichPostUserInput,
+  scopeRewritesCaption,
+  scopePreservesHashtags,
 } from "@/lib/calendar-regeneration-prompt";
 
 // ── Scope validation ──────────────────────────────────────────────────────────
@@ -235,9 +238,17 @@ export async function POST(request) {
     // visual_only/visual_ideas_only/image_text_only promise to leave caption
     // and hashtags untouched, so re-running the merge there would risk
     // silently reformatting an old-format post's caption outside its scope.
-    const scopeTouchesCaption =
-      scope === "entire_post" || scope === "custom_instruction" || scope === "enrich_post";
-    if (scopeTouchesCaption) {
+    // Which scopes rewrite the caption, and which of those may also change the
+    // hashtag list, is decided by lib/calendar-regeneration-prompt.
+    const scopeTouchesCaption = scopeRewritesCaption(scope);
+    if (scopePreservesHashtags(scope)) {
+      // Enrichment rewrites the wording, never the hashtags: re-attach the
+      // post's own list verbatim, with no Instagram padding.
+      const preserved = preserveHashtagsInCaption(merged.caption, merged.hashtags);
+      merged.caption = preserved.caption;
+      merged.hashtags = preserved.hashtags;
+      merged.hashtagsMergedIntoCaption = preserved.hashtags.length > 0;
+    } else if (scopeTouchesCaption) {
       const mergeResult = mergeHashtagsIntoCaption(merged.caption, merged.hashtags, {
         platform: merged.platform,
         context: {

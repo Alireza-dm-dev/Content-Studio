@@ -273,27 +273,75 @@ test("a stored hashtag STRING survives enrichment as separate tags, with no conc
   assert.ok(!body.includes("#"), "no hashtags may remain scattered in the caption body");
 });
 
-test("a short stored hashtag string keeps its own tags and pads per the unchanged Instagram rule", async () => {
-  // The real-world failing post held only three tags. The Instagram exactly-5
-  // rule is pre-existing policy for every caption-touching scope, so padding
-  // still happens — what must not happen is losing or mangling the originals.
-  const threeTagRow = { ...POST_ROW, hashtags: "#ClientTestimonials #BritishEngineers #CustomerJoy" };
+test("a 3-hashtag Instagram post keeps exactly those 3 — enrichment never pads", async () => {
+  // Enrichment rewrites wording, not discovery strategy: the Instagram
+  // exactly-5 rule stays in force for the scopes that own hashtags, but it
+  // must not fire here. This is the real-world failing post's shape.
   const restore = POST_ROW.hashtags;
-  Object.assign(POST_ROW, threeTagRow);
+  POST_ROW.hashtags = "#ClientTestimonials #BritishEngineers #CustomerJoy";
+  try {
+    state.aiImpl = async () => ({ raw: JSON.stringify(ENRICHED) });
+    await call({ scope: "enrich_post" });
+    const written = state.updates[0].data;
+    const meta = JSON.parse(written.postData);
+
+    // Same three, same order, same casing — nothing added, removed or replaced.
+    assert.deepEqual(meta.hashtags, ["#ClientTestimonials", "#BritishEngineers", "#CustomerJoy"]);
+    assert.equal(meta.hashtags.length, 3, "no fallback hashtag may be derived");
+    assert.equal(written.hashtags, "#ClientTestimonials #BritishEngineers #CustomerJoy");
+    for (const derived of ["#AtBritishEngineers", "#FireAlarm", "#Security", "#NetworkSystems", "#London"]) {
+      assert.ok(!meta.hashtags.includes(derived), `unexpected derived hashtag: ${derived}`);
+    }
+
+    // Canonical placement: one block, at the end, body free of hashtags.
+    const caption = written.suggestedCaption;
+    assert.ok(caption.trimEnd().endsWith("#ClientTestimonials #BritishEngineers #CustomerJoy"));
+    assert.equal((caption.match(/#ClientTestimonials/g) || []).length, 1);
+    assert.ok(!caption.slice(0, caption.indexOf("#ClientTestimonials")).includes("#"));
+  } finally {
+    POST_ROW.hashtags = restore;
+  }
+});
+
+test("hashtags the model writes into its caption cannot replace the preserved list", async () => {
+  const restore = POST_ROW.hashtags;
+  POST_ROW.hashtags = "#ClientTestimonials #BritishEngineers #CustomerJoy";
+  try {
+    state.aiImpl = async () => ({
+      raw: JSON.stringify({
+        ...ENRICHED,
+        caption: "Enriched body #ModelInvented mid-sentence.\n\nClosing line.\n\n#ModelTagOne #ModelTagTwo",
+        hashtags: ["#ModelTagOne", "#ModelTagTwo"],
+      }),
+    });
+    await call({ scope: "enrich_post" });
+    const written = state.updates[0].data;
+    const meta = JSON.parse(written.postData);
+
+    assert.deepEqual(meta.hashtags, ["#ClientTestimonials", "#BritishEngineers", "#CustomerJoy"]);
+    for (const invented of ["#ModelInvented", "#ModelTagOne", "#ModelTagTwo"]) {
+      assert.ok(!written.suggestedCaption.includes(invented), `${invented} must be stripped from the caption`);
+      assert.ok(!meta.hashtags.includes(invented), `${invented} must not enter the hashtag list`);
+    }
+    assert.ok(written.suggestedCaption.trimEnd().endsWith("#ClientTestimonials #BritishEngineers #CustomerJoy"));
+  } finally {
+    POST_ROW.hashtags = restore;
+  }
+});
+
+test("a non-Instagram enrichment also keeps its own hashtags untouched", async () => {
+  const restoreTags = POST_ROW.hashtags;
+  const restorePlatform = POST_ROW.platform;
+  POST_ROW.hashtags = "#SecurityOps #FacilitiesManagement";
+  POST_ROW.platform = "LinkedIn";
   try {
     state.aiImpl = async () => ({ raw: JSON.stringify(ENRICHED) });
     await call({ scope: "enrich_post" });
     const meta = JSON.parse(state.updates[0].data.postData);
-
-    assert.deepEqual(
-      meta.hashtags.slice(0, 3),
-      ["#ClientTestimonials", "#BritishEngineers", "#CustomerJoy"],
-      "the original three tags survive, in order"
-    );
-    assert.ok(!meta.hashtags.includes("#ClientTestimonials#BritishEngineers#CustomerJoy"));
-    assert.equal(meta.hashtags.length, 5, "Instagram exactly-5 policy is unchanged");
+    assert.deepEqual(meta.hashtags, ["#SecurityOps", "#FacilitiesManagement"]);
   } finally {
-    POST_ROW.hashtags = restore;
+    POST_ROW.hashtags = restoreTags;
+    POST_ROW.platform = restorePlatform;
   }
 });
 

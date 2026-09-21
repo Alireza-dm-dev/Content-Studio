@@ -13,6 +13,8 @@ import assert from "node:assert/strict";
 
 import {
   buildEnrichPostUserInput,
+  scopeRewritesCaption,
+  scopePreservesHashtags,
   buildVisualOrEntirePostUserInput,
   buildCustomInstructionUserInput,
   buildImageTextOnlyUserInput,
@@ -22,6 +24,7 @@ import {
   VISUAL_FIELDS,
 } from "@/lib/calendar-regeneration-prompt";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { preserveHashtagsInCaption, mergeHashtagsIntoCaption } from "@/lib/calendar-post-utils";
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -386,6 +389,120 @@ test("the output contract restricts the model to the three enrichable fields", (
   const input = buildEnrichPostUserInput(enrichContext());
   assert.ok(input.includes("Return ONLY valid JSON with EXACTLY these fields"));
   assert.ok(input.includes("Do NOT return mainAngle, hashtags, format, platform, date, contentStructure, visualDirection, outputImageTextRequirements, imageText, or any video production field."));
+});
+
+// ─── Hashtag policy by scope ──────────────────────────────────────────────────
+
+test("only enrichment preserves hashtags; the scopes that own them still merge", () => {
+  assert.equal(scopePreservesHashtags("enrich_post"), true);
+  for (const scope of ["entire_post", "custom_instruction", "visual_only", "visual_ideas_only", "image_text_only"]) {
+    assert.equal(scopePreservesHashtags(scope), false, `${scope} must not preserve-and-skip padding`);
+  }
+
+  // Caption-rewriting scopes are unchanged: the two that own hashtags plus
+  // enrichment rewrite caption text; the visual/image-text scopes never do.
+  for (const scope of ["entire_post", "custom_instruction", "enrich_post"]) {
+    assert.equal(scopeRewritesCaption(scope), true, `${scope} rewrites the caption`);
+  }
+  for (const scope of ["visual_only", "visual_ideas_only", "image_text_only"]) {
+    assert.equal(scopeRewritesCaption(scope), false, `${scope} leaves the caption alone`);
+  }
+});
+
+test("preserveHashtagsInCaption re-attaches a list verbatim without padding or reordering", () => {
+  const three = ["#ClientTestimonials", "#BritishEngineers", "#CustomerJoy"];
+  const { caption, hashtags } = preserveHashtagsInCaption("Enriched body.\n\nClosing line.", three);
+  assert.deepEqual(hashtags, three, "same tags, same order, same casing");
+  assert.ok(caption.endsWith("#ClientTestimonials #BritishEngineers #CustomerJoy"));
+
+  // A stored delimited string works the same way.
+  assert.deepEqual(preserveHashtagsInCaption("Body.", "#a #b #c").hashtags, ["#a", "#b", "#c"]);
+
+  // More than five survive — the cap belongs to the merging path, not this one.
+  const seven = ["#t1", "#t2", "#t3", "#t4", "#t5", "#t6", "#t7"];
+  assert.deepEqual(preserveHashtagsInCaption("Body.", seven).hashtags, seven);
+
+  // Model-authored hashtags in the body are stripped before the list is appended.
+  const dirty = preserveHashtagsInCaption("Body #Invented here.\n\n#AlsoInvented", three);
+  assert.ok(!dirty.caption.includes("#Invented") && !dirty.caption.includes("#AlsoInvented"));
+  assert.equal((dirty.caption.match(/#ClientTestimonials/g) || []).length, 1);
+
+  // No hashtags at all: caption comes back clean, list stays empty.
+  assert.deepEqual(preserveHashtagsInCaption("Body.", []).hashtags, []);
+  assert.equal(preserveHashtagsInCaption("Body.", null).caption, "Body.");
+});
+
+test("the merging path keeps Instagram exactly-5 and LinkedIn 0-3 for the scopes that own hashtags", () => {
+  // Proves this task changed nothing for entire_post / custom_instruction / generation.
+  const ctx = { brandName: "CUCCTV", businessLocation: "London", businessType: "security installer" };
+  const ig = mergeHashtagsIntoCaption("Body.", ["#one", "#two", "#three"], { platform: "Instagram", context: ctx });
+  assert.equal(ig.hashtags.length, 5, "Instagram padding still applies where hashtags are owned");
+  assert.deepEqual(ig.hashtags.slice(0, 3), ["#one", "#two", "#three"]);
+
+  const li = mergeHashtagsIntoCaption("Body.", ["#one", "#two", "#three"], { platform: "LinkedIn", context: ctx });
+  assert.deepEqual(li.hashtags, ["#one", "#two", "#three"], "LinkedIn is never padded");
+
+  const fb = mergeHashtagsIntoCaption("Body.", ["#one"], { platform: "Facebook", context: ctx });
+  assert.deepEqual(fb.hashtags, ["#one"], "Facebook is never padded");
+});
+
+// ─── Precise commercial claims ────────────────────────────────────────────────
+
+test("the prompt requires precise commercial claims to keep their exact wording", () => {
+  const input = buildEnrichPostUserInput(enrichContext());
+
+  assert.ok(input.includes("PRECISE CLAIMS — REUSE THE EXACT WORDING, NEVER A SIMILAR-SOUNDING ONE:"));
+  assert.ok(input.includes("you should quote the supplied wording verbatim when you use it"));
+  assert.ok(input.includes("NEVER swap one commercial promise for a different-but-similar one."));
+  assert.ok(input.includes("If you cannot reproduce the exact claim, describe the benefit generally without stating the claim at all, or leave it out entirely."));
+  assert.ok(input.includes("Do not upgrade, round, intensify, or soften any number, percentage, or named standard"));
+});
+
+test("the guarantee-swap failure is covered generically, with no brand-specific wording", () => {
+  const input = buildEnrichPostUserInput(enrichContext());
+
+  // The real failure: "100% money-back guarantee" became "100% satisfaction guarantee".
+  assert.ok(
+    input.includes("A guarantee about getting money back is not a guarantee about being satisfied"),
+    "the money-back vs satisfaction swap must be named as a prohibited substitution"
+  );
+  // Stated as a rule shape, never hardcoded to the brand that exposed it.
+  for (const brandSpecific of ["British Engineers", "CUCCTV", "100% money-back guarantee"]) {
+    assert.ok(!input.includes(brandSpecific) || brandSpecific === "CUCCTV",
+      `prompt must not hardcode ${brandSpecific}`);
+  }
+  assert.ok(!input.includes("British Engineers"), "no brand-specific hardcoding");
+});
+
+test("the protected-fact list covers prices, certifications, specs, dates and contact details", () => {
+  const input = buildEnrichPostUserInput(enrichContext());
+  for (const category of [
+    "guarantee, warranty, and refund wording",
+    "prices, fees, rates, discounts, and any numeric offer",
+    "certifications, accreditations, memberships, and regulatory or compliance statements",
+    "technical specifications, ratings, capacities, and standards",
+    "named products, services, packages, or tiers",
+    "durations, timeframes, response times, deadlines, and dates",
+    "phone numbers, email addresses, URLs, and physical addresses",
+  ]) {
+    assert.ok(input.includes(category), `protected-fact list must cover: ${category}`);
+  }
+});
+
+test("the existing anti-hallucination rules are still intact alongside the new rule", () => {
+  const input = buildEnrichPostUserInput(enrichContext());
+  assert.ok(input.includes("FACTUAL SAFETY (CRITICAL)"));
+  assert.ok(input.includes("Invented statistics, percentages, survey results, studies, research citations, or expert quotes."));
+  assert.ok(input.includes("do not invent it"));
+  assert.ok(input.includes("DO NOT PAD — length is not the goal."));
+  assert.ok(input.includes("Never STANDARD POST → DIFFERENT POST."));
+});
+
+test("the model is told the application owns hashtags in this mode", () => {
+  const input = buildEnrichPostUserInput(enrichContext());
+  assert.ok(input.includes("the post's existing hashtags are preserved by the application"));
+  assert.ok(input.includes("Do NOT write hashtags anywhere in the caption"));
+  assert.ok(input.includes("do NOT return a hashtags field"));
 });
 
 // ─── 21. Existing modes are unchanged ─────────────────────────────────────────
