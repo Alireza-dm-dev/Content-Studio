@@ -521,6 +521,9 @@ export default function LinkedInPostDetailModal({
   }
 
   async function handleDelete() {
+    // A delete may now wait on the external n8n deletion, so a second click
+    // must never start a second request.
+    if (deleting) return;
     if (!confirmDelete) {
       setConfirmDelete(true);
       return;

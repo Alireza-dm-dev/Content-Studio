@@ -15,7 +15,18 @@ import {
   POST_TYPE_CAROUSEL,
   POST_TYPE_REEL,
 } from "@/lib/published-post-utils";
+import {
+  requiresExternalDeleteWebhook,
+  sendPublishedPostDeleteToN8n,
+} from "@/lib/published-post-delete-webhook";
 import { normalizeScheduledDate } from "@/lib/timezone";
+
+// The local row survives every one of these, so the client can retry.
+const DELETE_WEBHOOK_ERROR_STATUS = {
+  DELETE_WEBHOOK_TIMEOUT: 504,
+  DELETE_WEBHOOK_NOT_CONFIGURED: 500,
+  DELETE_WEBHOOK_PAYLOAD_BUILD_FAILED: 500,
+};
 
 export async function GET(request, { params }) {
   const { id, postId } = await params;
@@ -66,10 +77,40 @@ export async function DELETE(request, { params }) {
 
   const post = await prisma.publishedPost.findFirst({
     where: { id: postId, brandId: id },
+    include: { media: { orderBy: { order: "asc" } } },
   });
 
   if (!post) {
     return NextResponse.json({ error: "Published post not found" }, { status: 404 });
+  }
+
+  // Instagram and LinkedIn posts also exist on the social network, and n8n owns
+  // deleting them there. Ask n8n first and only delete locally once it confirms:
+  // this row carries the identifiers n8n needs, so removing it before the
+  // external delete succeeds would strand a live post with no way to find it.
+  // No DB transaction is open across this call.
+  if (requiresExternalDeleteWebhook(post.platform)) {
+    const webhookResult = await sendPublishedPostDeleteToN8n({
+      post,
+      media: post.media || [],
+      brand,
+      user: brandAccess.user,
+    });
+
+    if (!webhookResult.success) {
+      console.error("[PublishedPosts] external delete refused, keeping local post", {
+        postId,
+        brandId: id,
+        platform: post.platform,
+        code: webhookResult.code,
+        httpStatus: webhookResult.webhookStatus ?? null,
+        durationMs: webhookResult.durationMs ?? null,
+      });
+      return NextResponse.json(
+        { error: webhookResult.error, code: webhookResult.code },
+        { status: DELETE_WEBHOOK_ERROR_STATUS[webhookResult.code] || 502 },
+      );
+    }
   }
 
   // Delete DB records first (media cascade from publishedPost)

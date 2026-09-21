@@ -322,6 +322,9 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
   }
 
   async function handleDelete() {
+    // A delete may now wait on the external n8n deletion, so a second click
+    // must never start a second request.
+    if (deleting) return;
     if (!confirmDelete) {
       setConfirmDelete(true);
       return;
@@ -487,7 +490,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
                     borderColor: "var(--sketch-vermilion)",
                   }}
                 >
-                  {confirmDelete ? "Confirm Delete" : deleting ? "Deleting\u2026" : "Delete"}
+                  {deleting ? "Deleting\u2026" : confirmDelete ? "Confirm Delete" : "Delete"}
                 </button>
               </>
             )}
