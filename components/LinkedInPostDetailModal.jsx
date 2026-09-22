@@ -495,7 +495,7 @@ export default function LinkedInPostDetailModal({
         status: editStatus,
       };
       const res = await fetch(`/api/brands/${brandId}/published-posts/${post.id}`, {
-        method: "PATCH",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });

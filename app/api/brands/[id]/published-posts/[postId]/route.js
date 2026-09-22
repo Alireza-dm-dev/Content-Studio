@@ -19,6 +19,7 @@ import {
   requiresExternalDeleteWebhook,
   sendPublishedPostDeleteToN8n,
 } from "@/lib/published-post-delete-webhook";
+import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { normalizeScheduledDate } from "@/lib/timezone";
 
 // The local row survives every one of these, so the client can retry.
@@ -122,7 +123,7 @@ export async function DELETE(request, { params }) {
   return NextResponse.json({ success: true });
 }
 
-export async function PATCH(request, { params }) {
+export async function POST(request, { params }) {
   try {
     const { id, postId } = await params;
 
@@ -365,6 +366,24 @@ export async function PATCH(request, { params }) {
       data: { jsonPayload: payloadJson },
     });
 
+    // ── Notify n8n of the edit ───────────────────────────────────────────────
+    // Same fire-and-forget contract as publish: the edit is already saved above,
+    // so a webhook failure is reported back but never rolls back or blocks it.
+    let webhookResult = null;
+    try {
+      webhookResult = await sendPublishedPostToN8n({
+        post: { ...updated, jsonPayload: payloadJson },
+        media: remoteAwareMedia,
+        brandName: brand.name,
+      });
+    } catch (webhookError) {
+      webhookResult = { success: false, error: "Failed to send to n8n webhook." };
+      console.error("[PublishedPosts] n8n webhook send failed on edit", {
+        postId,
+        error: webhookError?.message,
+      });
+    }
+
     // Same serializer as the list/single-item read paths, so an edited post is
     // shaped exactly like it will be on the next page load.
     const result = serializePublishedPost({
@@ -374,7 +393,7 @@ export async function PATCH(request, { params }) {
       _count: existing._count,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, webhookResult });
   } catch (error) {
     console.error("[PublishedPosts] update failed", error);
     return NextResponse.json(
