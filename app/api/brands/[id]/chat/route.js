@@ -5,14 +5,19 @@ import { buildBrandChatContext, BrandChatContextError } from "@/lib/brand-chat-c
 import { generateBrandChatAnswer } from "@/lib/brand-chat-ai";
 import { createRateLimiter } from "@/lib/rate-limiter";
 import { mapChatError } from "@/lib/chat-error-mapper";
+import { BRAND_CHAT_CONFIG } from "@/lib/brand-chat-config";
+import { normalizeHistory } from "@/lib/brand-chat-history";
 
-const chatLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 20 });
+// Server-side cap for one chat request. Must be a literal (Next static analysis); keep equal to
+// BRAND_CHAT_CONFIG.routeMaxDurationS, which the provider deadline is derived from.
+export const maxDuration = 120;
+
+const chatLimiter = createRateLimiter(BRAND_CHAT_CONFIG.rateLimit);
 
 const ALLOWED_FIELDS = new Set(["message", "history"]);
-const MAX_MESSAGE_CHARS = 2000;
-const MAX_BODY_BYTES = 16384;
-const MAX_HISTORY_LENGTH = 8;
-const MAX_HISTORY_TOTAL_CHARS = 10000;
+const MAX_MESSAGE_CHARS = BRAND_CHAT_CONFIG.maxMessageChars;
+const MAX_BODY_BYTES = BRAND_CHAT_CONFIG.maxBodyBytes;
+const MAX_HISTORY_LENGTH = BRAND_CHAT_CONFIG.maxHistoryEntries;
 const ALLOWED_HISTORY_ROLES = new Set(["user", "assistant"]);
 
 function json(data, status = 200) {
@@ -87,7 +92,6 @@ function validateHistory(history) {
 
   if (history.length > MAX_HISTORY_LENGTH) return "INVALID_HISTORY";
 
-  let totalChars = 0;
   for (const entry of history) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return "INVALID_HISTORY";
     if (!ALLOWED_HISTORY_ROLES.has(entry.role)) return "INVALID_HISTORY";
@@ -95,15 +99,10 @@ function validateHistory(history) {
     const trimmed = entry.content.trim();
     if (!trimmed) return "INVALID_HISTORY";
     if (trimmed.length > MAX_MESSAGE_CHARS) return "INVALID_HISTORY";
-    totalChars += trimmed.length;
   }
 
-  if (totalChars > MAX_HISTORY_TOTAL_CHARS) return "INVALID_HISTORY";
-
-  return history.map((entry) => ({
-    role: entry.role,
-    content: entry.content.trim(),
-  }));
+  // Total size is bounded by MAX_BODY_BYTES; the prompt budget is applied later (budgetHistory).
+  return normalizeHistory(history);
 }
 
 export async function POST(request, { params }) {
@@ -176,34 +175,54 @@ export async function POST(request, { params }) {
       return res;
     }
 
+    const requestId = crypto.randomUUID();
+    const started = Date.now();
+
     let contextResult;
     try {
-      contextResult = await buildBrandChatContext({ brandId, question: message });
+      contextResult = await buildBrandChatContext({
+        brandId,
+        question: message,
+        // Follow-ups ("turn number 3 into a post") retrieve against the recent conversation too.
+        retrievalHint: (history || []).slice(-4).map((m) => m.content).join("\n"),
+      });
     } catch (err) {
       if (err instanceof BrandChatContextError) {
         return json(mapChatError(err.code).body, mapChatError(err.code).status);
       }
+      console.error("[BrandChat]", requestId, "context build failed:", err?.message ?? err);
       return json(mapChatError("CONTEXT_UNAVAILABLE").body, 503);
     }
 
     if (contextResult.error) {
-      return json(mapChatError(contextResult.error.code || "CONTEXT_UNAVAILABLE").body, 503);
+      const mapped = mapChatError(contextResult.error.code || "CONTEXT_UNAVAILABLE");
+      return json(mapped.body, mapped.status);
     }
 
-    const brandName = contextResult.sources.find((s) => s.type === "brand_profile")?.label || "Brand";
+    const brandName = contextResult.brandName || "Brand";
 
-    let answer;
+    // Nothing is persisted server-side: history is client-held, so a failed generation can never
+    // leave an assistant message behind. Only a validated answer is returned.
+    let generated;
     try {
-      answer = await generateBrandChatAnswer({
+      generated = await generateBrandChatAnswer({
         brandName,
         contextBlock: contextResult.contextBlock,
         question: message,
         history: history || undefined,
+        requestId,
+        signal: request.signal,
       });
     } catch (aiErr) {
-      return json(mapChatError(aiErr.code || "AI_PROVIDER_ERROR").body,
-        mapChatError(aiErr.code || "AI_PROVIDER_ERROR").status);
+      const mapped = mapChatError(aiErr.code || "CHAT_PROVIDER_ERROR");
+      console.warn("[BrandChat]", JSON.stringify({
+        requestId, brandId, ok: false, code: mapped.body.code,
+        contextChars: contextResult.stats.totalChars, references: contextResult.stats.referenceCount,
+        durationMs: Date.now() - started,
+      }));
+      return json({ ...mapped.body, requestId }, mapped.status);
     }
+    const answer = generated.answer;
 
     const safeSources = contextResult.sources.map((s) => ({
       type: s.type,
@@ -218,11 +237,14 @@ export async function POST(request, { params }) {
       calendarPostCount: contextResult.stats.calendarPostCount,
       publishedPostCount: contextResult.stats.publishedPostCount,
       truncated: !!contextResult.stats.totalTruncated,
+      referenceCount: contextResult.stats.referenceCount,
     };
 
     return json({
       success: true,
       answer,
+      requestId,
+      answerTruncated: generated.truncated,
       sources: safeSources,
       contextStats,
     });
