@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { buildHistoryPayload } from "@/lib/brand-chat-payload";
 
-const MAX_VISIBLE = 20;
-const MAX_HISTORY = 8;
-const MAX_HISTORY_TOTAL_CHARS = 10000;
-const MAX_MSG_CHARS = 2000;
+const MAX_VISIBLE = 200;
+const MAX_HISTORY = 60; // newest turns; the server applies the prompt budget and summarises older ones
+const MAX_HISTORY_TOTAL_CHARS = 100000; // keeps the request under the server body limit
+const MAX_MSG_CHARS = 8000;
+const CLIENT_TIMEOUT_MS = 125000; // server budget is 120s (brand-chat-config routeMaxDurationS)
 
 const STARTERS = [
   "Summarise this Brand's tone of voice.",
@@ -155,20 +157,11 @@ export default function BrandAssistant({ brandId, brandName }) {
     });
   }
 
-  function buildHistoryPayload() {
-    const msgs = [];
-    let totalChars = 0;
-    for (const msg of transcript) {
-      if (msgs.length >= MAX_HISTORY) break;
-      const content = msg.content;
-      if (content.length + totalChars > MAX_HISTORY_TOTAL_CHARS) break;
-      msgs.push({ role: msg.role, content });
-      totalChars += content.length;
-    }
-    return msgs;
+  function historyPayload() {
+    return buildHistoryPayload(transcript, { maxMessages: MAX_HISTORY, maxChars: MAX_HISTORY_TOTAL_CHARS });
   }
 
-  async function sendMessage(text) {
+  async function sendMessage(text, { isRetry = false } = {}) {
     if (!text.trim() || loading || submittedRef.current) return;
     submittedRef.current = true;
     setLoading(true);
@@ -181,9 +174,11 @@ export default function BrandAssistant({ brandId, brandName }) {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    addToTranscript({ role: "user", content: text.trim() });
+    if (!isRetry) addToTranscript({ role: "user", content: text.trim() });
 
-    const history = buildHistoryPayload();
+    const history = historyPayload();
+    let timedOut = false;
+    const timeoutId = setTimeout(() => { timedOut = true; controller.abort(); }, CLIENT_TIMEOUT_MS);
 
     try {
       const res = await fetch(`/api/brands/${encodeURIComponent(brandIdRef.current)}/chat`, {
@@ -200,11 +195,9 @@ export default function BrandAssistant({ brandId, brandName }) {
         return;
       }
 
+      clearTimeout(timeoutId);
       let errorBody;
       try { errorBody = await res.clone().json(); } catch {}
-
-      const code = errorBody?.code;
-      const apiMsg = errorBody?.error;
 
       function showError(message, errorLabel, retry = false) {
         addToTranscript({ role: "assistant", content: message, error: errorLabel });
@@ -214,44 +207,13 @@ export default function BrandAssistant({ brandId, brandName }) {
         submittedRef.current = false;
       }
 
-      if (res.status === 401) {
-        showError("Sign in again to use Brand Assistant.", "auth");
-        return;
-      }
-      if (res.status === 403) {
-        showError("You do not have access to this Brand.", "access");
-        return;
-      }
-      if (res.status === 429) {
-        showError("Too many chat requests. Please wait and try again.", "rate");
-        return;
-      }
-      if (res.status === 504 || code === "AI_TIMEOUT") {
-        showError("Brand Assistant timed out. Try again.", "timeout", true);
-        return;
-      }
-      if (res.status === 502 || code === "AI_PROVIDER_ERROR") {
-        showError("Brand Assistant could not reach the AI provider. Try again.", "provider", true);
-        return;
-      }
-      if (res.status === 503) {
-        if (code === "OPENAI_NOT_CONFIGURED") {
-          showError("Brand Assistant is not configured yet.", "config");
-        } else {
-          showError("Brand Assistant could not be prepared right now. Try again.", "unavailable", true);
-        }
-        return;
-      }
-      if (res.status === 400 || res.status === 413 || res.status === 415) {
-        showError(apiMsg || "Request could not be processed.", "bad");
-        return;
-      }
-      if (res.status === 500) {
-        showError("Brand Assistant encountered an error. Try again.", "server", true);
-        return;
-      }
       if (!res.ok) {
-        showError("Brand Assistant is temporarily unavailable.", "unknown");
+        // The server sends a specific, safe message and a machine code; show it instead of a generic failure.
+        const fallback = res.status === 401 ? "Sign in again to use Brand Assistant."
+          : res.status === 403 ? "You do not have access to this Brand."
+          : "Brand Assistant is temporarily unavailable.";
+        const retryable = errorBody?.retryable === true || res.status === 500 || res.status === 503 && !errorBody?.code;
+        showError(errorBody?.error || fallback, errorBody?.code || `http_${res.status}`, retryable);
         return;
       }
 
@@ -289,6 +251,15 @@ export default function BrandAssistant({ brandId, brandName }) {
       setShowStop(false);
       submittedRef.current = false;
     } catch (err) {
+      clearTimeout(timeoutId);
+      if (err?.name === "AbortError" && timedOut && mountedRef.current) {
+        addToTranscript({ role: "assistant", content: "The assistant took too long to respond. Please retry.", error: "timeout" });
+        setRetryMessage(text.trim());
+        setLoading(false);
+        setShowStop(false);
+        submittedRef.current = false;
+        return;
+      }
       if (err?.name === "AbortError") {
         submittedRef.current = false;
         setLoading(false);
@@ -301,7 +272,8 @@ export default function BrandAssistant({ brandId, brandName }) {
         setShowStop(false);
         return;
       }
-      addToTranscript({ role: "assistant", content: "Brand Assistant is temporarily unavailable.", error: "network" });
+      addToTranscript({ role: "assistant", content: "Could not reach the server. Check your connection and retry.", error: "network" });
+      setRetryMessage(text.trim());
       setLoading(false);
       setShowStop(false);
       submittedRef.current = false;
@@ -326,7 +298,7 @@ export default function BrandAssistant({ brandId, brandName }) {
     if (retryMessage) {
       const msg = retryMessage;
       setRetryMessage(null);
-      sendMessage(msg);
+      sendMessage(msg, { isRetry: true });
     }
   }
 
