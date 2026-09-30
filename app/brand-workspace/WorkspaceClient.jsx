@@ -9,6 +9,7 @@ import { StatBlock } from "@/components/content-report/StatBlock";
 import { StatusPill } from "@/components/content-report/StatusPill";
 import PublishedPostsSection from "@/components/PublishedPostsSection";
 import LinkedInPublishedPostsSection from "@/components/LinkedInPublishedPostsSection";
+import BrandForumSection from "@/components/BrandForumSection";
 import WorkspaceReviewPanel from "@/components/WorkspaceReviewPanel";
 import BrandAssistant from "@/components/BrandAssistant";
 
@@ -378,6 +379,9 @@ export default function WorkspaceClient({ brand, initialCalendars = [] }) {
 
       {/* LinkedIn Published Posts section */}
       <LinkedInPublishedPostsSection ref={liSectionRef} brand={brand} onCrossPlatformPostCreated={handleCrossPlatformPostCreated} />
+
+      {/* Brand Forum section */}
+      <BrandForumSection brandId={brand.id} />
 
       {/* Workspace Review Links section */}
       <WorkspaceReviewPanel brandId={brand.id} />

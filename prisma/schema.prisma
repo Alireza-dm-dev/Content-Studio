@@ -36,6 +36,7 @@ model Brand {
   brandAssignments         BrandAssignment[]
   brandMemberships         BrandMembership[]
   workspaceReviews         WorkspaceReview[]
+  forumPosts               BrandForumPost[]
 }
 
 model User {
@@ -55,6 +56,8 @@ model User {
   publishedPostComments   PublishedPostComment[]
   workspaceReviewsCreated WorkspaceReview[]
   uploadedFiles           UploadedFile[]
+  forumPosts              BrandForumPost[]
+  forumReplies            BrandForumReply[]
 }
 
 model BrandAssignment {
@@ -424,4 +427,60 @@ model PublishedPostComment {
   @@index([publishedPostId, createdAt])
   @@index([userId])
   @@index([workspaceReviewId])
+}
+
+// ── Brand Forum ──────────────────────────────────────────────────────────────
+// Internal, brand-scoped discussion. Deliberately separate from
+// PublishedPostComment. Authors are SetNull on user deletion with a name/role
+// snapshot, matching PublishedPostComment, so history survives a deleted user.
+
+model BrandForumPost {
+  id         String   @id @default(cuid())
+  brandId    String
+  authorId   String?
+  authorName String
+  authorRole String   @default("user")
+  body       String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  brand       Brand                  @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  author      User?                  @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  attachments BrandForumAttachment[]
+  replies     BrandForumReply[]
+
+  @@index([brandId, createdAt])
+  @@index([authorId])
+}
+
+model BrandForumAttachment {
+  id        String   @id @default(cuid())
+  postId    String
+  type      String
+  fileName  String
+  filePath  String
+  mimeType  String
+  fileSize  Int
+  createdAt DateTime @default(now())
+
+  post BrandForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+}
+
+model BrandForumReply {
+  id         String   @id @default(cuid())
+  postId     String
+  authorId   String?
+  authorName String
+  authorRole String   @default("user")
+  body       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  post   BrandForumPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author User?          @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([postId, createdAt])
+  @@index([authorId])
 }
