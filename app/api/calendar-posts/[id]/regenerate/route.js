@@ -75,13 +75,7 @@ export async function POST(request, { params }) {
       );
     }
 
-    // ── 4. Non-admin may only regenerate posts in draft calendars ────────
-    if (!access.isAdmin && post.calendar.status !== "draft") {
-      return NextResponse.json(
-        { success: false, error: "Regeneration is only available for posts in draft calendars." },
-        { status: 403 }
-      );
-    }
+    // Calendar status does not restrict regeneration: brand access (step 3) is the gate.
 
     // ── 5. Load post-specific attachment IDs ─────────────────────────────
     const postSpecificAttachments = await prisma.uploadedFile.findMany({
