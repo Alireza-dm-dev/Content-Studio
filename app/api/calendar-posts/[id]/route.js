@@ -84,7 +84,8 @@ export async function PATCH(request, { params }) {
     const post = await prisma.calendarPost.update({
       where: { id },
       data: {
-        postNumber: body.postNumber != null ? Number(body.postNumber) : undefined,
+        // postNumber is owned by the reorder endpoint (PATCH /api/calendars/[id]/posts/reorder);
+        // an edit form holding a stale number must never overwrite the calendar's order.
         date:       body.date ? new Date(body.date) : null,
         platform:   body.platform   ?? undefined,
         format:     body.format     ?? undefined,
