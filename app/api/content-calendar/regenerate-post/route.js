@@ -21,9 +21,11 @@ import {
   buildImageTextOnlyUserInput,
   buildVisualOrEntirePostUserInput,
   buildEnrichPostUserInput,
+  buildChangeSlideCountUserInput,
   scopeRewritesCaption,
   scopePreservesHashtags,
 } from "@/lib/calendar-regeneration-prompt";
+import { validateSlideCountRequest, buildSlideCountChangeFields } from "@/lib/calendar-slide-count";
 
 // ── Scope validation ──────────────────────────────────────────────────────────
 // Scope → allowed updatable fields, merge policy, and all prompt assembly live
@@ -55,7 +57,7 @@ export async function POST(request) {
     }
 
     // ── 3. Validate required fields ──────────────────────────────────────────
-    const { post, brandId, calendarContext, scope = "visual_only", customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, enrichmentInstruction, attachmentIds } = body;
+    const { post, brandId, calendarContext, scope = "visual_only", customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, enrichmentInstruction, newSlideCount, slideCountInstruction, attachmentIds } = body;
 
     if (!post || typeof post !== "object") {
       return NextResponse.json(
@@ -123,6 +125,15 @@ export async function POST(request) {
     const currentOitrDisplay = formatOutputImageTextRequirementsForDisplay(
       current.outputImageTextRequirementsStructured ?? current.outputImageTextRequirements
     );
+
+    // Slide-count changes are validated against the post before any AI call.
+    let slideCountRequest = null;
+    if (scope === "change_slide_count") {
+      slideCountRequest = validateSlideCountRequest(current, newSlideCount, slideCountInstruction);
+      if (!slideCountRequest.ok) {
+        return NextResponse.json({ success: false, error: slideCountRequest.error }, { status: 400 });
+      }
+    }
     const brandSummary = buildBrandSummary(identity, brand);
 
     // ── Build AI prompt ───────────────────────────────────────────────────────
@@ -161,6 +172,13 @@ export async function POST(request) {
         ...promptContext,
         enrichmentInstruction,
       });
+    } else if (scope === "change_slide_count") {
+      userInput = buildChangeSlideCountUserInput({
+        ...promptContext,
+        currentCount: slideCountRequest.currentCount,
+        targetCount: slideCountRequest.targetCount,
+        slideCountInstruction: slideCountRequest.instruction,
+      });
     } else {
       userInput = buildVisualOrEntirePostUserInput({
         ...promptContext,
@@ -196,6 +214,34 @@ export async function POST(request) {
         error: "AI could not regenerate this post. Please try again.",
         details: parseErr.message,
       }, { status: 500 });
+    }
+
+    // ── Slide-count change: all-or-nothing, only the slide-based fields ───────
+    // Everything else on the inline post (caption, hashtags, hook, angle,
+    // schedule, platform, status, format, video fields) is returned untouched.
+    if (scope === "change_slide_count") {
+      const result = buildSlideCountChangeFields({
+        aiPost,
+        targetCount: slideCountRequest.targetCount,
+        currentCount: slideCountRequest.currentCount,
+        instruction: slideCountRequest.instruction,
+        current,
+      });
+      if (!result.ok) {
+        console.log("[RegeneratePost] change_slide_count rejected:", result.error);
+        return NextResponse.json({
+          success: false,
+          error: `${result.error} The post was not changed. Please try again.`,
+          details: result.details ?? result.error,
+        }, { status: 422 });
+      }
+      return NextResponse.json({
+        success: true,
+        post: { ...current, ...result.fields },
+        scope,
+        slideCount: slideCountRequest.targetCount,
+        sourceMapping: result.sourceMapping,
+      });
     }
 
     // ── Apply allowed fields from AI output ───────────────────────────────────

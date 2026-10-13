@@ -5,6 +5,8 @@ import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
 import { normalizeLanguageCode } from "@/lib/content-language";
 import { MAX_ATTACHMENT_FILES } from "@/lib/calendar-attachment-utils";
+import { validateSlideCountRequest, buildSlideCountChangeFields } from "@/lib/calendar-slide-count";
+import { detachSlideSpecificOutputs, describeStaleOutputs } from "@/lib/calendar-slide-staleness";
 import {
   validateOutputImageTextRequirements,
   buildFallbackOutputImageTextRequirements,
@@ -22,6 +24,7 @@ import {
   buildImageTextOnlyUserInput,
   buildVisualOrEntirePostUserInput,
   buildEnrichPostUserInput,
+  buildChangeSlideCountUserInput,
   scopeRewritesCaption,
   scopePreservesHashtags,
 } from "@/lib/calendar-regeneration-prompt";
@@ -167,7 +170,7 @@ export async function POST(request, { params }) {
       );
     }
 
-    const { scope = "visual_only", brandId: bodyBrandId, calendarId, customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, enrichmentInstruction, currentPost } = body;
+    const { scope = "visual_only", brandId: bodyBrandId, calendarId, customInstruction, guidedReason, guidedReasons, guidedFeatures, imageTextInstruction, enrichmentInstruction, newSlideCount, slideCountInstruction, currentPost } = body;
 
     // ── 6. Reject context mismatches ─────────────────────────────────────
     if (bodyBrandId && bodyBrandId !== post.calendar.brandId) {
@@ -250,6 +253,15 @@ export async function POST(request, { params }) {
     const currentOitrDisplay = formatOutputImageTextRequirementsForDisplay(
       current.outputImageTextRequirementsStructured ?? current.outputImageTextRequirements
     );
+
+    // Slide-count changes are validated against the post before any AI call.
+    let slideCountRequest = null;
+    if (scope === "change_slide_count") {
+      slideCountRequest = validateSlideCountRequest(current, newSlideCount, slideCountInstruction);
+      if (!slideCountRequest.ok) {
+        return NextResponse.json({ success: false, error: slideCountRequest.error }, { status: 400 });
+      }
+    }
     const brandSummary = buildBrandSummary(identity, brand);
 
     // ── Build AI prompt ───────────────────────────────────────────────────────
@@ -288,6 +300,13 @@ export async function POST(request, { params }) {
         ...promptContext,
         enrichmentInstruction,
       });
+    } else if (scope === "change_slide_count") {
+      userInput = buildChangeSlideCountUserInput({
+        ...promptContext,
+        currentCount: slideCountRequest.currentCount,
+        targetCount: slideCountRequest.targetCount,
+        slideCountInstruction: slideCountRequest.instruction,
+      });
     } else {
       userInput = buildVisualOrEntirePostUserInput({
         ...promptContext,
@@ -323,6 +342,65 @@ export async function POST(request, { params }) {
         error: "AI could not regenerate this post. Please try again.",
         details: parseErr.message,
       }, { status: 500 });
+    }
+
+    // ── Slide-count change: all-or-nothing, only the slide-based fields ───────
+    // Caption, hashtags, hook, angle, schedule, platform, status, format and
+    // video fields are never read from the AI result or rewritten: the update
+    // below carries the five slide fields and a postData that is the stored
+    // postData plus those same fields.
+    if (scope === "change_slide_count") {
+      const result = buildSlideCountChangeFields({
+        aiPost,
+        targetCount: slideCountRequest.targetCount,
+        currentCount: slideCountRequest.currentCount,
+        instruction: slideCountRequest.instruction,
+        current,
+      });
+      if (!result.ok) {
+        console.log("[PostRegenerate] change_slide_count rejected:", result.error);
+        return NextResponse.json({
+          success: false,
+          error: `${result.error} The post was not changed. Please try again.`,
+          details: result.details ?? result.error,
+        }, { status: 422 });
+      }
+      const { fields } = result;
+      const newMeta = {
+        ...meta,
+        imageText: fields.imageText,
+        outputImageTextRequirements: fields.outputImageTextRequirements,
+        outputImageTextRequirementsStructured: fields.outputImageTextRequirementsStructured,
+      };
+      // Post update and detaching of old-layout outputs commit together or not at all.
+      const { updated, staleOutputs } = await prisma.$transaction(async (tx) => {
+        const row = await tx.calendarPost.update({
+          where: { id },
+          data: {
+            contentStructure: fields.contentStructure,
+            visualDirection: fields.visualDirection,
+            outputImageTextRequirements: fields.outputImageTextRequirements,
+            postData: JSON.stringify(newMeta),
+          },
+        });
+        const detached = await detachSlideSpecificOutputs(tx, {
+          postId: id,
+          brandId: post.calendar.brandId,
+          previousSlideCount: slideCountRequest.currentCount,
+          newSlideCount: slideCountRequest.targetCount,
+        });
+        return { updated: row, staleOutputs: detached };
+      });
+      console.log("[PostRegenerate] Saved post id:", updated.id, "scope:", scope, "slides:", slideCountRequest.targetCount, "detached:", JSON.stringify(staleOutputs));
+      return NextResponse.json({
+        success: true,
+        post: { ...updated, postData: undefined, ...meta, ...fields },
+        scope,
+        slideCount: slideCountRequest.targetCount,
+        sourceMapping: result.sourceMapping,
+        staleOutputs,
+        staleOutputsMessage: describeStaleOutputs(staleOutputs),
+      });
     }
 
     // ── Apply allowed fields from AI output ───────────────────────────────────
