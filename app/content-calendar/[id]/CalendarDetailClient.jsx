@@ -1,13 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import {
-  ArrowLeft, Pencil, Trash2, Check, X, ImageIcon, Video, Sparkles, Loader2, Download, AlertCircle,
+  ArrowLeft, Pencil, Trash2, Check, X, ImageIcon, Video, Sparkles, Loader2, Download, AlertCircle, GripVertical, ChevronUp, ChevronDown,
 } from "lucide-react";
+import {
+  DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { moveItem, createReorderGate, reorderPostsOptimistically } from "@/lib/calendar-post-order";
 import {
   CALENDAR_TABLE_VIEWS, normalizePost,
 } from "@/lib/calendar-post-utils";
@@ -38,7 +46,7 @@ const EDIT_SECTIONS = [
   {
     label: "Schedule",
     fields: [
-      { key: "postNumber",  label: "#",            type: "input",    col: 1 },
+      { key: "postNumber",  label: "# (drag rows to reorder)", type: "input", readOnly: true, col: 1 },
       { key: "date",        label: "Date",          type: "date",     col: 1 },
       { key: "platform",    label: "Platform",      type: "input",    col: 1 },
       { key: "format",      label: "Format",        type: "input",    col: 1 },
@@ -148,9 +156,10 @@ function EditPanel({ draft, onChange, onSave, onCancel, saving }) {
                 />
               ) : (
                 <input
-                  className="flex h-8 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs shadow-sm"
+                  className={`flex h-8 w-full rounded-md border border-input bg-transparent px-3 py-1 text-xs shadow-sm ${f.readOnly ? "opacity-60 cursor-not-allowed" : ""}`}
                   value={draft[f.key] ?? ""}
-                  onChange={e => set(f.key, e.target.value)}
+                  readOnly={!!f.readOnly}
+                  onChange={e => { if (!f.readOnly) set(f.key, e.target.value); }}
                 />
               )}
             </div>
@@ -600,13 +609,78 @@ function RegeneratePanel({ postId, calendarId, brandId, onDone, onCancel, allPos
 
 const STATUS_VARIANT = { draft: "secondary", active: "default", completed: "outline", approved: "default" };
 
-function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete }) {
+// One draggable table row. The grip button is the only drag activator, so the
+// row's own buttons and inputs keep working. Arrow keys on the focused grip
+// also reorder (dnd-kit keyboard sensor): Space to lift, ↑/↓ to move, Space to drop.
+function SortableRow({ id, label, disabled, index, count, onMove, className, children }) {
+  const {
+    attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging, isOver,
+  } = useSortable({ id, disabled });
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    ...(isDragging ? { position: "relative", zIndex: 20, boxShadow: "0 6px 18px rgba(0,0,0,0.18)" } : {}),
+  };
+  return (
+    <tr ref={setNodeRef} style={style}
+      className={`${className} ${isDragging ? "bg-primary/10 ring-1 ring-primary/40" : ""} ${isOver && !isDragging ? "outline outline-2 -outline-offset-2 outline-primary/50" : ""}`}>
+      <td className="pl-2 pr-0 py-2 w-6">
+        <button type="button" ref={setActivatorNodeRef} {...attributes} {...listeners}
+          disabled={disabled}
+          aria-label={`Reorder ${label}`}
+          title="Drag to reorder"
+          className={`w-5 h-6 inline-flex items-center justify-center rounded text-muted-foreground/60 hover:text-foreground hover:bg-muted touch-none disabled:opacity-30 disabled:cursor-not-allowed ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}>
+          <GripVertical className="w-3.5 h-3.5 pointer-events-none" />
+        </button>
+        {/* Small screens: explicit buttons as a dependable alternative to touch-dragging. */}
+        <div className="flex flex-col items-center md:hidden">
+          <button type="button" disabled={disabled || index === 0} onClick={() => onMove(-1)}
+            aria-label={`Move ${label} up`} title="Move up"
+            className="w-5 h-5 inline-flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-25 disabled:cursor-not-allowed">
+            <ChevronUp className="w-3.5 h-3.5" />
+          </button>
+          <button type="button" disabled={disabled || index === count - 1} onClick={() => onMove(1)}
+            aria-label={`Move ${label} down`} title="Move down"
+            className="w-5 h-5 inline-flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-25 disabled:cursor-not-allowed">
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </td>
+      {children}
+    </tr>
+  );
+}
+
+function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete, onReorder, canReorder = true, reordering = false }) {
   const [editingId, setEditingId] = useState(null);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [regenId, setRegenId] = useState(null); // postId being regenerated
   const [activeModal, setActiveModal] = useState(null); // { type: "image"|"video", post }
+
+  const sensors = useSensors(
+    // Touch works through pointer events on the grip (touch-none); the distance
+    // keeps accidental taps from starting a drag.
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const dragDisabled = !canReorder || reordering;
+
+  function handleDragEnd({ active, over }) {
+    if (!over || active.id === over.id) return;
+    const ids = posts.map(p => p.id);
+    const from = ids.indexOf(active.id);
+    const to = ids.indexOf(over.id);
+    if (from === -1 || to === -1) return;
+    onReorder?.(moveItem(ids, from, to));
+  }
+
+  function moveBy(idx, delta) {
+    const to = idx + delta;
+    if (to < 0 || to >= posts.length) return;
+    onReorder?.(moveItem(posts.map(p => p.id), idx, to));
+  }
 
   function startEdit(post) {
     setRegenId(null);
@@ -636,7 +710,9 @@ function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete })
         body: JSON.stringify(draft),
       });
       if (!res.ok) throw new Error();
-      onUpdate(editingId, draft);
+      // postNumber belongs to the reorder endpoint; never write the draft's (possibly stale) copy back.
+      const { postNumber: _ignoredPostNumber, ...editedFields } = draft;
+      onUpdate(editingId, editedFields);
       setEditingId(null);
       setDraft(null);
       toast.success("Post updated.");
@@ -669,6 +745,7 @@ function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete })
     <table className="w-full text-sm border-collapse">
       <thead>
         <tr className="bg-muted/60">
+          <th className="w-6 border-b border-border" aria-label="Reorder" />
           {view.columns.map(col => (
             <th key={col.key}
               className={`px-3 py-2 text-left text-xs font-medium text-muted-foreground border-b border-border whitespace-nowrap ${col.width}`}>
@@ -685,7 +762,12 @@ function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete })
           const norm = normalizePost(post, idx);
           const isEditing = editingId === post.id;
           return (
-            <tr key={post.id}
+            <SortableRow key={post.id} id={post.id}
+              label={`post ${norm.postNumber ?? idx + 1}`}
+              disabled={dragDisabled}
+              index={idx}
+              count={posts.length}
+              onMove={(delta) => moveBy(idx, delta)}
               className={`border-b border-border/50 last:border-0 transition-colors align-top ${
                 isEditing ? "bg-primary/5" : idx % 2 === 0 ? "bg-background" : "bg-muted/20"
               }`}>
@@ -742,7 +824,7 @@ function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete })
                   </div>
                 )}
               </td>
-            </tr>
+            </SortableRow>
           );
         })}
       </tbody>
@@ -756,7 +838,12 @@ function CalendarTable({ posts, view, calendarId, brandId, onUpdate, onDelete })
     <>
       <div className="rounded-lg border border-border overflow-hidden">
         <div className="overflow-x-auto">
-          {tableContent}
+          {/* A stable id keeps dnd-kit's generated aria ids identical on server and client. */}
+          <DndContext id={`calendar-posts-${calendarId}`} sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={posts.map(p => p.id)} strategy={verticalListSortingStrategy}>
+              {tableContent}
+            </SortableContext>
+          </DndContext>
         </div>
         {editingPost && draft && (
           <EditPanel
@@ -811,6 +898,40 @@ export default function CalendarDetailClient({ calendar, isAdmin = false }) {
   const [showExport, setShowExport] = useState(false);
   const [calStatus, setCalStatus] = useState(calendar.status);
   const [approving, setApproving] = useState(false);
+  const [reordering, setReordering] = useState(false);
+  const reorderGate = useRef(createReorderGate());
+
+  // Optimistic: the new order shows at once, the server derives the numbers and
+  // its answer replaces ours; a failure puts the previous order back. Only one
+  // reorder is in flight at a time (a second drag is ignored, not queued).
+  async function handleReorder(orderedIds) {
+    const outcome = await reorderGate.current.run(async () => {
+      setReordering(true);
+      try {
+        return await reorderPostsOptimistically({
+          posts,
+          orderedIds,
+          setPosts,
+          save: async (ids) => {
+            const res = await fetch(`/api/calendars/${calendar.id}/posts/reorder`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ orderedPostIds: ids }),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data?.success) throw new Error(data?.error || `HTTP ${res.status}`);
+            return data.order;
+          },
+        });
+      } finally {
+        setReordering(false);
+      }
+    });
+    if (outcome.skipped) return;
+    if (!outcome.value.ok) {
+      toast.error("Could not save the new post order.", { description: outcome.value.error?.message });
+    }
+  }
 
   async function handleApprove() {
     setApproving(true);
@@ -941,6 +1062,8 @@ export default function CalendarDetailClient({ calendar, isAdmin = false }) {
           brandId={calendar.brandId}
           onUpdate={handleUpdate}
           onDelete={handleDelete}
+          onReorder={handleReorder}
+          reordering={reordering}
         />
       </div>
 
