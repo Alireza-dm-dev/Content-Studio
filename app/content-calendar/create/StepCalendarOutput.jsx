@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
+import { SlideCountRegenForm } from "@/components/SlideCountRegenForm";
+import { getPostSlideCount, isCarouselFormat, validateSlideCountRequest } from "@/lib/calendar-slide-count";
 import {
   ArrowLeft, Save, Loader2, Pencil, Trash2, Plus, Check, X, AlertCircle, Sparkles,
 } from "lucide-react";
@@ -229,6 +231,11 @@ const REGEN_OPTIONS = [
     desc: "Add depth, expertise, specificity, and professional detail while preserving the original idea",
   },
   {
+    value: "change_slide_count",
+    label: "Change slide count",
+    desc: "Restructure the post into a different number of slides while preserving the original idea.",
+  },
+  {
     value: "custom_instruction",
     label: "Custom instruction",
     desc: "Tell AI exactly what to change",
@@ -246,6 +253,7 @@ function buildSummaryText(scope, customInstruction) {
     case "visual_ideas_only":  return "Visual ideas and Image Text were regenerated.";
     case "image_text_only":    return "Image Text was regenerated based on the selected guidance.";
     case "entire_post":        return "Content, visuals, Image Text, and video production fields were regenerated.";
+    case "change_slide_count": return "The slide structure was changed. Content structure, per-slide visual notes, and Image Text were updated; caption, hashtags, hook, format, and video fields were preserved.";
     case "enrich_post":        return "The hook, core message, and caption were enriched. Visuals, Image Text, hashtags, and video fields were preserved.";
     case "custom_instruction": {
       const instr = (customInstruction || "").trim();
@@ -266,6 +274,8 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
   const [guidedFeatures, setGuidedFeatures] = useState([]);
   const [imageTextInstruction, setImageTextInstruction] = useState("");
   const [enrichmentInstruction, setEnrichmentInstruction] = useState("");
+  const [newSlideCount, setNewSlideCount] = useState("");
+  const [slideCountInstruction, setSlideCountInstruction] = useState("");
   const [applyToAllPosts, setApplyToAllPosts] = useState(false);
   const [bulkProgress, setBulkProgress] = useState("");
   const [loading, setLoading] = useState(false);
@@ -278,9 +288,23 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
     setGuidedFeatures([]);
     setImageTextInstruction("");
     setEnrichmentInstruction("");
+    setNewSlideCount("");
+    setSlideCountInstruction("");
     setApplyToAllPosts(false);
     setSummary(null);
   }
+
+  // Slide count only exists for carousels (static/video posts are a single image/clip).
+  const slidePost = post;
+  const canChangeSlideCount = isCarouselFormat(slidePost?.format);
+  const currentSlideCount = getPostSlideCount(slidePost);
+  const slideCountCheck = scope === "change_slide_count"
+    ? validateSlideCountRequest(slidePost, newSlideCount, slideCountInstruction)
+    : null;
+  const slideCountBlocked = !!slideCountCheck && !slideCountCheck.ok;
+  // Stay quiet until the user has typed a number; then explain why it is rejected.
+  const slideCountMessage = slideCountBlocked && String(newSlideCount).trim() !== "" ? slideCountCheck.error : "";
+  const visibleRegenOptions = REGEN_OPTIONS.filter(opt => opt.value !== "change_slide_count" || canChangeSlideCount);
 
   async function handleRegenerate() {
     const attachmentIds = (referenceAttachments || [])
@@ -294,6 +318,8 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
       }
       setInstructionError("");
     }
+
+    if (scope === "change_slide_count" && slideCountBlocked) return;
 
     if (applyToAllPosts && allPosts?.length) {
       setLoading(true);
@@ -311,6 +337,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
               attachmentIds,
               ...(scope === "image_text_only" && { guidedReasons, guidedFeatures, imageTextInstruction }),
               ...(scope === "enrich_post" && { enrichmentInstruction: enrichmentInstruction.trim() }),
+              ...(scope === "change_slide_count" && { newSlideCount: Number(newSlideCount), slideCountInstruction: slideCountInstruction.trim() }),
             }),
           });
           const text = await res.text();
@@ -347,6 +374,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
           attachmentIds,
           ...(scope === "image_text_only" && { guidedReasons, guidedFeatures, imageTextInstruction }),
           ...(scope === "enrich_post" && { enrichmentInstruction: enrichmentInstruction.trim() }),
+          ...(scope === "change_slide_count" && { newSlideCount: Number(newSlideCount), slideCountInstruction: slideCountInstruction.trim() }),
         }),
       });
       const text = await res.text();
@@ -370,7 +398,7 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
         <Sparkles className="w-3.5 h-3.5 text-primary" />AI Regenerate Post
       </p>
       <div className="flex gap-2 flex-wrap">
-        {REGEN_OPTIONS.map(opt => (
+        {visibleRegenOptions.map(opt => (
           <button key={opt.value} type="button"
             disabled={loading}
             onClick={() => handleScopeChange(opt.value)}
@@ -460,6 +488,18 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
         </div>
       )}
       {/* Enrich post explanation + optional guidance */}
+      {scope === "change_slide_count" && (
+        <SlideCountRegenForm
+          currentCount={currentSlideCount}
+          newSlideCount={newSlideCount}
+          onNewSlideCountChange={setNewSlideCount}
+          instruction={slideCountInstruction}
+          onInstructionChange={setSlideCountInstruction}
+          validationMessage={slideCountMessage}
+          disabled={loading}
+        />
+      )}
+
       {scope === "enrich_post" && (
         <div className="space-y-1.5 border border-border rounded-lg p-3 bg-background">
           <p className="text-xs text-muted-foreground">
@@ -531,13 +571,13 @@ function RegenerateUnsavedPanel({ post, brandId, calendarContext, onDone, onCanc
         </div>
       ) : (
         <div className="flex gap-2">
-          <button type="button" onClick={handleRegenerate} disabled={loading}
+          <button type="button" onClick={handleRegenerate} disabled={loading || slideCountBlocked}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
             {loading
-              ? <><Loader2 className="w-3 h-3 animate-spin" />{scope === "enrich_post" ? "Enriching…" : "Regenerating…"}</>
+              ? <><Loader2 className="w-3 h-3 animate-spin" />{scope === "enrich_post" ? "Enriching…" : scope === "change_slide_count" ? "Restructuring…" : "Regenerating…"}</>
               : applyToAllPosts
                 ? <><Sparkles className="w-3 h-3" />Regenerate All Posts</>
-                : <><Sparkles className="w-3 h-3" />{scope === "enrich_post" ? "Enrich Post" : "Regenerate Post"}</>}
+                : <><Sparkles className="w-3 h-3" />{scope === "enrich_post" ? "Enrich Post" : scope === "change_slide_count" ? "Change Slides" : "Regenerate Post"}</>}
           </button>
           <button type="button" onClick={onCancel} disabled={loading}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border border-border text-muted-foreground hover:text-foreground disabled:opacity-60">
