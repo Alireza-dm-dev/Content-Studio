@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Sparkles, ArrowLeft, ChevronDown, ChevronUp, Check } from "lucide-react";
 import { toast } from "sonner";
 import { ReferenceFileUpload } from "@/components/ReferenceFileUpload";
+import { getCalendarClientTimeoutMs } from "@/lib/calendar-generation-budget";
+import { getCalendarGenerationFailureMessage, readCalendarGenerationResult } from "@/lib/calendar-generation-errors";
 
 const PLATFORMS = ["Instagram", "TikTok", "LinkedIn", "Facebook", "YouTube", "Pinterest", "Twitter/X"];
 const FORMATS = ["Carousel", "Reel", "Static", "Story", "Live", "YouTube Video", "Short"];
@@ -346,6 +348,9 @@ export default function StepCalendarForm({
       const res = await fetch("/api/content-calendar/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // Outlasts the route's own generation deadline, so a slow generation
+        // ends with the route's structured timeout error rather than this one.
+        signal: AbortSignal.timeout(getCalendarClientTimeoutMs(parseInt(form.numberOfPostsNeeded, 10) || selectedPosts.length)),
         body: JSON.stringify({
           brandId: brand.id,
           selectedPosts,
@@ -360,12 +365,16 @@ export default function StepCalendarForm({
 
       const data = await safeParseJsonResponse(res);
 
-      if (!res.ok || data.success === false) {
-        toast.error(data.error ?? "Generation failed.");
+      // A long generation is streamed with HTTP 200 whatever its outcome, so the
+      // body's `success` decides — never `res.ok`. See readCalendarGenerationResult.
+      const result = readCalendarGenerationResult(data);
+      if (!result.ok) {
+        console.error("[CalendarForm] Calendar generation failed:", { httpStatus: res.status, status: data?.status, code: result.code });
+        toast.error(result.message);
         return;
       }
 
-      const posts = data.posts ?? [];
+      const posts = result.posts;
 
       onGenerated({
         posts,
@@ -380,12 +389,7 @@ export default function StepCalendarForm({
       // or the request never completed, so `err` carries the only description of
       // what actually happened.
       console.error("[CalendarForm] Calendar generation failed:", err);
-      const isNetworkFailure = err instanceof TypeError;
-      toast.error(
-        isNetworkFailure
-          ? "Could not reach the server. The connection dropped before the calendar finished generating — please check your connection and try again."
-          : err?.message || "Calendar generation failed. Please try again."
-      );
+      toast.error(getCalendarGenerationFailureMessage(err));
     } finally {
       setGenerating(false);
       isSubmitting.current = false;

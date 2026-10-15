@@ -273,7 +273,7 @@ export async function POST(request) {
           coreMessage: merged.coreMessage,
           mainAngle: merged.mainAngle,
           caption: merged.caption,
-        });
+        }, { contentLanguage });
       }
       merged.outputImageTextRequirementsStructured = finalOitrStructured;
       merged.outputImageTextRequirements = formatOutputImageTextRequirementsForDisplay(finalOitrStructured) || "";
@@ -324,6 +324,17 @@ export async function POST(request) {
     return NextResponse.json({ success: true, post: merged, scope });
 
   } catch (err) {
+    // The shared image-text fallback could not build a structurally valid
+    // result from the post's own text (see buildFallbackOutputImageTextRequirements).
+    // Thrown before any write, so nothing was changed.
+    if (err?.code === "CALENDAR_OUTPUT_INVALID") {
+      console.error("[RegeneratePost] CALENDAR_OUTPUT_INVALID:", err.message);
+      return NextResponse.json({
+        success: false,
+        code: "CALENDAR_OUTPUT_INVALID",
+        error: "The AI response could not be validated. The post was not changed. Please try again.",
+      }, { status: 422 });
+    }
     console.error("[RegeneratePost] Unhandled error:", err);
     return NextResponse.json({
       success: false,

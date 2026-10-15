@@ -15,9 +15,19 @@ import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryFo
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
 import { buildCalendarGenerationUserInput } from "@/lib/calendar-generation-user-input";
 import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
+import {
+  CALENDAR_BATCH_SIZE,
+  getCalendarGenerationBudgetMs,
+  getProviderTimeoutForAttempt,
+} from "@/lib/calendar-generation-budget";
+import { respondWithHeartbeat } from "@/lib/heartbeat-json-response";
+
+// Upper bound for platforms that honour it; the real limit is the per-request
+// generation budget (lib/calendar-generation-budget.js, at most 600s).
+export const maxDuration = 660;
 
 // ─── Batching constants ──────────────────────────────────────────────────────
-const BATCH_SIZE = 4;
+const BATCH_SIZE = CALENDAR_BATCH_SIZE;
 const MAX_RETRIES_PER_BATCH = 2;
 const MAX_SUPPLEMENTAL_ATTEMPTS = 3;
 const SUPPLEMENTAL_BUFFER = 2;
@@ -501,8 +511,21 @@ function mergeSourceFields(generatedPosts, selectedPosts, platforms) {
 
 // ─── Route handler ─────────────────────────────────────────────────────────────
 
+// Errors no retry can fix — abort generation instead of burning every attempt
+// and reporting them as a generic post-count shortfall.
+const FATAL_AI_ERROR_CODES = new Set(["AI_NOT_CONFIGURED", "AI_CONNECTION_ERROR"]);
+
+// Generation is a sequence of provider calls and routinely runs past a minute
+// (longer for languages like Persian, whose output costs more tokens). Without
+// keep-alive bytes, a proxy in front of the app drops the silent connection and
+// the browser can only report "could not reach the server".
 export async function POST(request) {
+  return respondWithHeartbeat(handleGenerate(request));
+}
+
+async function handleGenerate(request) {
   console.log("[ContentCalendar] POST /api/content-calendar/generate");
+  const requestStartedAt = Date.now();
 
   // Declared out here so the error handler below can still report the requested
   // post count after a failure part-way through generation.
@@ -605,12 +628,25 @@ export async function POST(request) {
       countSource = "fallback-default-12";
     }
 
+    const budgetMs = getCalendarGenerationBudgetMs(safeCount);
+    const deadline = requestStartedAt + budgetMs;
+    let budgetExhausted = false;
+    // Returns the provider timeout for the next attempt, or null once the
+    // generation budget can no longer fit one.
+    function nextAttemptTimeout() {
+      const t = getProviderTimeoutForAttempt(deadline);
+      if (t === null) budgetExhausted = true;
+      return t;
+    }
+
     console.log("[CalendarGenerate] count resolution", {
       platform: formFields.platforms,
       requestedCount: formFields.numberOfPostsNeeded,
       selectedPostsCount: selectedPosts.length,
       safeCount,
       countSource,
+      contentLanguage,
+      budgetMs,
     });
 
     // ── 4. Build context strings ─────────────────────────────────────────────
@@ -735,7 +771,7 @@ export async function POST(request) {
       return [];
     }
 
-    async function runBatch({ batchCount, batchContext, acceptedSummaries }) {
+    async function runBatch({ batchCount, batchContext, acceptedSummaries, timeoutMs }) {
       const batchInput = buildUserInput({ count: batchCount, batchContext, acceptedSummaries });
       console.log(`[ContentCalendar] Batch ${batchContext.current}/${batchContext.total}: ${batchCount} posts, input ${batchInput.length} chars`);
 
@@ -744,6 +780,8 @@ export async function POST(request) {
         variables,
         userInput: batchInput,
         maxTokens: 8192,
+        timeoutMs,
+        maxRetries: 0,
       });
 
       console.log(`[ContentCalendar] Batch ${batchContext.current} raw: ${result.raw?.length ?? 0} chars, finish=${result.finishReason}`);
@@ -779,12 +817,15 @@ export async function POST(request) {
       let retries = 0;
 
       while (batchPosts.length < batchCount && totalAttempts < MAX_TOTAL_ATTEMPTS) {
+        const timeoutMs = nextAttemptTimeout();
+        if (timeoutMs === null) break;
         totalAttempts++;
         try {
           const posts = await runBatch({
             batchCount,
             batchContext,
             acceptedSummaries: retries > 0 ? acceptedSummaries : undefined,
+            timeoutMs,
           });
           batchPosts = batchPosts.concat(posts);
           const seen = new Set();
@@ -806,7 +847,8 @@ export async function POST(request) {
             }));
           }
         } catch (err) {
-          console.error(`[ContentCalendar] Batch ${b + 1} attempt ${retries + 1} failed:`, err.message);
+          if (FATAL_AI_ERROR_CODES.has(err?.code)) throw err;
+          console.error(`[ContentCalendar] Batch ${b + 1} attempt ${retries + 1} failed:`, err.code || "", err.message);
         }
 
         if (batchPosts.length >= batchCount) break;
@@ -816,6 +858,7 @@ export async function POST(request) {
       }
 
       allPosts.push(...batchPosts);
+      if (budgetExhausted) break;
     }
 
     console.log(`[ContentCalendar] Total after batching: ${allPosts.length}/${safeCount}`);
@@ -920,6 +963,8 @@ export async function POST(request) {
 
       console.log(`[ContentCalendar] Supplemental ${s + 1}/${MAX_SUPPLEMENTAL_ATTEMPTS}: have ${finalBatch.length}/${safeCount}, requesting ${requestCount}, deficits:`, deficits);
 
+      const supTimeoutMs = nextAttemptTimeout();
+      if (supTimeoutMs === null) break;
       totalAttempts++;
 
       try {
@@ -937,6 +982,8 @@ export async function POST(request) {
           variables,
           userInput: supInput,
           maxTokens: 8192,
+          timeoutMs: supTimeoutMs,
+          maxRetries: 0,
         });
 
         console.log(`[ContentCalendar] Supplemental ${s + 1} raw chars=${supResult.raw?.length ?? 0} finish=${supResult.finishReason}`);
@@ -954,7 +1001,8 @@ export async function POST(request) {
         }
         finalBatch = merged;
       } catch (err) {
-        console.error(`[ContentCalendar] Supplemental ${s + 1} failed:`, err.message);
+        if (FATAL_AI_ERROR_CODES.has(err?.code)) throw err;
+        console.error(`[ContentCalendar] Supplemental ${s + 1} failed:`, err.code || "", err.message);
       }
 
       if (finalBatch.length >= safeCount) break;
@@ -963,7 +1011,19 @@ export async function POST(request) {
     console.log(`[ContentCalendar] Total after supplemental: ${finalBatch.length}/${safeCount}`);
 
     if (finalBatch.length < safeCount) {
-      console.error(`[ContentCalendar] shortfall: ${finalBatch.length}/${safeCount} after ${totalAttempts} total attempts`);
+      console.error(`[ContentCalendar] shortfall: ${finalBatch.length}/${safeCount} after ${totalAttempts} total attempts, ${Date.now() - requestStartedAt}ms, budgetExhausted=${budgetExhausted}`);
+      if (budgetExhausted) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: "CALENDAR_GENERATION_TIMEOUT",
+            error: "Calendar generation took too long to complete. Please try again, or generate fewer posts.",
+            generatedCount: finalBatch.length,
+            requestedCount: safeCount,
+          },
+          { status: 504 }
+        );
+      }
       return NextResponse.json(
         {
           success: false,
@@ -999,7 +1059,7 @@ export async function POST(request) {
       const check = validateOutputImageTextRequirements(p);
       if (!check.valid) {
         console.log(`[ContentCalendar] Post #${p.postNumber} outputImageTextRequirements validation failed (${check.reason}), applying fallback`);
-        const fallbackStructured = buildFallbackOutputImageTextRequirements(p);
+        const fallbackStructured = buildFallbackOutputImageTextRequirements(p, { contentLanguage });
         return {
           ...p,
           outputImageTextRequirementsStructured: fallbackStructured,
@@ -1013,6 +1073,13 @@ export async function POST(request) {
     const finalPosts = mergeSourceFields(posts, selectedPosts, formFields.platforms);
 
     // ── 13. Return ───────────────────────────────────────────────────────────
+    console.log("[ContentCalendar] done", {
+      contentLanguage,
+      requestedCount: safeCount,
+      returnedCount: finalPosts.length,
+      providerAttempts: totalAttempts,
+      totalMs: Date.now() - requestStartedAt,
+    });
     return NextResponse.json({
       success: true,
       posts: finalPosts,
@@ -1027,25 +1094,30 @@ export async function POST(request) {
 
     if (code === "AI_CONNECTION_ERROR") {
       status = 503;
+      respCode = "AI_PROVIDER_UNAVAILABLE";
       error = "Couldn't reach the AI service. Please check your connection and try again — your inputs are fine.";
     } else if (code === "AI_NOT_CONFIGURED") {
       status = 503;
+      respCode = "AI_NOT_CONFIGURED";
       error = "OpenAI API key is not configured. Go to Settings and add your OpenAI API key, then restart the server.";
     } else if (code === "AI_TIMEOUT") {
       status = 504;
-      error = "The AI provider did not respond in time. Please try again.";
-    } else if (err.message?.includes("Could not parse") || err.message?.includes("JSON")) {
+      respCode = "CALENDAR_GENERATION_TIMEOUT";
+      error = "Calendar generation took too long to complete. Please try again, or generate fewer posts.";
+    } else if (code === "CALENDAR_OUTPUT_INVALID" || err.message?.includes("Could not parse") || err.message?.includes("JSON")) {
       status = 422;
       respCode = "CALENDAR_OUTPUT_INVALID";
-      error = "The AI returned an unexpected response. Please retry the generation.";
+      error = "The AI response could not be validated. Nothing was saved. Please try again.";
     } else if (err.message?.includes("placeholder") || err.message?.includes("OPENAI_API_KEY")) {
       status = 503;
+      respCode = "AI_NOT_CONFIGURED";
       error = "OpenAI API key is not configured. Go to Settings and add your OpenAI API key, then restart the server.";
     } else if (err.name === "AbortError") {
       status = 504;
-      respCode = "AI_TIMEOUT";
-      error = "The request timed out. Please try again.";
+      respCode = "CALENDAR_GENERATION_TIMEOUT";
+      error = "Calendar generation took too long to complete. Please try again, or generate fewer posts.";
     } else {
+      respCode = "CALENDAR_GENERATION_FAILED";
       error = "Content calendar generation failed. Please try again.";
     }
 
