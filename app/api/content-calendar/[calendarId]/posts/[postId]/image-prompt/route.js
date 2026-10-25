@@ -5,6 +5,7 @@ import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import { stripImageRatioText, isInstagramPlatform, NO_IMAGE_RATIO_INSTRUCTION } from "@/lib/image-prompt-ratio";
 import {
   resolveImageStyleAndPreset,
   imageStylePresetErrorResponse,
@@ -391,6 +392,7 @@ export async function POST(request, { params }) {
     })();
 
     // ── Build userInput ───────────────────────────────────────────────────────
+    const isInstagramPost = isInstagramPlatform(norm.platform);
     const isCarouselPost = (norm.format || "").toLowerCase().includes("carousel");
 
     const userInput = [
@@ -452,7 +454,9 @@ export async function POST(request, { params }) {
       : userInput;
 
     // ── Append refinement block when refining an existing prompt ────────────
-    const finalUserInput = isRefinement
+    const withRatioRule = (input) =>
+      isInstagramPost ? `${stripImageRatioText(input)}\n\n${NO_IMAGE_RATIO_INSTRUCTION}` : input;
+    const finalUserInput = withRatioRule(isRefinement
       ? [
           baseUserInput,
           "",
@@ -468,7 +472,7 @@ export async function POST(request, { params }) {
           "Output only the refined Nanobanana prompt text.",
           "Do not include explanations, markdown, or commentary.",
         ].join("\n")
-      : baseUserInput;
+      : baseUserInput);
 
     console.log(`[ImagePrompt] ${isRefinement ? "REFINE" : "GENERATE"} | userInput length: ${finalUserInput.length}`);
 
@@ -487,9 +491,15 @@ export async function POST(request, { params }) {
 
       if (!finalPrompt?.trim()) throw new Error("AI returned empty prompt.");
 
+      // Sanitize before the legacy stripRatioMentions, which drops whole sentences.
+      if (isInstagramPost) finalPrompt = stripImageRatioText(finalPrompt);
+
       if (combinedVisualDirectionId) {
         finalPrompt = stripRatioMentions(finalPrompt) + concreteCompositionBlock;
       }
+      // Instagram calendar prompts never carry ratio/orientation/pixel text,
+      // whichever path produced it (template, preset block, reference block).
+      if (isInstagramPost) finalPrompt = stripImageRatioText(finalPrompt);
     } catch (aiErr) {
       console.error("[ImagePrompt] AI error:", aiErr.message);
       if (aiErr.message?.includes("not found")) {

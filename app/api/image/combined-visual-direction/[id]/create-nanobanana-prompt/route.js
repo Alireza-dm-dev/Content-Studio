@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireResourceBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import { stripImageRatioText, isInstagramPlatform, NO_IMAGE_RATIO_INSTRUCTION } from "@/lib/image-prompt-ratio";
 import {
   resolveImageStyleAndPreset,
   imageStylePresetErrorResponse,
@@ -511,7 +512,17 @@ export async function POST(request, { params }) {
       );
     }
 
-    const userInput = userInputParts.join("\n");
+    // Calendar-post reference flow on Instagram (or no platform recorded — the
+    // post-type default above is Instagram): no ratio/orientation/pixel text.
+    const platformMatch = /^\s*Platform:\s*(.+)$/im.exec(cvd.rawIdeaOrPostInformation || "");
+    const isInstagramCalendarPrompt =
+      (Boolean(cvd.calendarPostId) || String(cvd.sourceFlow || "").startsWith("calendar_post")) &&
+      (!platformMatch || isInstagramPlatform(platformMatch[1]));
+
+    const joinedInput = userInputParts.join("\n");
+    const userInput = isInstagramCalendarPrompt
+      ? `${stripImageRatioText(joinedInput)}\n\n${NO_IMAGE_RATIO_INSTRUCTION}`
+      : joinedInput;
 
     console.log("[NanobananaPrompt] userInput length:", userInput.length);
 
@@ -528,7 +539,10 @@ export async function POST(request, { params }) {
         ? result.content
         : JSON.stringify(result.content, null, 2);
 
+      // Sanitize before the legacy stripRatioMentions, which drops whole sentences.
+      if (isInstagramCalendarPrompt) finalPrompt = stripImageRatioText(finalPrompt);
       finalPrompt = stripRatioMentions(finalPrompt) + concreteCompositionBlock;
+      if (isInstagramCalendarPrompt) finalPrompt = stripImageRatioText(finalPrompt);
 
       console.log("[NanobananaPrompt] Generated prompt length:", finalPrompt.length);
     } catch (aiErr) {
