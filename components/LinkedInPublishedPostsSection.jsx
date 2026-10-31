@@ -10,6 +10,7 @@ import LinkedInPostUploadForm from "@/components/LinkedInPostUploadForm";
 import LinkedInPostDetailModal from "@/components/LinkedInPostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
 import { getPublishedPostFooterState } from "@/lib/published-post-footer";
+import { sortPublishedPosts } from "@/lib/published-post-order";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -311,7 +312,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
     setPosts((prev) => {
       const exists = prev.some((p) => p.id === post.id);
       if (exists) return prev.map((p) => (p.id === post.id ? post : p));
-      return [{ ...post, commentCount: post.commentCount ?? 0 }, ...prev];
+      return sortPublishedPosts([{ ...post, commentCount: post.commentCount ?? 0 }, ...prev]);
     });
   }
 
@@ -347,11 +348,8 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
       .then((r) => r.json())
       .then((data) => {
         if (!active) return;
-        const list = Array.isArray(data) ? data : [];
-        list.sort(
-          (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
-        );
-        setPosts(list);
+        // Server already returns publish-date order; keep it as-is.
+        setPosts(Array.isArray(data) ? data : []);
       })
       .catch(() => {
         if (active) setError("Failed to load LinkedIn posts.");
@@ -365,14 +363,14 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
   }, [brand.id]);
 
   function handleCreated(newPost) {
-    setPosts((prev) => [{ ...newPost, commentCount: newPost.commentCount ?? 0 }, ...prev]);
+    setPosts((prev) => sortPublishedPosts([{ ...newPost, commentCount: newPost.commentCount ?? 0 }, ...prev]));
     setShowForm(false);
     toast.success("LinkedIn post added.");
   }
 
   function handleUpdated(updatedPost) {
     setPosts((prev) =>
-      prev.map((p) => (p.id === updatedPost.id ? updatedPost : p)),
+      sortPublishedPosts(prev.map((p) => (p.id === updatedPost.id ? updatedPost : p))),
     );
     setSelectedPost(updatedPost);
   }

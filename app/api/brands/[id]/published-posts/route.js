@@ -18,6 +18,7 @@ import {
   POST_TYPE_CAROUSEL,
   POST_TYPE_REEL,
 } from "@/lib/published-post-utils";
+import { PUBLISHED_POST_ORDER_BY } from "@/lib/published-post-order";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { uploadPublishedPostMedia, isCanonicalMediaUrl } from "@/lib/published-post-remote-media";
 import { normalizeScheduledDate } from "@/lib/timezone";
@@ -55,7 +56,7 @@ export async function GET(request, { params }) {
 
   const posts = await prisma.publishedPost.findMany({
     where,
-    orderBy: { createdAt: "desc" },
+    orderBy: PUBLISHED_POST_ORDER_BY,
     include: {
       media: { orderBy: { order: "asc" } },
       _count: { select: { comments: true } },

@@ -8,6 +8,7 @@ import PostDetailModal from "@/components/PostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { getPublishedPostFooterState } from "@/lib/published-post-footer";
+import { sortPublishedPosts } from "@/lib/published-post-order";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -256,7 +257,7 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
     setPosts((prev) => {
       const exists = prev.some((p) => p.id === post.id);
       if (exists) return prev.map((p) => (p.id === post.id ? post : p));
-      return [{ ...post, commentCount: post.commentCount ?? 0 }, ...prev];
+      return sortPublishedPosts([{ ...post, commentCount: post.commentCount ?? 0 }, ...prev]);
     });
   }
 
@@ -296,13 +297,13 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
   }, [brand.id]);
 
   function handleCreated(newPost) {
-    setPosts((prev) => [{ ...newPost, commentCount: newPost.commentCount ?? 0 }, ...prev]);
+    setPosts((prev) => sortPublishedPosts([{ ...newPost, commentCount: newPost.commentCount ?? 0 }, ...prev]));
     setShowForm(false);
   }
 
   function handleUpdated(updatedPost) {
     setPosts((prev) =>
-      prev.map((p) => (p.id === updatedPost.id ? updatedPost : p))
+      sortPublishedPosts(prev.map((p) => (p.id === updatedPost.id ? updatedPost : p)))
     );
     setSelectedPost(updatedPost);
   }
