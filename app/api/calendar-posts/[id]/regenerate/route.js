@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { getRelevantBrandKnowledge, knowledgePurposeForScope, buildPostKnowledgeQuery, withKnowledgeBlock } from "@/lib/brand-knowledge";
 import { normalizeLanguageCode } from "@/lib/content-language";
 import { MAX_ATTACHMENT_FILES } from "@/lib/calendar-attachment-utils";
 import { validateSlideCountRequest, buildSlideCountChangeFields } from "@/lib/calendar-slide-count";
@@ -259,9 +260,17 @@ export async function POST(request, { params }) {
     const brandSummary = buildBrandSummary(identity, brand);
 
     // ── Build AI prompt ───────────────────────────────────────────────────────
-    const attachmentBlock = attachmentContext.block
-      ? `\n=== INTERPRETED UPLOADED REFERENCE MATERIAL ===\n${attachmentContext.block}`
-      : null;
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId: brandId,
+      purpose: knowledgePurposeForScope(scope),
+      query: buildPostKnowledgeQuery(current, customInstruction, enrichmentInstruction, imageTextInstruction, slideCountInstruction),
+    });
+    const attachmentBlock = withKnowledgeBlock(
+      knowledge.block,
+      attachmentContext.block
+        ? `\n=== INTERPRETED UPLOADED REFERENCE MATERIAL ===\n${attachmentContext.block}`
+        : null,
+    );
 
     const promptContext = {
       current,

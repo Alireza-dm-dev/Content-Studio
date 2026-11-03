@@ -47,6 +47,7 @@ mock.module("@/lib/prisma", {
       get(_, model) {
         if (model === "brand") return { findUnique: async ({ where }) => ({ id: where.id, name: "کلینیک دکتر", contentLanguage: state.language }) };
         if (model === "brandIdentity") return { findFirst: async () => null };
+        if (model === "brandKnowledgeDocument") return { findMany: async () => [] }; // read-only: no documents
         state.dbWrites.push(String(model));
         return new Proxy({}, { get: (_, op) => async () => { state.dbWrites.push(`${String(model)}.${String(op)}`); } });
       },

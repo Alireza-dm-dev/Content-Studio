@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import BrandFilesGallery from "@/components/BrandFilesGallery";
+import BrandKnowledgeSection from "@/components/BrandKnowledgeSection";
 import { normalizeBrandIdentityOutput } from "@/lib/brand-identity-utils";
 import { CONTENT_LANGUAGES, DEFAULT_CONTENT_LANGUAGE } from "@/lib/content-language";
 
@@ -725,6 +726,9 @@ export default function BrandDetailClient({ brand: initialBrand, initialFiles, i
 
         {/* Brand Files */}
         <BrandFilesGallery brandId={initialBrand.id} initialFiles={initialFiles} />
+
+        {/* Brand Knowledge */}
+        <BrandKnowledgeSection brandId={initialBrand.id} />
 
         {/* Color Palette */}
         <ColorPaletteSection brandId={initialBrand.id} initialIdentities={initialIdentities} />

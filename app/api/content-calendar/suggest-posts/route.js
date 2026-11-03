@@ -5,6 +5,7 @@ import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
 import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
 
 const str = (v) => (typeof v === "string" ? v : Array.isArray(v) ? v.join(" ") : "");
@@ -292,6 +293,13 @@ export async function POST(request) {
       row("Content Limitations",      contentLimitations),
       row("Additional Notes",         additionalNotes),
     ].filter(v => v !== null).join("\n");
+
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId,
+      purpose: "suggest_posts",
+      query: [monthlyObjective, offers, campaignEvents, additionalNotes, platform].filter((v) => typeof v === "string" && v).join("\n"),
+    });
+    if (knowledge.block) userInput += "\n\n" + knowledge.block;
 
     if (attachmentContext.block) {
       userInput += "\n\n=== INTERPRETED UPLOADED REFERENCE MATERIAL ===\n" + attachmentContext.block;

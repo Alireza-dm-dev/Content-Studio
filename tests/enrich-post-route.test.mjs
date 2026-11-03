@@ -60,6 +60,7 @@ const state = {
   capturedUserInput: null,
   aiImpl: null,
   updates: [],
+  knowledge: [],
 };
 
 mock.module("@/lib/auth", {
@@ -80,6 +81,9 @@ mock.module("@/lib/prisma", {
         },
       },
       uploadedFile: { findMany: async () => [] },
+      brandKnowledgeDocument: {
+        findMany: async ({ where }) => state.knowledge.filter((d) => d.brandId === where.brandId && d.status === where.status),
+      },
       brand: {
         findUnique: async () => ({
           id: "brand-1",
@@ -366,4 +370,34 @@ test("an unparsable response is not partially saved", async () => {
   assert.equal(res.status, 500);
   assert.equal(data.success, false);
   assert.equal(state.updates.length, 0, "a partial/unparsable result must never reach the database");
+});
+
+// ─── Brand Knowledge ──────────────────────────────────────────────────────────
+
+test("enrich_post receives relevant Brand Knowledge of its own brand only, and keeps its writable-field contract", async () => {
+  state.knowledge = [
+    { id: "k1", brandId: "brand-1", status: "READY", displayName: "Maintenance Plan.pdf", description: null, extractedText: "Maintenance visits include recorder health checks and a 45 day Premium Support Window." },
+    { id: "k2", brandId: "brand-2", status: "READY", displayName: "Other Brand.pdf", description: null, extractedText: "BRAND_TWO_ONLY maintenance recorder secret." },
+  ];
+  try {
+    state.aiImpl = async () => ({ raw: JSON.stringify(ENRICHED) });
+    await call({ scope: "enrich_post", enrichmentInstruction: "Mention the support window" });
+    const input = state.capturedUserInput;
+    assert.ok(input.includes("=== BRAND KNOWLEDGE SOURCE MATERIAL ==="));
+    assert.ok(input.includes("45 day Premium Support Window"));
+    assert.ok(!input.includes("BRAND_TWO_ONLY") && !input.includes("Other Brand.pdf"));
+    assert.ok(input.includes("ATTACHMENT_MARKER_5150")); // calendar/post reference remains a separate source
+
+    const { data: written } = state.updates[0];
+    assert.equal(written.visualDirection, POST_ROW.visualDirection);
+    assert.equal(written.contentStructure, POST_ROW.contentStructure);
+  } finally {
+    state.knowledge = [];
+  }
+});
+
+test("without Brand Knowledge the enrich prompt has no knowledge section", async () => {
+  state.aiImpl = async () => ({ raw: JSON.stringify(ENRICHED) });
+  await call({ scope: "enrich_post" });
+  assert.ok(!state.capturedUserInput.includes("BRAND KNOWLEDGE SOURCE MATERIAL"));
 });

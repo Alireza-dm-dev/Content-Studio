@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { requireBrandAccess } from "@/lib/brand-access";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
@@ -132,8 +133,15 @@ export async function POST(request) {
       });
     }
 
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId,
+      purpose: "image_prompt",
+      query: [rawIdeaOrPostInformation, visualStyleDirection, creativeGoal, postType].filter((v) => typeof v === "string" && v).join("\n"),
+    });
+
     const userInput = buildUserInput({
       brandIdentitySummary,
+      brandKnowledgeBlock: knowledge.block,
       rawIdeaOrPostInformation: rawIdeaOrPostInformation.trim(),
       outputImageTextRequirements: outputImageTextRequirements?.trim() ?? "",
       postType,
@@ -214,6 +222,7 @@ function needsTemplateUpdate(text) {
 
 function buildUserInput({
   brandIdentitySummary,
+  brandKnowledgeBlock,
   rawIdeaOrPostInformation,
   outputImageTextRequirements,
   postType,
@@ -227,6 +236,7 @@ function buildUserInput({
   const lines = [
     `Brand identity summary: ${brandIdentitySummary}`,
     "",
+    ...(brandKnowledgeBlock ? [brandKnowledgeBlock, ""] : []),
     `Post type: ${postType}`,
     `Platform: ${platform}`,
     `Aspect ratio: ${aspectRatio}`,

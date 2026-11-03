@@ -37,6 +37,7 @@ model Brand {
   brandMemberships         BrandMembership[]
   workspaceReviews         WorkspaceReview[]
   forumPosts               BrandForumPost[]
+  knowledgeDocuments       BrandKnowledgeDocument[]
 }
 
 model User {
@@ -58,6 +59,7 @@ model User {
   uploadedFiles           UploadedFile[]
   forumPosts              BrandForumPost[]
   forumReplies            BrandForumReply[]
+  knowledgeDocuments      BrandKnowledgeDocument[]
 }
 
 model BrandAssignment {
@@ -483,4 +485,29 @@ model BrandForumReply {
 
   @@index([postId, createdAt])
   @@index([authorId])
+}
+
+// Permanent, brand-wide source material. Distinct from UploadedFile, which holds
+// calendar/post-specific reference attachments with their own lifecycle.
+model BrandKnowledgeDocument {
+  id               String   @id @default(cuid())
+  brandId          String
+  brand            Brand    @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  uploadedByUserId String?
+  uploadedBy       User?    @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  displayName      String
+  description      String?
+  originalFileName String
+  storedPath       String
+  mimeType         String
+  fileSize         Int
+  status           String   @default("PROCESSING") // PROCESSING | READY | FAILED
+  extractedText    String?
+  extractionError  String?
+  wasTruncated     Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([brandId, status])
+  @@index([uploadedByUserId])
 }

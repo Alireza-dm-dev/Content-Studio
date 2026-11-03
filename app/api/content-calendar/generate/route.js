@@ -13,6 +13,7 @@ import {
 } from "@/lib/calendar-post-utils";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
 import { buildCalendarGenerationUserInput } from "@/lib/calendar-generation-user-input";
 import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
 import {
@@ -597,6 +598,18 @@ async function handleGenerate(request) {
 
     const contentLanguage = normalizeLanguageCode(brand.contentLanguage);
 
+    // Permanent Brand Knowledge relevant to this calendar's brief (never throws).
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId,
+      purpose: "calendar_generation",
+      query: [
+        formFields.mainMonthlySubject, formFields.mainGoal, formFields.mainOfferOrMessage,
+        formFields.importantDetailsToInclude, formFields.priorityContentIdeas, formFields.sourceMaterial,
+        formFields.platforms,
+        ...selectedPosts.map((p) => (typeof p === "string" ? p : [p?.suggestedHook, p?.mainAngleAndCoreMessage].filter(Boolean).join(" "))),
+      ].filter((v) => typeof v === "string" && v).join("\n"),
+    });
+
     // Known-context source for deterministic hashtag fallback derivation
     // (see mergeHashtagsIntoCaption / deriveFallbackHashtags) — real brand and
     // campaign facts only, never invented.
@@ -706,6 +719,7 @@ async function handleGenerate(request) {
         selectedPosts,
         selectedPostIdeasText,
         attachmentBlock: attachmentContext.block,
+        brandKnowledgeBlock: knowledge.block,
         contentLanguage,
       });
     }
@@ -973,7 +987,7 @@ async function handleGenerate(request) {
           acceptedPosts: finalBatch,
           formatDeficits: deficits,
           languageInstruction: buildLanguageInstruction(contentLanguage),
-          attachmentBlock: attachmentContext.block,
+          attachmentBlock: [knowledge.block, attachmentContext.block].filter(Boolean).join("\n\n"),
           brandName: brand.name,
         });
 

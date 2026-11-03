@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireBrandAccess } from "@/lib/brand-access";
 import { unlink } from "fs/promises";
 import path from "path";
+import { removeBrandKnowledgeDir } from "@/lib/brand-knowledge-storage";
 import { normalizeLanguageCode, isSupportedLanguageCode } from "@/lib/content-language";
 
 export async function GET(request, { params }) {
@@ -76,7 +77,8 @@ export async function DELETE(request, { params }) {
   }
   // Collect file paths before deletion
   const files = await prisma.uploadedFile.findMany({ where: { brandId: id } });
-  await prisma.brand.delete({ where: { id } });
+  await prisma.brand.delete({ where: { id } }); // cascades BrandKnowledgeDocument rows
+  await removeBrandKnowledgeDir(id);
   // Clean up physical files (best-effort)
   for (const file of files) {
     try {

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireResourceBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
 import { buildVideoStyleBlock, resolveCinematicStyle } from "@/lib/cinematic-styles";
 
@@ -156,11 +157,19 @@ export async function POST(request, { params }) {
     const effectiveVideoFormat = norm.format      || "";
     const effectiveVideoGoal   = videoGoal?.trim() || norm.mainAngle || norm.coreMessage || "";
 
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId,
+      purpose: "video_prompt",
+      query: [norm.visualDirection, norm.videoRawIdea, norm.mainIntegratedScenario, norm.visualMood, norm.hookTitle, norm.coreMessage, effectiveVideoGoal]
+        .filter((v) => typeof v === "string" && v).join("\n"),
+    });
+
     // ── Build combined raw video input ────────────────────────────────────────
     const combinedRawVideoInput = [
       "=== BRAND VISUAL IDENTITY ===",
       brandSummary,
       "",
+      ...(knowledge.block ? [knowledge.block, ""] : []),
       "=== CALENDAR POST ===",
       norm.postNumber && `Post #${norm.postNumber}`,
       norm.hookTitle  && `Hook / Title: ${norm.hookTitle}`,

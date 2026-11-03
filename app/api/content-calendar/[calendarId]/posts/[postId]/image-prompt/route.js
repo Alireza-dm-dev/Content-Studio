@@ -5,6 +5,7 @@ import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
 import { stripImageRatioText, isInstagramPlatform, NO_IMAGE_RATIO_INSTRUCTION } from "@/lib/image-prompt-ratio";
 import {
   resolveImageStyleAndPreset,
@@ -395,10 +396,19 @@ export async function POST(request, { params }) {
     const isInstagramPost = isInstagramPlatform(norm.platform);
     const isCarouselPost = (norm.format || "").toLowerCase().includes("carousel");
 
+    // Visual/brand-guideline knowledge only (purpose-filtered); never throws.
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId,
+      purpose: "image_prompt",
+      query: [norm.visualDirection, rawImageIdea, norm.hookTitle, norm.mainAngle, norm.coreMessage, norm.format, promptGuidance]
+        .filter((v) => typeof v === "string" && v).join("\n"),
+    });
+
     const userInput = [
       "Brand visual identity:",
       brandSummary,
       "",
+      ...(knowledge.block ? [knowledge.block, ""] : []),
       "Post type:",
       [norm.format && norm.format, norm.platform && `for ${norm.platform}`].filter(Boolean).join(" ") || "Social media post",
       "",

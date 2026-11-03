@@ -45,6 +45,7 @@ const state = {
   create: null,
   calls: [],
   writes: 0,
+  uploadedFileReads: 0,
 };
 
 const bySel = (rows, where = {}) => rows.filter((r) => (where.brandId === undefined || r.brandId === where.brandId));
@@ -52,7 +53,13 @@ const bySel = (rows, where = {}) => rows.filter((r) => (where.brandId === undefi
 const prismaFake = {
   brand: { findUnique: async ({ where }) => DB.brands.find((b) => b.id === where.id) ?? null },
   brandIdentity: { findFirst: async ({ where }) => bySel(DB.identities, where)[0] ?? null },
-  uploadedFile: { findMany: async ({ where }) => bySel(DB.files, where) },
+  // Calendar/post references are never read by the Assistant; count any access.
+  uploadedFile: { findMany: async () => { state.uploadedFileReads++; return []; } },
+  brandKnowledgeDocument: {
+    findMany: async ({ where }) => bySel(DB.files, where)
+      .filter((f) => (f.status ?? "READY") === where.status)
+      .map((f) => ({ id: f.id, brandId: f.brandId, displayName: f.fileName, description: null, extractedText: f.extractedText })),
+  },
   contentCalendar: { findMany: async ({ where }) => bySel(DB.calendars, where) },
   calendarPost: {
     findMany: async ({ where }) => DB.posts.filter((p) => DB.calendars.find((c) => c.id === p.calendarId)?.brandId === where.calendar.brandId),
@@ -157,6 +164,12 @@ test("context builder scopes reference files, calendars, posts and published con
   assert.ok(ctx.sources.every((s) => !/ALPHA|Alpha|cctv/i.test(s.label)));
 });
 
+test("Brand Assistant ignores calendar/post UploadedFile references", async () => {
+  state.uploadedFileReads = 0;
+  await buildBrandChatContext({ brandId: A, question: "CCTV training documents", prismaClient: prismaFake });
+  assert.equal(state.uploadedFileReads, 0);
+});
+
 test("unauthorized brand returns 403 before any provider call", async () => {
   state.allowed = new Set([A]);
   const r = await chat(B, "hello");
@@ -246,7 +259,7 @@ test("context is capped even with huge files and many calendar posts", async () 
   try {
     const ctx = await buildBrandChatContext({ brandId: A, question: "CCTV training calendar posts", prismaClient: prismaFake });
     assert.ok(ctx.contextBlock.length <= BRAND_CHAT_CONFIG.contextCharBudget);
-    assert.ok(ctx.stats.referenceCount <= 4);
+    assert.ok(ctx.stats.referenceCount <= 5);
     assert.match(ctx.contextBlock, /Alpha Security/); // identity survives budget pressure
   } finally {
     DB.files.length = saved;

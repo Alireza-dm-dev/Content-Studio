@@ -9,6 +9,7 @@ import {
 } from "@/lib/url-resource-utils";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
 import { buildLanguageInstruction, normalizeLanguageCode } from "@/lib/content-language";
 
 const ALLOWED_FORMATS = ["Static", "Carousel"];
@@ -306,6 +307,13 @@ export async function POST(request) {
     "=== BRAND INFORMATION ===",
     brandIdentitySummary || "Not yet extracted.",
   ];
+
+  const knowledge = await getRelevantBrandKnowledge({
+    brandId,
+    purpose: "suggest_posts",
+    query: [brand.mainServicesOrProducts, brand.businessType, ...articles.map((a) => a.title)].filter((v) => typeof v === "string" && v).join("\n"),
+  });
+  if (knowledge.block) userInputSections.push("", knowledge.block);
 
   if (attachmentContext.block) {
     userInputSections.push(
