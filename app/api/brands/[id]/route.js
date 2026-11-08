@@ -4,6 +4,7 @@ import { requireBrandAccess } from "@/lib/brand-access";
 import { unlink } from "fs/promises";
 import path from "path";
 import { removeBrandKnowledgeDir } from "@/lib/brand-knowledge-storage";
+import { validateTimezoneInput } from "@/lib/timezone";
 import { normalizeLanguageCode, isSupportedLanguageCode } from "@/lib/content-language";
 
 export async function GET(request, { params }) {
@@ -44,6 +45,16 @@ export async function PATCH(request, { params }) {
       { status: 400 }
     );
   }
+  // Same access rule as every other Brand field (requireBrandAccess above).
+  // Changing the timezone never rewrites stored PublishedPost instants.
+  let timezone;
+  if ("timezone" in body) {
+    const tzCheck = validateTimezoneInput(body.timezone);
+    if (!tzCheck.ok) {
+      return NextResponse.json({ success: false, error: tzCheck.error }, { status: 400 });
+    }
+    timezone = tzCheck.value;
+  }
   const updateData = {
     name, website, instagramPage, linkedinPage, facebookPage,
     businessLocation, businessType, mainServicesOrProducts,
@@ -52,6 +63,7 @@ export async function PATCH(request, { params }) {
   if ("contentLanguage" in body) {
     updateData.contentLanguage = normalizeLanguageCode(contentLanguage);
   }
+  if ("timezone" in body) updateData.timezone = timezone;
   const brand = await prisma.brand.update({
     where: { id },
     data: updateData,

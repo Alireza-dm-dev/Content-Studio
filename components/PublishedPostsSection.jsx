@@ -7,6 +7,7 @@ import PublishedPostUploadForm from "@/components/PublishedPostUploadForm";
 import PostDetailModal from "@/components/PostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
+import { resolveBrandTimezone } from "@/lib/timezone";
 import { getPublishedPostFooterState } from "@/lib/published-post-footer";
 import { sortPublishedPosts } from "@/lib/published-post-order";
 
@@ -51,13 +52,13 @@ function MediaPlaceholder() {
   );
 }
 
-function GridCard({ post, onClick, onCommentClick }) {
+function GridCard({ post, timeZone, onClick, onCommentClick }) {
   const firstMedia = post.media?.[0];
   const isCarousel = post.postType === "carousel" || (post.media?.length || 0) > 1;
   const isVideo = post.postType === "reel" || firstMedia?.mediaType === "VIDEO";
   const thumbnailUrl = post.thumbnailUrl;
   const postId = formatPostIdShort(post.postNumber);
-  const footerState = getPublishedPostFooterState(post);
+  const footerState = getPublishedPostFooterState(post, timeZone);
   // A media file can still be unreachable (an old post whose upload to the
   // public media server never completed). Fall back to the placeholder rather
   // than leaving a broken-image icon in the grid. Tracking the failed URL
@@ -358,6 +359,7 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
       {showForm && (
         <PublishedPostUploadForm
           brandId={brand.id}
+          brandTimezone={brand.timezone}
           onCreated={handleCreated}
           onCancel={() => setShowForm(false)}
         />
@@ -407,6 +409,7 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
             <GridCard
               key={post.id}
               post={post}
+              timeZone={resolveBrandTimezone(brand)}
               onClick={() => setSelectedPost(post)}
               onCommentClick={(p) => setCommentsPost(p)}
             />
@@ -419,6 +422,7 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
         <PostDetailModal
           post={selectedPost}
           brandId={brand.id}
+          brandTimezone={brand.timezone}
           onClose={() => setSelectedPost(null)}
           onUpdated={handleUpdated}
           onDeleted={handleDeleted}

@@ -18,7 +18,7 @@ import {
 } from "@/lib/published-post-utils";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { uploadPublishedPostMedia, isCanonicalMediaUrl, isLocalMediaUrl, copyMediaToTarget } from "@/lib/published-post-remote-media";
-import { normalizeScheduledDate } from "@/lib/timezone";
+import { parseScheduledDate, resolveBrandTimezone } from "@/lib/timezone";
 import { readBoundedJsonBody } from "@/lib/read-bounded-json";
 
 function isValidSourcePlatform(platform) {
@@ -172,11 +172,11 @@ export async function POST(request, { params }) {
 
     let scheduledDate = null;
     if (rawScheduledDate) {
-      const date = normalizeScheduledDate(rawScheduledDate);
-      if (!date) {
-        return NextResponse.json({ error: "Invalid scheduled date." }, { status: 400 });
+      const parsed = parseScheduledDate(rawScheduledDate, resolveBrandTimezone(brand));
+      if (!parsed.ok) {
+        return NextResponse.json({ error: parsed.error }, { status: 400 });
       }
-      scheduledDate = date;
+      scheduledDate = parsed.date;
     }
 
     // ── Enforce target-specific file counts before decoding ─────────────────
@@ -669,6 +669,7 @@ export async function POST(request, { params }) {
           { ...newPost, thumbnailUrl },
           mediaRecords,
           brand.name,
+          brand.timezone,
         );
 
         // Inject cross-platform source metadata into a private block
@@ -765,6 +766,7 @@ export async function POST(request, { params }) {
             { ...currentPost, thumbnailUrl: updatedThumbnailUrl },
             remoteMedia,
             brand.name,
+            brand.timezone,
           );
 
           let payloadObj = remotePayload ? JSON.parse(JSON.stringify(remotePayload)) : {};
@@ -819,6 +821,7 @@ export async function POST(request, { params }) {
             post: result,
             media: result.media || [],
             brandName: brand.name,
+            brandTimezone: brand.timezone,
           });
         } catch (webhookError) {
           webhookResult = { success: false, error: "Failed to send to n8n webhook." };

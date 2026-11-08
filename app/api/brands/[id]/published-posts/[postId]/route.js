@@ -20,7 +20,7 @@ import {
   sendPublishedPostDeleteToN8n,
 } from "@/lib/published-post-delete-webhook";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
-import { normalizeScheduledDate } from "@/lib/timezone";
+import { parseScheduledDate, resolveBrandTimezone } from "@/lib/timezone";
 
 // The local row survives every one of these, so the client can retry.
 const DELETE_WEBHOOK_ERROR_STATUS = {
@@ -304,11 +304,11 @@ export async function POST(request, { params }) {
       if (!body.scheduledDate || body.scheduledDate === "") {
         updateData.scheduledDate = null;
       } else {
-        const date = normalizeScheduledDate(body.scheduledDate);
-        if (!date) {
-          return NextResponse.json({ error: "Invalid scheduled date." }, { status: 400 });
+        const parsed = parseScheduledDate(body.scheduledDate, resolveBrandTimezone(brand));
+        if (!parsed.ok) {
+          return NextResponse.json({ error: parsed.error }, { status: 400 });
         }
-        updateData.scheduledDate = date;
+        updateData.scheduledDate = parsed.date;
       }
     }
 
@@ -358,6 +358,7 @@ export async function POST(request, { params }) {
       },
       remoteAwareMedia,
       brand.name,
+      brand.timezone,
     );
     const payloadJson = payload ? JSON.stringify(payload, null, 2) : null;
 
@@ -375,6 +376,7 @@ export async function POST(request, { params }) {
         post: { ...updated, jsonPayload: payloadJson },
         media: remoteAwareMedia,
         brandName: brand.name,
+        brandTimezone: brand.timezone,
       });
     } catch (webhookError) {
       webhookResult = { success: false, error: "Failed to send to n8n webhook." };

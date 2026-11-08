@@ -21,7 +21,7 @@ import {
 import { PUBLISHED_POST_ORDER_BY } from "@/lib/published-post-order";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { uploadPublishedPostMedia, isCanonicalMediaUrl } from "@/lib/published-post-remote-media";
-import { normalizeScheduledDate } from "@/lib/timezone";
+import { parseScheduledDate, resolveBrandTimezone, hasBrandTimezone } from "@/lib/timezone";
 
 const MAX_POSTS_PER_BRAND = 21;
 
@@ -153,14 +153,16 @@ export async function POST(request, { params }) {
 
   let scheduledDate = null;
   if (rawScheduledDate) {
-    const date = normalizeScheduledDate(rawScheduledDate);
-    if (!date) {
-      return NextResponse.json(
-        { error: "Invalid scheduled date." },
-        { status: 400 },
-      );
+    // Bare wall-clock values are interpreted in the BRAND timezone; the
+    // browser/server zone never participates.
+    if (!hasBrandTimezone(brand)) {
+      console.warn(`[PublishedPost] brand ${id} has no timezone; using default for scheduling`);
     }
-    scheduledDate = date;
+    const parsed = parseScheduledDate(rawScheduledDate, resolveBrandTimezone(brand));
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
+    }
+    scheduledDate = parsed.date;
   }
 
   // ── Platform + postType specific validation ──────────────────────────────────
@@ -367,6 +369,7 @@ export async function POST(request, { params }) {
         { ...post, thumbnailUrl },
         mediaRecords,
         brand.name,
+        brand.timezone,
       );
       const payloadJson = payload ? JSON.stringify(payload, null, 2) : null;
 
@@ -440,6 +443,7 @@ export async function POST(request, { params }) {
           { ...currentPost, thumbnailUrl: updatedThumbnailUrl },
           remoteMedia,
           brand.name,
+          brand.timezone,
         );
         const remotePayloadJson = remotePayload
           ? JSON.stringify(remotePayload, null, 2)
@@ -484,6 +488,7 @@ export async function POST(request, { params }) {
         post: result,
         media: result.media || [],
         brandName: brand.name,
+        brandTimezone: brand.timezone,
       });
     } catch (webhookError) {
       webhookResult = { success: false, error: "Failed to send to n8n webhook." };

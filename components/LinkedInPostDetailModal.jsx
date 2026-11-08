@@ -5,9 +5,11 @@ import { toast } from "sonner";
 import { StatusPill } from "@/components/content-report/StatusPill";
 import { detectKind } from "@/components/LinkedInPublishedPostsSection";
 import {
-  parseWallClockInTz,
   formatToDateTimeLocalInTz,
   formatScheduledDateInTz,
+  resolveBrandTimezone,
+  brandTimezoneLabel,
+  scheduledValueForSubmit,
 } from "@/lib/timezone";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
 
@@ -76,13 +78,13 @@ function formatPostId(postNumber) {
   return `POST-${String(postNumber).padStart(4, "0")}`;
 }
 
-function fmtDate(date) {
+function fmtDate(date, timeZone) {
   if (!date) return null;
   try {
     return new Date(date).toLocaleString("en-US", {
       dateStyle: "medium",
       timeStyle: "short",
-      timeZone: "America/Vancouver",
+      timeZone: resolveBrandTimezone(timeZone),
     });
   } catch {
     return String(date);
@@ -213,10 +215,10 @@ function mediaFormatLabel(kind) {
 // empty, or invalid, so the modal never breaks. It deliberately omits media_url
 // and mirrors the canonical n8n shape for the post's media kind. Valid stored
 // JSON is displayed exactly as-is (no rewriting).
-function buildLinkedInFallback(post, url, thumbnailUrl, kind) {
+function buildLinkedInFallback(post, url, thumbnailUrl, kind, tz) {
   const postId = formatPostId(post.postNumber) || post.id;
   const scheduledDateStr = post.scheduledDate
-    ? formatScheduledDateInTz(post.scheduledDate, "America/Vancouver")
+    ? formatScheduledDateInTz(post.scheduledDate, tz)
     : "";
 
   let postTypeLabel;
@@ -262,12 +264,12 @@ function buildLinkedInFallback(post, url, thumbnailUrl, kind) {
   };
 }
 
-function getPayload(post, url, thumbnailUrl, kind) {
+function getPayload(post, url, thumbnailUrl, kind, tz) {
   const parsed = safeParse(post.jsonPayload);
   if (parsed && typeof parsed === "object") {
     return { payload: parsed, usedFallback: false };
   }
-  return { payload: buildLinkedInFallback(post, url, thumbnailUrl, kind), usedFallback: true };
+  return { payload: buildLinkedInFallback(post, url, thumbnailUrl, kind, tz), usedFallback: true };
 }
 
 function InfoField({ label, value }) {
@@ -292,6 +294,7 @@ function InfoField({ label, value }) {
 export default function LinkedInPostDetailModal({
   post,
   brandId,
+  brandTimezone,
   onClose,
   onUpdated,
   onDeleted,
@@ -312,19 +315,20 @@ export default function LinkedInPostDetailModal({
 
   // Edit form state
   const [editCaption, setEditCaption] = useState(post.caption || "");
-  const [editScheduledDate, setEditScheduledDate] = useState(
-    post.scheduledDate
-      ? formatToDateTimeLocalInTz(post.scheduledDate, "America/Vancouver")
-      : "",
-  );
+  // The brand timezone is the authority for every date/time shown or edited here.
+  const tz = resolveBrandTimezone(brandTimezone);
+  const initialScheduledLocal = post.scheduledDate
+    ? formatToDateTimeLocalInTz(post.scheduledDate, tz)
+    : "";
+  const [editScheduledDate, setEditScheduledDate] = useState(initialScheduledLocal);
   const [editNotes, setEditNotes] = useState(post.notes || "");
   const [editStatus, setEditStatus] = useState(post.status || "draft");
 
   const resolvedPdfUrl = useMemo(() => resolvePdfUrl(post), [post]);
   const media = useMemo(() => resolveLinkedInMedia(post), [post]);
   const { payload, usedFallback } = useMemo(
-    () => getPayload(post, media.url, media.thumbnailUrl, media.kind),
-    [post, media],
+    () => getPayload(post, media.url, media.thumbnailUrl, media.kind, tz),
+    [post, media, tz],
   );
   const payloadStr = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
 
@@ -339,8 +343,8 @@ export default function LinkedInPostDetailModal({
   const pdfFileSize = docMedia?.fileSize;
 
   const postIdShort = formatPostId(post.postNumber);
-  const uploadDate = fmtDate(post.createdAt);
-  const scheduledDateStr = fmtDate(post.scheduledDate);
+  const uploadDate = fmtDate(post.createdAt, tz);
+  const scheduledDateStr = fmtDate(post.scheduledDate, tz);
 
   // A destructive / in-flight request is active — block dismiss actions.
   const busy = saving || deleting || sending;
@@ -463,11 +467,7 @@ export default function LinkedInPostDetailModal({
 
   function handleEdit() {
     setEditCaption(post.caption || "");
-    setEditScheduledDate(
-      post.scheduledDate
-        ? formatToDateTimeLocalInTz(post.scheduledDate, "America/Vancouver")
-        : "",
-    );
+    setEditScheduledDate(initialScheduledLocal);
     setEditNotes(post.notes || "");
     setEditStatus(post.status || "draft");
     setEditing(true);
@@ -480,10 +480,10 @@ export default function LinkedInPostDetailModal({
   async function handleSave() {
     setSaving(true);
     try {
-      const scheduledDateIso = editScheduledDate
-        ? parseWallClockInTz(editScheduledDate, "America/Vancouver")?.toISOString() ??
-          null
-        : null;
+      // Unchanged → original instant (no drift); changed → wall-clock string that
+      // the server interprets in the brand timezone.
+      const scheduledDateIso =
+        scheduledValueForSubmit(editScheduledDate, initialScheduledLocal, post.scheduledDate) || null;
 
       // Only editable metadata is sent. Platform / postType / media / files /
       // jsonPayload / media_url / document_url / thumbnail_url are owned by the
@@ -748,7 +748,7 @@ export default function LinkedInPostDetailModal({
                   style={fieldStyle}
                 />
               </EditField>
-              <EditField label="Scheduled Date">
+              <EditField label={`Scheduled Date · ${brandTimezoneLabel(brandTimezone)}`}>
                 <input
                   type="datetime-local"
                   value={editScheduledDate}
@@ -1140,6 +1140,7 @@ export default function LinkedInPostDetailModal({
           sourcePlatform="LinkedIn"
           targetPlatform="Instagram"
           brandId={brandId}
+          brandTimezone={brandTimezone}
           onCreated={handleAdaptCreated}
           onClose={() => setShowAdapt(false)}
         />

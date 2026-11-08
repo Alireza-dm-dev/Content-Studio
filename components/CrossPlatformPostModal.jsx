@@ -2,7 +2,12 @@
 
 import { useState, useMemo, useRef, useEffect } from "react";
 import { toast } from "sonner";
-import { parseWallClockInTz, formatToDateTimeLocalInTz } from "@/lib/timezone";
+import {
+  formatToDateTimeLocalInTz,
+  resolveBrandTimezone,
+  brandTimezoneLabel,
+  scheduledValueForSubmit,
+} from "@/lib/timezone";
 
 // Matches the server's new max SFTP upload budget (30 min). Image/PDF uploads
 // finish in milliseconds, so this only extends the ceiling for large video
@@ -310,7 +315,7 @@ function fileToBase64(file) {
   });
 }
 
-export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, targetPlatform, brandId, onCreated, onClose }) {
+export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, targetPlatform, brandId, brandTimezone, onCreated, onClose }) {
   const isPdfBlockedSource = isPdfBlocked(sourcePost, targetPlatform);
 
   const [targetPostType, setTargetPostType] = useState(() => getDefaultPostType(sourcePost, targetPlatform));
@@ -318,9 +323,10 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
   const [publishTitle, setPublishTitle] = useState("");
   const [documentTitle, setDocumentTitle] = useState("");
   const [hashtags, setHashtags] = useState(() => extractHashtags(sourcePost.caption || ""));
-  const [scheduledDate, setScheduledDate] = useState(
-    sourcePost.scheduledDate ? formatToDateTimeLocalInTz(sourcePost.scheduledDate, "America/Vancouver") : ""
-  );
+  const initialScheduledDate = sourcePost.scheduledDate
+    ? formatToDateTimeLocalInTz(sourcePost.scheduledDate, resolveBrandTimezone(brandTimezone))
+    : "";
+  const [scheduledDate, setScheduledDate] = useState(initialScheduledDate);
   const [mediaStrategy, setMediaStrategy] = useState(isPdfBlockedSource ? "replace" : "reuse");
   const [manifest, setManifest] = useState(() => {
     if (isPdfBlockedSource) return [];
@@ -500,8 +506,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
         }
       }
       if (scheduledDate) {
-        const dt = parseWallClockInTz(scheduledDate, "America/Vancouver");
-        if (dt) payload.scheduledDate = dt.toISOString();
+        payload.scheduledDate = scheduledValueForSubmit(scheduledDate, initialScheduledDate, sourcePost.scheduledDate);
       }
       if (sendToN8n) {
         payload.sendToN8n = true;
@@ -906,7 +911,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
 
             {/* Scheduled date */}
             <div>
-              <div style={{ ...lbl, marginBottom: 4, fontSize: 9 }}>Scheduled Date (optional)</div>
+              <div style={{ ...lbl, marginBottom: 4, fontSize: 9 }}>Scheduled Date (optional) · {brandTimezoneLabel(brandTimezone)}</div>
               <input type="datetime-local" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} style={fieldStyle} />
             </div>
 

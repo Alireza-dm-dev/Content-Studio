@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { toast } from "sonner";
-import { parseWallClockInTz } from "@/lib/timezone";
+import { brandTimezoneLabel } from "@/lib/timezone";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -126,7 +126,7 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(1024, i)).toFixed(i === 1 ? 1 : 2)} ${units[i - 1]}`;
 }
 
-export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel }) {
+export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreated, onCancel }) {
   const [format, setFormat] = useState("carousel"); // default: PDF Carousel
   const [caption, setCaption] = useState("");
   const [scheduledDate, setScheduledDate] = useState("");
@@ -251,10 +251,9 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
       fd.append("postType", format);
       fd.append("caption", caption);
       if (scheduledDate) {
-        const vancouverDate = parseWallClockInTz(scheduledDate, "America/Vancouver");
-        if (vancouverDate) {
-          fd.append("scheduledDate", vancouverDate.toISOString());
-        }
+        // Sent as a bare wall-clock value; the server interprets it in the
+        // brand's timezone (never the browser's).
+        fd.append("scheduledDate", scheduledDate);
       }
       fd.append("notes", notes);
       fd.append("status", status || "draft");
@@ -503,7 +502,7 @@ export default function LinkedInPostUploadForm({ brandId, onCreated, onCancel })
 
         {/* Scheduled date */}
         <div>
-          <div style={{ ...lbl, marginBottom: 4 }}>Scheduled Date (optional)</div>
+          <div style={{ ...lbl, marginBottom: 4 }}>Scheduled Date (optional) · {brandTimezoneLabel(brandTimezone)}</div>
           <input
             type="datetime-local"
             value={scheduledDate}

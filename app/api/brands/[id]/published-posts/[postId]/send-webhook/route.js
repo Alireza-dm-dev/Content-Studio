@@ -196,6 +196,7 @@ export async function POST(request, { params }) {
         { ...post, thumbnailUrl: updatedThumbnail },
         updatedMedia,
         brand.name,
+        brand.timezone,
       );
       const payloadJson = remotePayload
         ? JSON.stringify(remotePayload, null, 2)
@@ -229,6 +230,7 @@ export async function POST(request, { params }) {
       post,
       media: post.media || [],
       brandName: brand.name,
+      brandTimezone: brand.timezone,
     });
 
     const webhookLog = {

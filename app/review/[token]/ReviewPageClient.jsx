@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { X, MessageCircle } from "lucide-react";
+import { formatDisplayInTz } from "@/lib/timezone";
 import PublicReviewCommentsPanel from "./PublicReviewCommentsPanel";
 
 const lbl = {
@@ -209,7 +210,7 @@ function ReviewLinkedInPostRow({ post, onClick, commentCount, onCommentClick }) 
   );
 }
 
-function ReviewPostDetailModal({ post, platform, onClose, showComment, onCommentClick }) {
+function ReviewPostDetailModal({ post, platform, timeZone, onClose, showComment, onCommentClick }) {
   const orderedMedia = [...(post.media || [])].sort((a, b) => a.order - b.order);
   const isCarousel = post.postType === "carousel" || orderedMedia.length > 1;
   const [carouselIdx, setCarouselIdx] = useState(0);
@@ -317,7 +318,7 @@ function ReviewPostDetailModal({ post, platform, onClose, showComment, onComment
             <InfoField label="Status" value={post.status} />
             <InfoField label="Uploaded" value={post.createdAt ? new Date(post.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : null} />
             {post.scheduledDate && (
-              <InfoField label="Scheduled" value={new Date(post.scheduledDate).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" })} />
+              <InfoField label="Scheduled" value={formatDisplayInTz(post.scheduledDate, timeZone)} />
             )}
           </div>
 
@@ -549,6 +550,7 @@ export default function ReviewPageClient({
 
       {selectedPost && (
         <ReviewPostDetailModal
+          timeZone={brand.timezone}
           post={selectedPost}
           platform={selectedPost._platform}
           onClose={() => setSelectedPost(null)}

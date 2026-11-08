@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { validateTimezoneInput } from "@/lib/timezone";
 import { prisma } from "@/lib/prisma";
 import { normalizeLanguageCode, isSupportedLanguageCode, DEFAULT_CONTENT_LANGUAGE } from "@/lib/content-language";
 import { getCurrentUser } from "@/lib/auth";
@@ -32,7 +33,7 @@ export async function POST(request) {
   const {
     name, website, instagramPage, linkedinPage, facebookPage,
     businessLocation, businessType, mainServicesOrProducts,
-    targetAudience, brandTone, brandVisualStyle, contentLanguage,
+    targetAudience, brandTone, brandVisualStyle, contentLanguage, timezone,
   } = body;
   if (!name?.trim()) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -43,6 +44,10 @@ export async function POST(request) {
       { status: 400 }
     );
   }
+  const tzCheck = validateTimezoneInput(timezone);
+  if (!tzCheck.ok) {
+    return NextResponse.json({ success: false, error: tzCheck.error }, { status: 400 });
+  }
   const normalizedLanguage = contentLanguage !== undefined
     ? normalizeLanguageCode(contentLanguage)
     : DEFAULT_CONTENT_LANGUAGE;
@@ -52,6 +57,7 @@ export async function POST(request) {
       businessLocation, businessType, mainServicesOrProducts,
       targetAudience, brandTone, brandVisualStyle,
       contentLanguage: normalizedLanguage,
+      timezone: tzCheck.value,
     },
   });
   return NextResponse.json(brand, { status: 201 });

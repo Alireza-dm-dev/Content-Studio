@@ -9,6 +9,7 @@ import { FileText, Image as ImageIcon, Video as VideoIcon, MessageCircle, CheckC
 import LinkedInPostUploadForm from "@/components/LinkedInPostUploadForm";
 import LinkedInPostDetailModal from "@/components/LinkedInPostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
+import { resolveBrandTimezone } from "@/lib/timezone";
 import { getPublishedPostFooterState } from "@/lib/published-post-footer";
 import { sortPublishedPosts } from "@/lib/published-post-order";
 
@@ -43,13 +44,13 @@ function formatPostIdShort(postNumber) {
   return `P-${String(postNumber).padStart(3, "0")}`;
 }
 
-function fmtDate(date) {
+function fmtDate(date, timeZone) {
   if (!date) return "—";
   try {
     return new Date(date).toLocaleString("en-US", {
       dateStyle: "medium",
       timeStyle: "short",
-      timeZone: "America/Vancouver",
+      timeZone: resolveBrandTimezone(timeZone),
     });
   } catch {
     return String(date);
@@ -84,7 +85,7 @@ const KIND_META = {
   video: { label: "Video", Icon: VideoIcon, action: "Open Video" },
 };
 
-function PostRow({ post, onOpen, onCommentClick }) {
+function PostRow({ post, timeZone, onOpen, onCommentClick }) {
   const kind = detectKind(post);
   const meta = KIND_META[kind] || KIND_META.pdf;
   const { Icon, label, action } = meta;
@@ -202,7 +203,7 @@ function PostRow({ post, onOpen, onCommentClick }) {
         {/*
         // ── Footer state line: POSTED / scheduled time / NOT SCHEDULED ── */}
         <div
-          aria-label={getPublishedPostFooterState(post).ariaLabel}
+          aria-label={getPublishedPostFooterState(post, timeZone).ariaLabel}
           style={{
             ...lbl,
             fontSize: 9,
@@ -215,7 +216,7 @@ function PostRow({ post, onOpen, onCommentClick }) {
           }}
         >
           {(() => {
-            const fs = getPublishedPostFooterState(post);
+            const fs = getPublishedPostFooterState(post, timeZone);
             if (fs.type === "posted") {
               return <>
                 <CheckCircle size={11} aria-hidden="true" style={{ flexShrink: 0 }} />
@@ -238,7 +239,7 @@ function PostRow({ post, onOpen, onCommentClick }) {
         </div>
 
         <div style={{ ...lbl, fontSize: 9 }}>
-          Uploaded: {fmtDate(post.createdAt)}
+          Uploaded: {fmtDate(post.createdAt, timeZone)}
         </div>
       </div>
 
@@ -447,6 +448,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
       {showForm && (
         <LinkedInPostUploadForm
           brandId={brand.id}
+          brandTimezone={brand.timezone}
           onCreated={handleCreated}
           onCancel={() => setShowForm(false)}
         />
@@ -525,6 +527,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
             <PostRow
               key={post.id}
               post={post}
+              timeZone={resolveBrandTimezone(brand)}
               onOpen={() => setSelectedPost(post)}
               onCommentClick={(p) => setCommentsPost(p)}
             />
@@ -538,6 +541,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
           key={selectedPost.id}
           post={selectedPost}
           brandId={brand.id}
+          brandTimezone={brand.timezone}
           onClose={() => setSelectedPost(null)}
           onUpdated={handleUpdated}
           onDeleted={handleDeleted}

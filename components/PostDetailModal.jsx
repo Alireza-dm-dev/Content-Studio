@@ -3,9 +3,11 @@
 import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import {
-  parseWallClockInTz,
   formatToDateTimeLocalInTz,
   formatScheduledDateInTz,
+  resolveBrandTimezone,
+  brandTimezoneLabel,
+  scheduledValueForSubmit,
 } from "@/lib/timezone";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
 
@@ -30,7 +32,7 @@ function mapN8nPostType(postType) {
   return "single_image";
 }
 
-function buildPayloadFromPost(post) {
+function buildPayloadFromPost(post, tz) {
   const orderedMedia = (post.media || []).sort((a, b) => a.order - b.order);
   const mediaCount = orderedMedia.length;
   const isCarousel = post.postType === "carousel" || mediaCount > 1;
@@ -38,7 +40,7 @@ function buildPayloadFromPost(post) {
 
   let scheduledDateStr = "";
   if (post.scheduledDate) {
-    scheduledDateStr = formatScheduledDateInTz(post.scheduledDate, "America/Vancouver");
+    scheduledDateStr = formatScheduledDateInTz(post.scheduledDate, tz);
   }
 
   const now = new Date();
@@ -103,7 +105,7 @@ function buildPayloadFromPost(post) {
   };
 }
 
-function getPayload(post) {
+function getPayload(post, tz) {
   if (post.jsonPayload) {
     try {
       return typeof post.jsonPayload === "string"
@@ -113,7 +115,7 @@ function getPayload(post) {
       // stored jsonPayload is corrupt — fall through
     }
   }
-  return buildPayloadFromPost(post);
+  return buildPayloadFromPost(post, tz);
 }
 
 function formatPostIdShort(postNumber) {
@@ -121,7 +123,7 @@ function formatPostIdShort(postNumber) {
   return `P-${String(postNumber).padStart(3, "0")}`;
 }
 
-export default function PostDetailModal({ post, brandId, onClose, onUpdated, onDeleted, onCrossPlatformCreated }) {
+export default function PostDetailModal({ post, brandId, brandTimezone, onClose, onUpdated, onDeleted, onCrossPlatformCreated }) {
   const [copied, setCopied] = useState(false);
   const [showJson, setShowJson] = useState(false);
   const [carouselIdx, setCarouselIdx] = useState(0);
@@ -133,17 +135,18 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
   const [showAdapt, setShowAdapt] = useState(false);
   const closedRef = useRef(false);
 
+  // The brand timezone is the authority for every date/time shown or edited here.
+  const tz = resolveBrandTimezone(brandTimezone);
   // Edit form state
   const [editCaption, setEditCaption] = useState(post.caption || "");
   const [editPlatform, setEditPlatform] = useState(post.platform || "Instagram");
   const [editPostType, setEditPostType] = useState(post.postType || "static");
-  const [editScheduledDate, setEditScheduledDate] = useState(
-    post.scheduledDate ? formatToDateTimeLocalInTz(post.scheduledDate, "America/Vancouver") : ""
-  );
+  const initialScheduledLocal = post.scheduledDate ? formatToDateTimeLocalInTz(post.scheduledDate, tz) : "";
+  const [editScheduledDate, setEditScheduledDate] = useState(initialScheduledLocal);
   const [editNotes, setEditNotes] = useState(post.notes || "");
   const [editStatus, setEditStatus] = useState(post.status || "draft");
 
-  const payload = useMemo(() => getPayload(post), [post]);
+  const payload = useMemo(() => getPayload(post, tz), [post, tz]);
   const payloadStr = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
 
   const orderedMedia = [...(post.media || [])].sort((a, b) => a.order - b.order);
@@ -161,7 +164,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
   const scheduledDateStr = post.scheduledDate
     ? new Date(post.scheduledDate).toLocaleDateString("en-US", {
         year: "numeric", month: "short", day: "numeric",
-        timeZone: "America/Vancouver",
+        timeZone: tz,
       })
     : null;
 
@@ -267,9 +270,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
     setEditCaption(post.caption || "");
     setEditPlatform(post.platform || "Instagram");
     setEditPostType(post.postType || "static");
-    setEditScheduledDate(
-      post.scheduledDate ? formatToDateTimeLocalInTz(post.scheduledDate, "America/Vancouver") : ""
-    );
+    setEditScheduledDate(initialScheduledLocal);
     setEditNotes(post.notes || "");
     setEditStatus(post.status || "draft");
     setEditing(true);
@@ -282,10 +283,10 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
   async function handleSave() {
     setSaving(true);
     try {
+      // Unchanged → original instant (no drift); changed → wall-clock string that
+      // the server interprets in the brand timezone.
       const scheduledDateIso =
-        editScheduledDate
-          ? (parseWallClockInTz(editScheduledDate, "America/Vancouver")?.toISOString() ?? null)
-          : null;
+        scheduledValueForSubmit(editScheduledDate, initialScheduledLocal, post.scheduledDate) || null;
 
       const body = {
         caption: editCaption,
@@ -664,7 +665,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
                   <option value="reel">Reel / Video</option>
                 </select>
               </EditField>
-              <EditField label="Scheduled Date">
+              <EditField label={`Scheduled Date · ${brandTimezoneLabel(brandTimezone)}`}>
                 <input
                   type="datetime-local"
                   value={editScheduledDate}
@@ -833,6 +834,7 @@ export default function PostDetailModal({ post, brandId, onClose, onUpdated, onD
           sourcePlatform="Instagram"
           targetPlatform="LinkedIn"
           brandId={brandId}
+          brandTimezone={brandTimezone}
           onCreated={handleAdaptCreated}
           onClose={() => setShowAdapt(false)}
         />

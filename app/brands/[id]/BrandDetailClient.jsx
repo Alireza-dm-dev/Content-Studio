@@ -6,6 +6,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import BrandFilesGallery from "@/components/BrandFilesGallery";
 import BrandKnowledgeSection from "@/components/BrandKnowledgeSection";
+import BrandTimezoneField from "@/components/BrandTimezoneField";
 import { normalizeBrandIdentityOutput } from "@/lib/brand-identity-utils";
 import { CONTENT_LANGUAGES, DEFAULT_CONTENT_LANGUAGE } from "@/lib/content-language";
 
@@ -564,6 +565,7 @@ export default function BrandDetailClient({ brand: initialBrand, initialFiles, i
     brandTone: initialBrand.brandTone ?? "",
     brandVisualStyle: initialBrand.brandVisualStyle ?? "",
     contentLanguage: initialBrand.contentLanguage ?? DEFAULT_CONTENT_LANGUAGE,
+    timezone: initialBrand.timezone ?? "",
   });
 
   const [saving, setSaving] = useState(false);
@@ -584,11 +586,14 @@ export default function BrandDetailClient({ brand: initialBrand, initialFiles, i
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || "");
+      }
       toast.success("Brand saved.");
       router.refresh();
-    } catch {
-      toast.error("Failed to save brand.");
+    } catch (err) {
+      toast.error(err?.message || "Failed to save brand.");
     } finally {
       setSaving(false);
     }
@@ -673,6 +678,14 @@ export default function BrandDetailClient({ brand: initialBrand, initialFiles, i
               <input name="website" value={form.website} onChange={handleChange} placeholder="https://..." style={inputStyle} />
             </FieldRow>
           </FieldGrid>
+          <FieldRow label="Timezone">
+            <BrandTimezoneField
+              value={form.timezone}
+              onChange={handleChange}
+              inputStyle={inputStyle}
+              helpStyle={{ ...lbl, marginTop: 5, color: "var(--sketch-ink-faint)", fontSize: 9, lineHeight: 1.4 }}
+            />
+          </FieldRow>
         </InkSection>
 
         {/* Social Media */}

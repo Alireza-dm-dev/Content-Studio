@@ -21,10 +21,11 @@ model Brand {
   brandTone              String?
   brandVisualStyle       String?
   contentLanguage        String   @default("en")
+  timezone               String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
-  brandIdentities          BrandIdentity[]
+  brandIdentities         BrandIdentity[]
   uploadedFiles            UploadedFile[]
   contentCalendars         ContentCalendar[]
   generatedPrompts         GeneratedPrompt[]

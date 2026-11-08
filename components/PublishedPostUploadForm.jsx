@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { toast } from "sonner";
-import { parseWallClockInTz } from "@/lib/timezone";
+import { brandTimezoneLabel } from "@/lib/timezone";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -43,7 +43,7 @@ const fieldStyle = {
   boxSizing: "border-box",
 };
 
-export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }) {
+export default function PublishedPostUploadForm({ brandId, brandTimezone, onCreated, onCancel }) {
   const [postType, setPostType] = useState("static");
   const [platform, setPlatform] = useState("Instagram");
   const [caption, setCaption] = useState("");
@@ -103,10 +103,9 @@ export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }
       fd.append("caption", caption);
 
       if (scheduledDate) {
-        const vancouverDate = parseWallClockInTz(scheduledDate, "America/Vancouver");
-        if (vancouverDate) {
-          fd.append("scheduledDate", vancouverDate.toISOString());
-        }
+        // Sent as a bare wall-clock value; the server interprets it in the
+        // brand's timezone (never the browser's).
+        fd.append("scheduledDate", scheduledDate);
       }
 
       fd.append("notes", notes);
@@ -246,7 +245,7 @@ export default function PublishedPostUploadForm({ brandId, onCreated, onCancel }
 
         {/* Scheduled date */}
         <div>
-          <div style={{ ...lbl, marginBottom: 4 }}>Scheduled Date (optional)</div>
+          <div style={{ ...lbl, marginBottom: 4 }}>Scheduled Date (optional) · {brandTimezoneLabel(brandTimezone)}</div>
           <input
             type="datetime-local"
             value={scheduledDate}
