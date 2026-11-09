@@ -161,16 +161,51 @@ test("late-evening UK posts do not shift day when device zone is far away", () =
 });
 
 // ── 13–14: n8n payload ───────────────────────────────────────────────────────
-test("n8n payload: brand-local Scheduled Date plus unambiguous UTC + zone", () => {
+test("n8n payload: Vancouver legacy Scheduled Date plus UTC + Brand-local fields", () => {
   const post = { id: "p1", platform: "Instagram", postType: "static", status: "draft", scheduledDate: new Date("2026-07-15T09:00:00Z") };
   const p = buildN8nPayload(post, [], "Acme", "Europe/London");
-  assert.equal(p["Scheduled Date"], "15/07/2026 10:00:00");
+  assert.equal(p["Scheduled Date"], "15/07/2026 02:00:00"); // Vancouver (PDT), not Brand-local
   assert.equal(p.scheduled_date_utc, "2026-07-15T09:00:00.000Z");
   assert.equal(p.brand_timezone, "Europe/London");
   assert.equal(p.brand_local_publish_datetime, "2026-07-15T10:00:00");
   const li = buildN8nPayload({ ...post, platform: "LinkedIn" }, [], "Acme", "Europe/London");
   assert.equal(li.scheduled_date_utc, p.scheduled_date_utc);
   assert.equal(li["Scheduled Date"], p["Scheduled Date"]);
+});
+
+test("CASE B UK winter: 10:00 London = 10:00Z -> Vancouver PST 02:00", () => {
+  const utc = tz.parseWallClockInTz("2026-01-15T10:00", "Europe/London");
+  assert.equal(utc.toISOString(), "2026-01-15T10:00:00.000Z");
+  const p = buildN8nPayload({ id: "p", platform: "Instagram", postType: "static", scheduledDate: utc }, [], "A", "Europe/London");
+  assert.equal(p["Scheduled Date"], "15/01/2026 02:00:00");
+  assert.equal(p.brand_local_publish_datetime, "2026-01-15T10:00:00");
+});
+
+test("CASE C Vancouver brand: Brand-local and Scheduled Date match", () => {
+  const utc = tz.parseWallClockInTz("2026-07-15T10:00", "America/Vancouver");
+  const p = buildN8nPayload({ id: "p", platform: "LinkedIn", postType: "static", scheduledDate: utc }, [], "A", "America/Vancouver");
+  assert.equal(p["Scheduled Date"], "15/07/2026 10:00:00");
+  assert.equal(p.brand_local_publish_datetime, "2026-07-15T10:00:00");
+});
+
+test("CASE D Vancouver DST: offset comes from IANA rules, not a fixed shift", () => {
+  const summer = tz.formatLegacyN8nScheduledDate("2026-07-15T12:00:00Z");
+  const winter = tz.formatLegacyN8nScheduledDate("2026-01-15T12:00:00Z");
+  assert.equal(summer, "15/07/2026 05:00:00"); // UTC-7
+  assert.equal(winter, "15/01/2026 04:00:00"); // UTC-8
+  assert.equal(tz.formatLegacyN8nScheduledDate("2026-07-15T09:00:00Z"), "15/07/2026 02:00:00");
+});
+
+test("legacy Scheduled Date ignores the Brand zone and the process TZ", () => {
+  const prev = process.env.TZ;
+  process.env.TZ = "Asia/Tokyo";
+  try {
+    for (const z of ["Europe/London", "Asia/Tokyo", "America/Vancouver", undefined]) {
+      const p = buildN8nPayload({ id: "p", platform: "Instagram", postType: "static", scheduledDate: new Date("2026-07-15T09:00:00Z") }, [], "A", z);
+      assert.equal(p["Scheduled Date"], "15/07/2026 02:00:00");
+      assert.equal(p.scheduled_date_utc, "2026-07-15T09:00:00.000Z");
+    }
+  } finally { if (prev === undefined) delete process.env.TZ; else process.env.TZ = prev; }
 });
 
 test("n8n payload without a scheduled date keeps empty values", () => {
@@ -256,7 +291,7 @@ test("edit webhook receives the brand timezone; payload carries UTC instant", as
   assert.equal(db.webhookCalls[0].brandTimezone, "Europe/London");
   const payload = JSON.parse(db.posts.ig1.jsonPayload);
   assert.equal(payload.scheduled_date_utc, "2026-07-15T09:00:00.000Z");
-  assert.equal(payload["Scheduled Date"], "15/07/2026 10:00:00");
+  assert.equal(payload["Scheduled Date"], "15/07/2026 02:00:00"); // legacy Vancouver
 });
 
 test("nonexistent local time is rejected with 400 and nothing is stored", async () => {

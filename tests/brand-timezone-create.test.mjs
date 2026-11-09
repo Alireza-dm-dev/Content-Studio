@@ -69,7 +69,7 @@ test("Instagram create: Europe/London 15 Jul 10:00 → stored 09:00Z", async () 
   const payload = JSON.parse(JSON.stringify(body.post.jsonPayload ? JSON.parse(body.post.jsonPayload) : {}));
   assert.equal(payload.brand_timezone, "Europe/London");
   assert.equal(payload.scheduled_date_utc, "2026-07-15T09:00:00.000Z");
-  assert.equal(payload["Scheduled Date"], "15/07/2026 10:00:00");
+  assert.equal(payload["Scheduled Date"], "15/07/2026 02:00:00"); // legacy Vancouver
   assert.equal(payload.brand_local_publish_datetime, "2026-07-15T10:00:00");
 });
 

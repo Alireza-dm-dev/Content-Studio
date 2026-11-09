@@ -6,7 +6,7 @@ import { StatusPill } from "@/components/content-report/StatusPill";
 import { detectKind } from "@/components/LinkedInPublishedPostsSection";
 import {
   formatToDateTimeLocalInTz,
-  formatScheduledDateInTz,
+  formatLegacyN8nScheduledDate,
   resolveBrandTimezone,
   brandTimezoneLabel,
   scheduledValueForSubmit,
@@ -218,7 +218,7 @@ function mediaFormatLabel(kind) {
 function buildLinkedInFallback(post, url, thumbnailUrl, kind, tz) {
   const postId = formatPostId(post.postNumber) || post.id;
   const scheduledDateStr = post.scheduledDate
-    ? formatScheduledDateInTz(post.scheduledDate, tz)
+    ? formatLegacyN8nScheduledDate(post.scheduledDate)
     : "";
 
   let postTypeLabel;

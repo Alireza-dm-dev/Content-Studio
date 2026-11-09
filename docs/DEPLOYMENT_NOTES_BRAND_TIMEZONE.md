@@ -12,24 +12,29 @@
 - Changing a Brand's timezone never rewrites stored `scheduledDate` values.
 
 ## n8n payload contract
+UI = Brand-local timezone. Database (`PublishedPost.scheduledDate`) = canonical UTC instant.
+Legacy n8n `Scheduled Date` = **America/Vancouver** wall-clock (backward compatible).
+
 | Field | Meaning | Example (Europe/London, 15 Jul 2026 10:00) |
 |---|---|---|
-| `Scheduled Date` | `DD/MM/YYYY HH:mm:ss` wall clock in the **Brand** timezone | `15/07/2026 10:00:00` |
-| `scheduled_date_utc` | the exact instant, ISO-8601 UTC | `2026-07-15T09:00:00.000Z` |
-| `brand_timezone` | IANA zone used | `Europe/London` |
-| `brand_local_publish_datetime` | Brand-local ISO without offset | `2026-07-15T10:00:00` |
+| `Scheduled Date` | legacy n8n-compatible `DD/MM/YYYY HH:mm:ss` wall clock in **America/Vancouver** (IANA/DST-aware, independent of the Brand zone) | `15/07/2026 02:00:00` |
+| `scheduled_date_utc` | the canonical instant, ISO-8601 UTC | `2026-07-15T09:00:00.000Z` |
+| `brand_timezone` | Brand IANA zone used by the UI | `Europe/London` |
+| `brand_local_publish_datetime` | what the Brand user selected/sees, Brand-local ISO without offset | `2026-07-15T10:00:00` |
 
 With no scheduled date, `Scheduled Date`, `scheduled_date_utc` and `brand_local_publish_datetime`
-are `""`; `brand_timezone` is always set.
+are `""`; `brand_timezone` is always set. A Brand with no timezone falls back to
+`America/Vancouver`, so Brand-local time and `Scheduled Date` coincide.
 
-## n8n compatibility warning — review BEFORE or WITH deployment
-The n8n workflow is **not** modified by this release. Previously `Scheduled Date` was always
-Vancouver wall-clock time. It is now the Brand's wall-clock time, so any n8n logic that assumes
-`Scheduled Date` is Vancouver-local is no longer valid for non-Vancouver brands.
+## n8n compatibility
+**n8n does NOT need to change its expectation for `Scheduled Date`.** It remains America/Vancouver
+local time exactly as before V1.3.39. The UTC/Brand fields are available for future workflow
+migration (schedule from `scheduled_date_utc`; do not apply a timezone conversion to it twice).
 
-Recommended: schedule from `scheduled_date_utc`. Use `brand_timezone` and
-`brand_local_publish_datetime` only where local-time context is needed. Do not apply a timezone
-conversion to `scheduled_date_utc` a second time.
+DST validation (nonexistent/ambiguous times) applies when the user selects a time, in the
+**Brand** timezone. Vancouver is used only when serializing `Scheduled Date`.
 
-Payloads already stored on existing posts keep the old shape until the post is next edited or
-re-sent.
+## Stored payloads
+`PublishedPost.jsonPayload` is not bulk-migrated. Payloads stored by V1.3.39 (Brand-local
+`Scheduled Date`) remain unchanged until the post is next edited, re-sent, adapted or otherwise
+rebuilt; new and rebuilt payloads use the Vancouver `Scheduled Date`.

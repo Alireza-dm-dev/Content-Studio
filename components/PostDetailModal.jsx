@@ -4,7 +4,7 @@ import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import {
   formatToDateTimeLocalInTz,
-  formatScheduledDateInTz,
+  formatLegacyN8nScheduledDate,
   resolveBrandTimezone,
   brandTimezoneLabel,
   scheduledValueForSubmit,
@@ -40,7 +40,7 @@ function buildPayloadFromPost(post, tz) {
 
   let scheduledDateStr = "";
   if (post.scheduledDate) {
-    scheduledDateStr = formatScheduledDateInTz(post.scheduledDate, tz);
+    scheduledDateStr = formatLegacyN8nScheduledDate(post.scheduledDate);
   }
 
   const now = new Date();
