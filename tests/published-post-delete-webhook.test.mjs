@@ -541,3 +541,20 @@ test("unsupported platforms still delete normally with no webhook configured", a
     assert.deepEqual(deletedIds, ["post-1"], String(platform));
   }
 });
+
+test("delete payload: embedded post carries Vancouver Scheduled Date even when stored payload is stale", () => {
+  const payload = buildPublishedPostDeletePayload({
+    post: {
+      id: "p1", brandId: "b1", platform: "Instagram", postType: "static", status: "scheduled",
+      scheduledDate: new Date("2026-07-15T09:00:00.000Z"),
+      jsonPayload: JSON.stringify({ "Scheduled Date": "15/07/2026 10:00:00", Platform: "Instagram" }),
+    },
+    media: [],
+    brand: { name: "Acme", timezone: "Europe/London" },
+    user: null,
+  });
+  assert.equal(payload.post["Scheduled Date"], "15/07/2026 02:00:00");
+  assert.equal(payload.post.scheduled_date_utc, "2026-07-15T09:00:00.000Z");
+  assert.equal(payload.post.brand_timezone, "Europe/London");
+  assert.equal(payload.scheduledDate, "2026-07-15T09:00:00.000Z");
+});

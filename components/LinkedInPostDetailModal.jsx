@@ -7,6 +7,7 @@ import { detectKind } from "@/components/LinkedInPublishedPostsSection";
 import {
   formatToDateTimeLocalInTz,
   formatLegacyN8nScheduledDate,
+  normalizePayloadForN8n,
   resolveBrandTimezone,
   brandTimezoneLabel,
   scheduledValueForSubmit,
@@ -326,10 +327,15 @@ export default function LinkedInPostDetailModal({
 
   const resolvedPdfUrl = useMemo(() => resolvePdfUrl(post), [post]);
   const media = useMemo(() => resolveLinkedInMedia(post), [post]);
-  const { payload, usedFallback } = useMemo(
-    () => getPayload(post, media.url, media.thumbnailUrl, media.kind, tz),
-    [post, media, tz],
-  );
+  // Preview/copy/download show what n8n would receive NOW: time fields re-derived
+  // from the canonical scheduledDate by the same helper the server send uses.
+  const { payload, usedFallback } = useMemo(() => {
+    const r = getPayload(post, media.url, media.thumbnailUrl, media.kind, tz);
+    return {
+      ...r,
+      payload: normalizePayloadForN8n({ payload: r.payload, scheduledDate: post.scheduledDate, brandTimezone: tz }),
+    };
+  }, [post, media, tz]);
   const payloadStr = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
 
   const docMedia =

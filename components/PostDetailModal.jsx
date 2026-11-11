@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   formatToDateTimeLocalInTz,
   formatLegacyN8nScheduledDate,
+  normalizePayloadForN8n,
   resolveBrandTimezone,
   brandTimezoneLabel,
   scheduledValueForSubmit,
@@ -146,7 +147,12 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
   const [editNotes, setEditNotes] = useState(post.notes || "");
   const [editStatus, setEditStatus] = useState(post.status || "draft");
 
-  const payload = useMemo(() => getPayload(post, tz), [post, tz]);
+  // Preview/copy/download show what n8n would receive NOW: stored payload with the
+  // time fields re-derived from the canonical scheduledDate (same helper as the send).
+  const payload = useMemo(
+    () => normalizePayloadForN8n({ payload: getPayload(post, tz), scheduledDate: post.scheduledDate, brandTimezone: tz }),
+    [post, tz],
+  );
   const payloadStr = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
 
   const orderedMedia = [...(post.media || [])].sort((a, b) => a.order - b.order);
