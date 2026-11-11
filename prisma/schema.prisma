@@ -48,6 +48,8 @@ model User {
   role             String    @default("user")
   isActive         Boolean   @default(true)
   passwordHash     String
+  // Legacy single-session columns. Unused since AuthSession; kept so the
+  // migration stays additive. Always NULL.
   sessionToken     String?   @unique
   sessionExpiresAt DateTime?
   createdAt        DateTime  @default(now())
@@ -61,6 +63,22 @@ model User {
   forumPosts              BrandForumPost[]
   forumReplies            BrandForumReply[]
   knowledgeDocuments      BrandKnowledgeDocument[]
+  authSessions            AuthSession[]
+}
+
+// One row per signed-in browser/device. A user has many; a token hash belongs
+// to exactly one. Only the SHA-256 of the cookie token is stored.
+model AuthSession {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  lastUsedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 model BrandAssignment {

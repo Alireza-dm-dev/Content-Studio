@@ -22,6 +22,12 @@ registerHooks({
         shortCircuit: true,
       };
     }
+    if (specifier === "next/headers") {
+      return {
+        url: new URL("node_modules/next/headers.js", ROOT).href,
+        shortCircuit: true,
+      };
+    }
     return next(specifier, context);
   },
 });

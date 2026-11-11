@@ -68,16 +68,16 @@ Conventions: thin handlers, all data access via the `prisma` singleton, AI-gener
 Login page (app/login/page.js)
   └─ POST /api/auth/login
        └─ lib/auth.js verifies bcrypt password hash against User table
-            └─ Sets sessionToken cookie on success
+            └─ Creates an AuthSession row (hashed token) and sets the session cookie
 
 Protected pages
   └─ Call getServerSession() or requireAuth() from lib/auth.js
-       └─ Reads sessionToken cookie, looks up User record
+       └─ Reads session cookie, looks up AuthSession by token hash
             └─ Returns user or redirects to /login
 
 Logout
   └─ POST /api/auth/logout
-       └─ Clears sessionToken in DB and cookie
+       └─ Deletes only the current AuthSession row and clears the cookie
 ```
 
 - **No middleware** — session checks happen inside page/layout Server Components and API route handlers
