@@ -74,7 +74,7 @@ export function SidebarNav({ isAdmin = false }) {
               marginTop: 6,
             }}
           >
-            v0.8.2
+            V1.3.41
           </div>
         </div>
       </Link>
