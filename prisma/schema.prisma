@@ -39,6 +39,7 @@ model Brand {
   workspaceReviews         WorkspaceReview[]
   forumPosts               BrandForumPost[]
   knowledgeDocuments       BrandKnowledgeDocument[]
+  storyContents            BrandStoryContent[]
 }
 
 model User {
@@ -64,6 +65,9 @@ model User {
   forumReplies            BrandForumReply[]
   knowledgeDocuments      BrandKnowledgeDocument[]
   authSessions            AuthSession[]
+  storyContentsCreated    BrandStoryContent[]     @relation("StoryContentCreatedBy")
+  storyContentsCompleted  BrandStoryContent[]     @relation("StoryContentCompletedBy")
+  storyAssetsUploaded     BrandStoryAsset[]
 }
 
 // One row per signed-in browser/device. A user has many; a token hash belongs
@@ -529,4 +533,46 @@ model BrandKnowledgeDocument {
 
   @@index([brandId, status])
   @@index([uploadedByUserId])
+}
+
+// Story Contents: manual Instagram Story handoff. One package per brand per
+// calendar date; never published automatically (no n8n, no PublishedPost).
+model BrandStoryContent {
+  id                String    @id @default(cuid())
+  brandId           String
+  brand             Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  storyDate         String // calendar date "YYYY-MM-DD", deliberately timezone-free
+  comments          String?
+  status            String    @default("READY") // READY | UPLOADED
+  createdByUserId   String?
+  createdBy         User?     @relation("StoryContentCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdByName     String
+  completedByUserId String?
+  completedBy       User?     @relation("StoryContentCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  completedByName   String?
+  completedAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  assets BrandStoryAsset[]
+
+  @@unique([brandId, storyDate])
+}
+
+model BrandStoryAsset {
+  id               String            @id @default(cuid())
+  storyContentId   String
+  storyContent     BrandStoryContent @relation(fields: [storyContentId], references: [id], onDelete: Cascade)
+  originalFileName String
+  storedPath       String // relative to .data/, never returned to clients
+  mimeType         String
+  mediaType        String // IMAGE | VIDEO
+  fileSize         Int
+  sortOrder        Int
+  uploadedByUserId String?
+  uploadedBy       User?             @relation(fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  uploadedByName   String
+  createdAt        DateTime          @default(now())
+
+  @@index([storyContentId, sortOrder])
 }

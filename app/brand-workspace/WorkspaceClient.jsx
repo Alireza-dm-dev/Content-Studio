@@ -9,6 +9,7 @@ import { StatBlock } from "@/components/content-report/StatBlock";
 import { StatusPill } from "@/components/content-report/StatusPill";
 import PublishedPostsSection from "@/components/PublishedPostsSection";
 import LinkedInPublishedPostsSection from "@/components/LinkedInPublishedPostsSection";
+import StoryContentsSection from "@/components/StoryContentsSection";
 import BrandForumSection from "@/components/BrandForumSection";
 import WorkspaceReviewPanel from "@/components/WorkspaceReviewPanel";
 import BrandAssistant from "@/components/BrandAssistant";
@@ -376,6 +377,9 @@ export default function WorkspaceClient({ brand, initialCalendars = [] }) {
 
       {/* Instagram Published Posts section */}
       <PublishedPostsSection ref={igSectionRef} brand={brand} onCrossPlatformPostCreated={handleCrossPlatformPostCreated} />
+
+      {/* Story Contents: manual Instagram Story handoff (no auto-publishing) */}
+      <StoryContentsSection brandId={brand.id} />
 
       {/* LinkedIn Published Posts section */}
       <LinkedInPublishedPostsSection ref={liSectionRef} brand={brand} onCrossPlatformPostCreated={handleCrossPlatformPostCreated} />
