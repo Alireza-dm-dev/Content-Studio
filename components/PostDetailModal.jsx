@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
+import PostThumbnailField, { checkThumbnailFile } from "@/components/PostThumbnailField";
 import {
   formatToDateTimeLocalInTz,
   formatLegacyN8nScheduledDate,
@@ -134,6 +135,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showAdapt, setShowAdapt] = useState(false);
+  const [thumbBusy, setThumbBusy] = useState(false);
   const closedRef = useRef(false);
 
   // The brand timezone is the authority for every date/time shown or edited here.
@@ -325,6 +327,35 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
       toast.error(err.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Thumbnail / cover: applied immediately and independent of the main media.
+  async function handleThumbnail(file) {
+    if (file) {
+      const problem = checkThumbnailFile(file);
+      if (problem) { toast.error(problem); return; }
+    }
+    setThumbBusy(true);
+    try {
+      const url = `/api/brands/${brandId}/published-posts/${post.id}/thumbnail`;
+      let res;
+      if (file) {
+        const fd = new FormData();
+        fd.append("thumbnail", file);
+        res = await fetch(url, { method: "PUT", body: fd });
+      } else {
+        res = await fetch(url, { method: "DELETE" });
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `Thumbnail update failed (${res.status})`);
+      if (closedRef.current) return;
+      toast.success(file ? "Cover image saved." : "Cover image removed.");
+      if (onUpdated && data.post) onUpdated(data.post);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setThumbBusy(false);
     }
   }
 
@@ -639,6 +670,21 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
             </>
           )}
         </div>
+
+        {/* ── Thumbnail / Cover (Instagram; shown separately, never replaces the media) ── */}
+        {post.platform !== "LinkedIn" && (
+          <div style={{ padding: "12px 18px", borderBottom: "1px solid var(--sketch-line)" }}>
+            <PostThumbnailField
+              previewUrl={post.thumbnailUrl || null}
+              caption={post.caption}
+              recommended={post.postType === "reel"}
+              busy={thumbBusy}
+              hint="JPG, PNG or WebP, up to 10 MB. Saved immediately; use Send to n8n to update an already-sent post."
+              onPick={(file) => handleThumbnail(file)}
+              onRemove={() => handleThumbnail(null)}
+            />
+          </div>
+        )}
 
         {/* ── Info ── */}
         <div style={{ padding: "14px 18px", display: "flex", flexDirection: "column", gap: 14 }}>

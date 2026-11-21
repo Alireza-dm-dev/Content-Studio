@@ -463,3 +463,87 @@ test("month grid is Monday-first and padded to whole weeks", () => {
   assert.equal(dates.parseStoryDate("2028-02-29"), "2028-02-29");
   assert.equal(dates.parseStoryDate("2027-02-29"), null);
 });
+
+// ── Failure diagnostics (V1.3.44) ────────────────────────────────────────────
+
+const LEAKY = /no such table|SQLITE|main\.|prisma|invocation|\/Users|\.db|at .*\(/i;
+
+function p2021(model) {
+  return Object.assign(new Error(`Invalid \`prisma.${model}.findMany()\` invocation: The table \`main.${model}\` does not exist in the current database.`), {
+    name: "PrismaClientKnownRequestError",
+    code: "P2021",
+    meta: { modelName: model, driverAdapterError: { cause: { originalMessage: `no such table: main.${model}`, kind: "TableDoesNotExist", table: `main.${model}` } } },
+  });
+}
+
+async function withPatched(target, key, value, fn) {
+  const original = target[key];
+  target[key] = value;
+  const errors = mock.method(console, "error", () => {});
+  try { return await fn(); } finally { target[key] = original; errors.mock.restore(); }
+}
+
+test("missing Story migration: month GET and create return 503 STORY_CONTENT_NOT_MIGRATED without internals", async () => {
+  const sc = prismaFake.brandStoryContent;
+  const broken = { ...sc, findMany: async () => { throw p2021("BrandStoryContent"); }, create: async () => { throw p2021("BrandStoryContent"); } };
+  await withPatched(prismaFake, "brandStoryContent", broken, async () => {
+    for (const r of [await getMonth(A, "2026-11"), await createDay(A, "2026-11-21")]) {
+      assert.equal(r.status, 503);
+      assert.equal(r.body.success, false);
+      assert.equal(r.body.code, "STORY_CONTENT_NOT_MIGRATED");
+      assert.match(r.body.error, /database migration has not been applied/);
+      assert.doesNotMatch(JSON.stringify(r.body), LEAKY);
+    }
+  });
+});
+
+test("stale Prisma client without Story models is reported as not migrated", async () => {
+  await withPatched(prismaFake, "brandStoryContent", undefined, async () => {
+    const r = await getMonth(A, "2026-11");
+    assert.equal(r.status, 503);
+    assert.equal(r.body.code, "STORY_CONTENT_NOT_MIGRATED");
+  });
+});
+
+test("unrelated DB failure is a generic 500 with no internals, never the migration message", async () => {
+  const sc = prismaFake.brandStoryContent;
+  const boom = () => { throw Object.assign(new Error("SQLITE_BUSY: database is locked at /srv/app/dev.db"), { code: "P1008" }); };
+  await withPatched(prismaFake, "brandStoryContent", { ...sc, findMany: boom, create: boom }, async () => {
+    const g = await getMonth(A, "2026-11");
+    assert.equal(g.status, 500);
+    assert.deepEqual(g.body, { success: false, code: "STORY_CONTENT_FAILED", error: "Could not load Story content." });
+    const c = await createDay(A, "2026-11-21");
+    assert.equal(c.status, 500);
+    assert.deepEqual(c.body, { success: false, code: "STORY_CONTENT_FAILED", error: "Failed to create Story content" });
+  });
+});
+
+test("authorization errors stay 401/403 with codes, even when Story tables are missing", async () => {
+  const sc = prismaFake.brandStoryContent;
+  await withPatched(prismaFake, "brandStoryContent", { ...sc, findMany: async () => { throw p2021("BrandStoryContent"); } }, async () => {
+    state.user = userNone;
+    const f = await getMonth(A, "2026-11");
+    assert.equal(f.status, 403);
+    assert.equal(f.body.code, "FORBIDDEN");
+    state.user = null;
+    const u = await createDay(A, "2026-11-21");
+    assert.equal(u.status, 401);
+    assert.equal(u.body.code, "UNAUTHORIZED");
+  });
+});
+
+test("assigned user loads an empty month (200) and creates an empty READY day without touching storage", async () => {
+  state.user = userA;
+  const m = await getMonth(A, "2026-11");
+  assert.equal(m.status, 200);
+  assert.deepEqual(m.body, { success: true, days: [] });
+  await rm(path.join(STORAGE, A), { recursive: true, force: true });
+  const c = await createDay(A, "2026-11-21");
+  assert.equal(c.status, 201);
+  assert.equal(c.body.story.status, "READY");
+  assert.equal(c.body.story.assets.length, 0);
+  assert.equal(existsSync(path.join(STORAGE, A)), false, "no directory until an asset is uploaded");
+  const up = await upload(A, c.body.story.id, FILES.jpg());
+  assert.equal(up.status, 201);
+  assert.equal(existsSync(path.join(STORAGE, A, c.body.story.id)), true);
+});

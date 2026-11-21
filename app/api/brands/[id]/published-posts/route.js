@@ -22,6 +22,7 @@ import { PUBLISHED_POST_ORDER_BY } from "@/lib/published-post-order";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { uploadPublishedPostMedia, isCanonicalMediaUrl } from "@/lib/published-post-remote-media";
 import { parseScheduledDate, resolveBrandTimezone, hasBrandTimezone } from "@/lib/timezone";
+import { validateThumbnailFile, saveThumbnailFile, isNoFile } from "@/lib/published-post-thumbnail";
 
 const MAX_POSTS_PER_BRAND = 21;
 
@@ -272,6 +273,17 @@ export async function POST(request, { params }) {
   // If carousel was auto-detected via normalize but we only have one file, stay as-is
   // If static but user sent multiple, already truncated above
 
+  // Instagram thumbnail / cover: optional, strictly validated, rejected (not
+  // silently skipped) when invalid. LinkedIn keeps its existing handling below.
+  let instagramThumbnail = null;
+  if (platform === "Instagram" && !isNoFile(thumbnailFile)) {
+    const v = await validateThumbnailFile(thumbnailFile);
+    if (!v.ok) {
+      return NextResponse.json({ error: v.error, code: "INVALID_THUMBNAIL" }, { status: 400 });
+    }
+    instagramThumbnail = v;
+  }
+
   // ── Compute next postNumber ──────────────────────────────────────────────────
   const lastPost = await prisma.publishedPost.findFirst({
     where: { brandId: id },
@@ -311,7 +323,9 @@ export async function POST(request, { params }) {
     }
 
     // Save thumbnail if provided
-    if (thumbnailFile && typeof thumbnailFile !== "string") {
+    if (instagramThumbnail) {
+      thumbnailUrl = await saveThumbnailFile(id, postId, instagramThumbnail);
+    } else if (platform !== "Instagram" && thumbnailFile && typeof thumbnailFile !== "string") {
       const thumbMediaType = getMediaTypeFromMime(thumbnailFile.type);
       if (thumbMediaType === "IMAGE") {
         if (thumbnailFile.size > MAX_FILE_SIZE) {

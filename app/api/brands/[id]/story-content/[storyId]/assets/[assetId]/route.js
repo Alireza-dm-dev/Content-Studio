@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorizeStoryDay, storyError, STORY_DAY_INCLUDE } from "@/lib/story-content-route";
+import { authorizeStoryDay, storyError, storyFailure, withStoryErrors, STORY_DAY_INCLUDE } from "@/lib/story-content-route";
 import { streamStoryFile, removeStoryFile } from "@/lib/story-content-storage";
 import { serializeStoryDay } from "@/lib/story-content";
 
@@ -12,7 +12,7 @@ function findAsset(story, assetId) {
 
 // GET — inline preview, or ?download=1 for an attachment. Brand-authorized;
 // the asset must belong to this Story day, which must belong to this brand.
-export async function GET(request, { params }) {
+export const GET = withStoryErrors("asset read", "Could not load Story asset", async (request, { params }) => {
   const { id, storyId, assetId } = await params;
   const auth = await authorizeStoryDay(id, storyId);
   if (auth.response) return auth.response;
@@ -28,9 +28,9 @@ export async function GET(request, { params }) {
     rangeHeader: request.headers.get("range"),
   });
   return res ?? storyError("File is missing", 404);
-}
+});
 
-export async function DELETE(request, { params }) {
+export const DELETE = withStoryErrors("asset delete", "Failed to remove Story asset", async (request, { params }) => {
   const { id, storyId, assetId } = await params;
   const auth = await authorizeStoryDay(id, storyId);
   if (auth.response) return auth.response;
@@ -45,4 +45,4 @@ export async function DELETE(request, { params }) {
     include: STORY_DAY_INCLUDE,
   });
   return NextResponse.json({ success: true, story: serializeStoryDay(story, id) });
-}
+});

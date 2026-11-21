@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { brandTimezoneLabel } from "@/lib/timezone";
+import PostThumbnailField, { checkThumbnailFile } from "@/components/PostThumbnailField";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -53,14 +54,28 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
   const [error, setError] = useState(null);
 
   const mediaInputRef = useRef(null);
-  const thumbInputRef = useRef(null);
+  // Optional cover image, held locally until the post is submitted.
+  const [thumb, setThumb] = useState(null); // { file, url }
+  const thumbFile = thumb?.file ?? null;
+  const thumbUrlRef = useRef(null);
+
+  function replaceThumb(next) {
+    if (thumbUrlRef.current) URL.revokeObjectURL(thumbUrlRef.current);
+    thumbUrlRef.current = next?.url ?? null;
+    setThumb(next);
+  }
+
+  useEffect(() => () => { if (thumbUrlRef.current) URL.revokeObjectURL(thumbUrlRef.current); }, []);
+
+  function handleThumbPick(file) {
+    const problem = checkThumbnailFile(file);
+    if (problem) { setError(problem); return; }
+    setError(null);
+    replaceThumb({ file, url: URL.createObjectURL(file) });
+  }
 
   function handlePostTypeChange(e) {
-    const val = e.target.value;
-    setPostType(val);
-    if (val !== "reel" && val !== "video") {
-      if (thumbInputRef.current) thumbInputRef.current.value = "";
-    }
+    setPostType(e.target.value);
   }
 
   async function handleSubmit(e) {
@@ -93,9 +108,8 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
         fd.append("files", files[i]);
       }
 
-      const thumbnail = thumbInputRef.current?.files?.[0];
-      if (thumbnail) {
-        fd.append("thumbnail", thumbnail);
+      if (thumbFile) {
+        fd.append("thumbnail", thumbFile);
       }
 
       fd.append("postType", postType);
@@ -206,6 +220,16 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
           )}
         </div>
 
+        {/* Thumbnail / cover (separate from the media; never replaces it) */}
+        <PostThumbnailField
+          previewUrl={thumb?.url ?? null}
+          caption={caption}
+          recommended={postType === "reel" || postType === "video"}
+          busy={uploading}
+          onPick={handleThumbPick}
+          onRemove={() => replaceThumb(null)}
+        />
+
         {/* Post type */}
         <div>
           <div style={{ ...lbl, marginBottom: 4 }}>Post Type *</div>
@@ -264,19 +288,6 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
             style={{ ...fieldStyle, resize: "vertical" }}
           />
         </div>
-
-        {/* Thumbnail for reel/video */}
-        {(postType === "reel" || postType === "video") && (
-          <div>
-            <div style={{ ...lbl, marginBottom: 4 }}>Video Thumbnail (optional)</div>
-            <input
-              ref={thumbInputRef}
-              type="file"
-              accept="image/*"
-              style={fieldStyle}
-            />
-          </div>
-        )}
 
         {/* Error */}
         {error && (

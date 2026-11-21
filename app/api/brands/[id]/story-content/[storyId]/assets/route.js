@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorizeStoryDay, storyError, STORY_DAY_INCLUDE } from "@/lib/story-content-route";
+import { authorizeStoryDay, storyError, storyFailure, withStoryErrors, STORY_DAY_INCLUDE } from "@/lib/story-content-route";
 import { saveStoryFile, removeStoryFile } from "@/lib/story-content-storage";
 import { validateStoryFile, displayName, serializeStoryDay, MAX_STORY_ASSETS } from "@/lib/story-content";
 
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 // POST multipart "file" (one or more). Files are appended in the order sent.
 // The client sends one file per request so large videos stay within body limits.
-export async function POST(request, { params }) {
+export const POST = withStoryErrors("asset upload", "Failed to save Story asset", async (request, { params }) => {
   const { id, storyId } = await params;
   const auth = await authorizeStoryDay(id, storyId);
   if (auth.response) return auth.response;
@@ -52,11 +52,10 @@ export async function POST(request, { params }) {
       });
     }
   } catch (err) {
-    console.error("[StoryContent] asset save failed", { message: err?.message });
     // Roll back this request's rows and files only.
     await prisma.brandStoryAsset.deleteMany({ where: { storyContentId: storyId, storedPath: { in: written } } }).catch(() => {});
     for (const p of written) await removeStoryFile(p);
-    return storyError("Failed to save Story asset", 500);
+    return storyFailure(err, "asset save", "Failed to save Story asset");
   }
 
   // Touch updatedAt so "Last updated" reflects asset changes.
@@ -66,10 +65,10 @@ export async function POST(request, { params }) {
     include: STORY_DAY_INCLUDE,
   });
   return NextResponse.json({ success: true, story: serializeStoryDay(story, id) }, { status: 201 });
-}
+});
 
 // PATCH { assetIds: [...] } — full new order; must list exactly this day's assets.
-export async function PATCH(request, { params }) {
+export const PATCH = withStoryErrors("asset reorder", "Failed to reorder Story assets", async (request, { params }) => {
   const { id, storyId } = await params;
   const auth = await authorizeStoryDay(id, storyId);
   if (auth.response) return auth.response;
@@ -98,4 +97,4 @@ export async function PATCH(request, { params }) {
     include: STORY_DAY_INCLUDE,
   });
   return NextResponse.json({ success: true, story: serializeStoryDay(story, id) });
-}
+});

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireBrandAccess } from "@/lib/brand-access";
-import { storyError, STORY_DAY_INCLUDE } from "@/lib/story-content-route";
+import { storyError, storyFailure, withStoryErrors, STORY_DAY_INCLUDE } from "@/lib/story-content-route";
 import {
   parseStoryDate,
   parseStoryMonth,
@@ -14,7 +14,7 @@ import {
 export const dynamic = "force-dynamic";
 
 // GET ?month=YYYY-MM — lightweight summaries for one month of one brand.
-export async function GET(request, { params }) {
+export const GET = withStoryErrors("load month", "Could not load Story content.", async (request, { params }) => {
   const { id: brandId } = await params;
   const access = await requireBrandAccess(brandId);
   if (!access.ok) return storyError(access.error, access.status);
@@ -28,10 +28,10 @@ export async function GET(request, { params }) {
     orderBy: { storyDate: "asc" },
   });
   return NextResponse.json({ success: true, days: rows.map(serializeStoryDaySummary) });
-}
+});
 
 // POST { storyDate, comments? } — create the Story day for a date.
-export async function POST(request, { params }) {
+export const POST = withStoryErrors("create", "Failed to create Story content", async (request, { params }) => {
   const { id: brandId } = await params;
   const access = await requireBrandAccess(brandId);
   if (!access.ok) return storyError(access.error, access.status);
@@ -71,7 +71,6 @@ export async function POST(request, { params }) {
         { status: 409 },
       );
     }
-    console.error("[StoryContent] create failed", { message: err?.message });
-    return storyError("Failed to create Story content", 500);
+    return storyFailure(err, "create", "Failed to create Story content");
   }
-}
+});

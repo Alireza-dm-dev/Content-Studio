@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { authorizeStoryDay, storyError, STORY_DAY_INCLUDE } from "@/lib/story-content-route";
+import { authorizeStoryDay, storyError, storyFailure, withStoryErrors, STORY_DAY_INCLUDE } from "@/lib/story-content-route";
 import { removeStoryDayDir } from "@/lib/story-content-storage";
 import {
   parseStoryDate,
@@ -12,16 +12,16 @@ import {
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request, { params }) {
+export const GET = withStoryErrors("load", "Could not load Story content.", async (request, { params }) => {
   const { id, storyId } = await params;
   const auth = await authorizeStoryDay(id, storyId);
   if (auth.response) return auth.response;
   return NextResponse.json({ success: true, story: serializeStoryDay(auth.story, id) });
-}
+});
 
 // PATCH { comments?, storyDate?, status? }
 // status UPLOADED records who confirmed the manual upload and when; READY reopens.
-export async function PATCH(request, { params }) {
+export const PATCH = withStoryErrors("update", "Failed to update Story content", async (request, { params }) => {
   const { id, storyId } = await params;
   const auth = await authorizeStoryDay(id, storyId);
   if (auth.response) return auth.response;
@@ -69,12 +69,11 @@ export async function PATCH(request, { params }) {
     return NextResponse.json({ success: true, story: serializeStoryDay(story, id) });
   } catch (err) {
     if (err?.code === "P2002") return storyError("Another Story content already exists on that date.", 409);
-    console.error("[StoryContent] update failed", { message: err?.message });
-    return storyError("Failed to update Story content", 500);
+    return storyFailure(err, "update", "Failed to update Story content");
   }
-}
+});
 
-export async function DELETE(request, { params }) {
+export const DELETE = withStoryErrors("delete", "Failed to delete Story content", async (request, { params }) => {
   const { id, storyId } = await params;
   const auth = await authorizeStoryDay(id, storyId);
   if (auth.response) return auth.response;
@@ -83,4 +82,4 @@ export async function DELETE(request, { params }) {
   await prisma.brandStoryContent.delete({ where: { id: storyId } });
   await removeStoryDayDir(id, storyId);
   return NextResponse.json({ success: true });
-}
+});
