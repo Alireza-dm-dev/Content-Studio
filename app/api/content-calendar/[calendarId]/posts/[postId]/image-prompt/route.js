@@ -6,6 +6,7 @@ import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryFo
 import { normalizeOutputImageTextRequirementsStructured, formatOutputImageTextRequirementsForDisplay } from "@/lib/calendar-post-utils";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
 import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
+import { calendarPostBrandMismatch, findBrandOwnedCombinedVisualDirection, findBrandOwnedReferenceAnalysis } from "@/lib/brand-ownership";
 import { stripImageRatioText, isInstagramPlatform, NO_IMAGE_RATIO_INSTRUCTION } from "@/lib/image-prompt-ratio";
 import {
   resolveImageStyleAndPreset,
@@ -312,6 +313,8 @@ export async function POST(request, { params }) {
     if (!calendar)  return NextResponse.json({ success: false, error: "Calendar not found." }, { status: 404 });
     if (!post)      return NextResponse.json({ success: false, error: "Calendar post not found." }, { status: 404 });
     if (!brand)     return NextResponse.json({ success: false, error: "Brand not found." }, { status: 404 });
+    const mismatch = calendarPostBrandMismatch({ calendar, post, brandId });
+    if (mismatch) return NextResponse.json({ success: false, error: mismatch.error }, { status: mismatch.status });
     if (!identity)  return NextResponse.json({
       success: false,
       error: "Please create or approve brand identity before creating prompts from this calendar post.",
@@ -329,7 +332,9 @@ export async function POST(request, { params }) {
     let refAnalysisData = null;
 
     if (combinedVisualDirectionId) {
-      const cvd = await prisma.combinedVisualDirection.findUnique({ where: { id: combinedVisualDirectionId } });
+      // Another brand's direction is treated exactly like a missing one (fallback below).
+      const cvd = await findBrandOwnedCombinedVisualDirection(prisma, combinedVisualDirectionId, brandId);
+      if (!cvd) cvdId = null;
       if (cvd) {
         const raw = cvd.editedJson || cvd.jsonOutput;
         try {
@@ -339,9 +344,7 @@ export async function POST(request, { params }) {
           rawImageIdea = raw ?? "";
         }
         if (cvd.referenceImageAnalysisId) {
-          const refRow = await prisma.referenceImageAnalysis.findUnique({
-            where: { id: cvd.referenceImageAnalysisId },
-          });
+          const refRow = await findBrandOwnedReferenceAnalysis(prisma, cvd.referenceImageAnalysisId, brandId);
           if (refRow?.jsonOutput) {
             try { refAnalysisData = JSON.parse(refRow.jsonOutput); } catch {}
           }
@@ -349,7 +352,7 @@ export async function POST(request, { params }) {
       }
     }
 
-    const concreteCompositionBlock = combinedVisualDirectionId
+    const concreteCompositionBlock = cvdId
       ? buildConcreteReferenceCompositionBlock(refAnalysisData, cvdDirectionObj)
       : "";
 
@@ -445,7 +448,7 @@ export async function POST(request, { params }) {
         "Preserve brand alignment, post intent, and post content.",
         "Apply the guidance only where it improves the final prompt and does not conflict with the required post context.",
       ] : []),
-      ...(combinedVisualDirectionId ? [
+      ...(cvdId ? [
         concreteCompositionBlock,
       ] : []),
     ].filter(v => v !== null && v !== false && v !== undefined && v !== "").join("\n");
@@ -504,7 +507,7 @@ export async function POST(request, { params }) {
       // Sanitize before the legacy stripRatioMentions, which drops whole sentences.
       if (isInstagramPost) finalPrompt = stripImageRatioText(finalPrompt);
 
-      if (combinedVisualDirectionId) {
+      if (cvdId) {
         finalPrompt = stripRatioMentions(finalPrompt) + concreteCompositionBlock;
       }
       // Instagram calendar prompts never carry ratio/orientation/pixel text,
@@ -527,14 +530,14 @@ export async function POST(request, { params }) {
     }
 
     // ── Save to GeneratedPrompt ───────────────────────────────────────────────
-    const baseMode = combinedVisualDirectionId ? "calendar_post_with_reference" : "calendar_post_without_reference";
+    const baseMode = cvdId ? "calendar_post_with_reference" : "calendar_post_without_reference";
     const mode = isRefinement ? `${baseMode}_refined` : baseMode;
     const rawInputRecord = {
       brandId,
       calendarId,
       calendarPostId: postId,
       calendarPost: norm,
-      imageMode: combinedVisualDirectionId ? "with_reference" : "without_reference",
+      imageMode: cvdId ? "with_reference" : "without_reference",
       combinedVisualDirectionId: cvdId,
       carouselMode,
       carouselSlideNumber: carouselSlideNumber || null,

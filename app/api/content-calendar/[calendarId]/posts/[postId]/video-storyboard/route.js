@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireResourceBrandAccess } from "@/lib/brand-access";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
+import { calendarPostBrandMismatch } from "@/lib/brand-ownership";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 
@@ -107,6 +109,8 @@ export async function POST(request, { params }) {
     if (!calendar) return NextResponse.json({ success: false, error: "Calendar not found." }, { status: 404 });
     if (!post)     return NextResponse.json({ success: false, error: "Calendar post not found." }, { status: 404 });
     if (!brand)    return NextResponse.json({ success: false, error: "Brand not found." }, { status: 404 });
+    const mismatch = calendarPostBrandMismatch({ calendar, post, brandId });
+    if (mismatch) return NextResponse.json({ success: false, error: mismatch.error }, { status: mismatch.status });
     if (!identity) return NextResponse.json({
       success: false,
       error: "Please create or approve brand identity before creating a storyboard from this calendar post.",
@@ -166,11 +170,20 @@ export async function POST(request, { params }) {
       },
     };
 
+    // Visual/brand-guideline knowledge only (purpose-filtered); never throws.
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId,
+      purpose: "video_prompt",
+      query: [norm.visualDirection, norm.videoRawIdea, norm.mainIntegratedScenario, norm.visualMood, norm.hookTitle, norm.coreMessage, videoGoal]
+        .filter((v) => typeof v === "string" && v).join("\n"),
+    });
+
     // ── Build userInput for template ──────────────────────────────────────────
     const userInput = [
       "=== BRAND VISUAL IDENTITY ===",
       brandSummary,
       "",
+      ...(knowledge.block ? [knowledge.block, ""] : []),
       "=== CALENDAR POST ===",
       norm.postNumber && `Post #${norm.postNumber}`,
       `Platform: ${norm.platform || calendar.platform || "social media"}`,

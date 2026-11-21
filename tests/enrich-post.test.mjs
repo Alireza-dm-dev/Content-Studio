@@ -551,8 +551,9 @@ test("the model is told the application owns hashtags in this mode", () => {
 test("the existing regeneration scopes keep their exact field whitelists", () => {
   assert.deepEqual(SCOPE_FIELDS.visual_only, VISUAL_FIELDS);
   assert.deepEqual(SCOPE_FIELDS.visual_ideas_only, VISUAL_FIELDS);
+  // Entire Post rewrites execution, not strategy: mainAngle is preserved (V1.3.45).
   assert.deepEqual(SCOPE_FIELDS.entire_post, [
-    "hookTitle", "mainAngle", "coreMessage", "caption", "hashtags", ...VISUAL_FIELDS,
+    "hookTitle", "coreMessage", "caption", "hashtags", ...VISUAL_FIELDS,
   ]);
   assert.deepEqual(SCOPE_FIELDS.custom_instruction, [
     "format", "hookTitle", "mainAngle", "coreMessage", "caption", "hashtags", ...VISUAL_FIELDS,

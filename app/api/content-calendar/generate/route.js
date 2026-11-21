@@ -605,8 +605,8 @@ async function handleGenerate(request) {
       query: [
         formFields.mainMonthlySubject, formFields.mainGoal, formFields.mainOfferOrMessage,
         formFields.importantDetailsToInclude, formFields.priorityContentIdeas, formFields.sourceMaterial,
-        formFields.platforms,
-        ...selectedPosts.map((p) => (typeof p === "string" ? p : [p?.suggestedHook, p?.mainAngleAndCoreMessage].filter(Boolean).join(" "))),
+        formFields.platforms, brand.mainServicesOrProducts,
+        ...selectedPosts.map((p) => (typeof p === "string" ? p : [p?.hookTitle, p?.suggestedHook, p?.mainAngle, p?.coreMessage, p?.mainAngleAndCoreMessage].filter(Boolean).join(" "))),
       ].filter((v) => typeof v === "string" && v).join("\n"),
     });
 

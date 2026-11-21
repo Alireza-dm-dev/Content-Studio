@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireResourceBrandAccess } from "@/lib/brand-access";
+import { findBrandOwnedReferenceAnalysis, ownerBrandId } from "@/lib/brand-ownership";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeVisualControls, serializeVisualControls } from "@/lib/image-visual-controls";
 import { stripImageRatioText, isInstagramPlatform, NO_IMAGE_RATIO_INSTRUCTION } from "@/lib/image-prompt-ratio";
@@ -255,9 +256,8 @@ export async function POST(request, { params }) {
     // ── Load linked reference image analysis for concrete composition data ────
     let refAnalysisData = null;
     if (cvd.referenceImageAnalysisId) {
-      const refRow = await prisma.referenceImageAnalysis.findUnique({
-        where: { id: cvd.referenceImageAnalysisId },
-      });
+      // Follow the stored link only within the direction's own brand.
+      const refRow = await findBrandOwnedReferenceAnalysis(prisma, cvd.referenceImageAnalysisId, ownerBrandId(cvd) ?? access.brandId);
       if (refRow?.jsonOutput) {
         try { refAnalysisData = JSON.parse(refRow.jsonOutput); } catch {}
       }

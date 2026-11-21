@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import {
   IMAGE_PROMPT_BOOSTER_RAW_IDEA_TEXT,
   CALENDAR_ATTACHMENT_INTERPRETER_TEMPLATE_TEXT,
+  POST_REGENERATION_TEMPLATE_TEXT,
 } from "../lib/default-prompt-templates.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -225,6 +226,15 @@ const TEMPLATES = [
     category: "calendar",
     outputType: "json",
   },
+  {
+    // Base template for every AI Regenerate Post mode (both regeneration
+    // routes). Also created on first use by lib/post-regeneration-template.js.
+    id: "tpl-post-regeneration",
+    name: "Post Regeneration (base)",
+    slug: "post-regeneration",
+    category: "calendar",
+    outputType: "json",
+  },
 ];
 
 const HIGGSFIELD_MODELS = [
@@ -300,6 +310,8 @@ async function main() {
       ? IMAGE_PROMPT_BOOSTER_RAW_IDEA_TEXT
       : tpl.slug === "calendar-reference-attachment-interpreter"
       ? CALENDAR_ATTACHMENT_INTERPRETER_TEMPLATE_TEXT
+      : tpl.slug === "post-regeneration"
+      ? POST_REGENERATION_TEMPLATE_TEXT
       : placeholder(tpl.name);
     await prisma.promptTemplate.upsert({
       where: { slug: tpl.slug },

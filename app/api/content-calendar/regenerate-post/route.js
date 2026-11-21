@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser, getBrandCalendarAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
+import { ensurePostRegenerationTemplate } from "@/lib/post-regeneration-template";
 import { resolveCalendarAttachmentContext } from "@/lib/calendar-attachment-context";
 import { getRelevantBrandKnowledge, knowledgePurposeForScope, buildPostKnowledgeQuery, withKnowledgeBlock } from "@/lib/brand-knowledge";
 import { normalizeLanguageCode } from "@/lib/content-language";
@@ -16,6 +17,7 @@ import {
 import {
   SCOPE_FIELDS,
   applyScopedPostRegeneration,
+  instructionRequestsMainAngleChange,
   parseAiJson,
   buildBrandSummary,
   buildCustomInstructionUserInput,
@@ -150,6 +152,9 @@ export async function POST(request) {
         : null,
     );
 
+    // Main Angle may change only on an explicit Custom Instruction request.
+    const allowMainAngleChange = scope === "custom_instruction" && instructionRequestsMainAngleChange(customInstruction);
+
     const promptContext = {
       current,
       currentOitrDisplay,
@@ -165,6 +170,7 @@ export async function POST(request) {
       userInput = buildCustomInstructionUserInput({
         ...promptContext,
         customInstruction,
+        allowMainAngleChange,
       });
     } else if (scope === "image_text_only") {
       // Normalize: accept new array guidedReasons or fall back to legacy string guidedReason
@@ -199,7 +205,7 @@ export async function POST(request) {
     let aiResult;
     try {
       aiResult = await generateWithPromptTemplate({
-        templateSlug: "content-calendar-generator",
+        templateSlug: await ensurePostRegenerationTemplate(),
         variables: {},
         userInput,
         maxTokens: 8192,
@@ -254,7 +260,7 @@ export async function POST(request) {
     }
 
     // ── Apply allowed fields from AI output ───────────────────────────────────
-    const merged = applyScopedPostRegeneration(current, aiPost, scope);
+    const merged = applyScopedPostRegeneration(current, aiPost, scope, { allowMainAngleChange });
 
     // ── Validate / fall back for outputImageTextRequirements ──────────────────
     // Enrichment is a text-only operation: on-image text belongs to the visual

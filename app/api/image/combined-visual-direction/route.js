@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { requireBrandAccess } from "@/lib/brand-access";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
+import { findBrandOwnedReferenceAnalysis, brandCalendarLinkMismatch } from "@/lib/brand-ownership";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForImagePrompt } from "@/lib/brand-identity-utils";
 
@@ -136,11 +138,18 @@ export async function POST(request) {
       return NextResponse.json({ success: false, code: "MISSING_REFERENCE_ANALYSIS", error: "Please upload and analyze a reference image first." }, { status: 400 });
     }
 
+    // Calendar/post links from the body must belong to this brand too.
+    const linkMismatch = await brandCalendarLinkMismatch(prisma, { brandId, calendarId, calendarPostId });
+    if (linkMismatch) {
+      return NextResponse.json({ success: false, code: "NOT_FOUND", error: linkMismatch.error }, { status: linkMismatch.status });
+    }
+
     // ── Load data ─────────────────────────────────────────────────────────────
     const [brand, brandIdentity, referenceAnalysis] = await Promise.all([
       prisma.brand.findUnique({ where: { id: brandId } }),
       prisma.brandIdentity.findFirst({ where: { brandId }, orderBy: { createdAt: "desc" } }),
-      prisma.referenceImageAnalysis.findUnique({ where: { id: referenceImageAnalysisId } }),
+      // Another brand's analysis is indistinguishable from a missing one.
+      findBrandOwnedReferenceAnalysis(prisma, referenceImageAnalysisId, brandId),
     ]);
 
     if (!brand) {
@@ -169,11 +178,20 @@ export async function POST(request) {
       return referenceAnalysis.jsonOutput ?? "";
     })();
 
+    // Visual/brand-guideline knowledge only (purpose-filtered); never throws.
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId,
+      purpose: "image_prompt",
+      query: [rawIdeaOrPostInformation, outputImageTextRequirements, referenceImageAttractionNotes]
+        .filter((v) => typeof v === "string" && v).join("\n"),
+    });
+
     // ── Build userInput block ─────────────────────────────────────────────────
     const userInput = [
       "=== BRAND VISUAL IDENTITY ===",
       brandIdentityText,
       "",
+      ...(knowledge.block ? [knowledge.block, ""] : []),
       "=== REFERENCE IMAGE ANALYSIS ===",
       referenceImageText,
       "",

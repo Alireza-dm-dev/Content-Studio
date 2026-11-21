@@ -311,7 +311,13 @@ export async function POST(request) {
   const knowledge = await getRelevantBrandKnowledge({
     brandId,
     purpose: "suggest_posts",
-    query: [brand.mainServicesOrProducts, brand.businessType, ...articles.map((a) => a.title)].filter((v) => typeof v === "string" && v).join("\n"),
+    // Titles alone rarely share wording with the brand's documents; a bounded slice of
+    // each article's text gives retrieval the actual topic (query is capped downstream).
+    query: [
+      brand.mainServicesOrProducts, brand.businessType,
+      ...articles.map((a) => a.title),
+      ...articles.map((a) => (typeof a.text === "string" ? a.text.slice(0, 800) : "")),
+    ].filter((v) => typeof v === "string" && v).join("\n"),
   });
   if (knowledge.block) userInputSections.push("", knowledge.block);
 

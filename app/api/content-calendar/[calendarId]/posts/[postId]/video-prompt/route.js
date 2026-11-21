@@ -4,6 +4,7 @@ import { requireResourceBrandAccess } from "@/lib/brand-access";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
+import { calendarPostBrandMismatch } from "@/lib/brand-ownership";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
 import { buildVideoStyleBlock, resolveCinematicStyle } from "@/lib/cinematic-styles";
 
@@ -125,6 +126,8 @@ export async function POST(request, { params }) {
     if (!calendar) return NextResponse.json({ success: false, error: "Calendar not found." }, { status: 404 });
     if (!post)     return NextResponse.json({ success: false, error: "Calendar post not found." }, { status: 404 });
     if (!brand)    return NextResponse.json({ success: false, error: "Brand not found." }, { status: 404 });
+    const mismatch = calendarPostBrandMismatch({ calendar, post, brandId });
+    if (mismatch) return NextResponse.json({ success: false, error: mismatch.error }, { status: mismatch.status });
     if (!identity) return NextResponse.json({
       success: false,
       error: "Please create or approve brand identity before creating prompts from this calendar post.",

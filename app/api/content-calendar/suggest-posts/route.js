@@ -297,7 +297,10 @@ export async function POST(request) {
     const knowledge = await getRelevantBrandKnowledge({
       brandId,
       purpose: "suggest_posts",
-      query: [monthlyObjective, offers, campaignEvents, additionalNotes, platform].filter((v) => typeof v === "string" && v).join("\n"),
+      query: [
+        monthlyObjective, offers, campaignEvents, additionalNotes, popularIndustryPosts,
+        brand.mainServicesOrProducts, brand.businessType, platform,
+      ].filter((v) => typeof v === "string" && v).join("\n"),
     });
     if (knowledge.block) userInput += "\n\n" + knowledge.block;
 

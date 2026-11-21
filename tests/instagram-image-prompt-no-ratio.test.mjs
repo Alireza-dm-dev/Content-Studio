@@ -17,7 +17,7 @@ mock.module("@/lib/brand-access", {
 mock.module("@/lib/prisma", {
   exports: {
     prisma: {
-      contentCalendar: { findUnique: async () => ({ id: "c1", mainMonthlySubject: "Coffee" }) },
+      contentCalendar: { findUnique: async () => ({ id: "c1", brandId: "b1", mainMonthlySubject: "Coffee" }) },
       calendarPost: { findUnique: async () => state.post },
       brand: { findUnique: async () => ({ id: "b1", name: "Bloom" }) },
       brandIdentity: { findFirst: async () => ({ id: "i1", jsonOutput: "{}" }) },
@@ -87,7 +87,7 @@ let imageRoute;
 async function callImageRoute({ platform, body = {}, ai = DIRTY_EN, post = {} }) {
   imageRoute ??= await import("../app/api/content-calendar/[calendarId]/posts/[postId]/image-prompt/route.js");
   state.post = {
-    id: "p1", platform, format: "Single image square 1:1", hookTitle: "Morning ritual",
+    id: "p1", calendarId: "c1", platform, format: "Single image square 1:1", hookTitle: "Morning ritual",
     visualDirection: "Latte on marble, 1080x1080 square", coreMessage: "Start slow", ...post,
   };
   state.aiContent = ai;

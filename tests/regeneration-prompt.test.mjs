@@ -451,8 +451,14 @@ test("caption rules include emoji-usage guidance to avoid the stereotypical AI p
   assert.ok(input.includes("professional/B2B brands should use fewer emojis"));
 });
 
-test("caption rules require the CTA/contact paragraph to be visually separated from the main body", () => {
+test("caption rules require the CTA/contact paragraph to be visually separated from the main body", async () => {
+  // Regeneration (V1.3.45): a CTA is no longer mandatory, but when the caption
+  // has one it must still sit in its own separated final paragraph.
   const input = buildVisualOrEntirePostUserInput({ ...basePromptContext(), scope: "entire_post" });
-  assert.ok(input.includes("The CTA + contact-info paragraph must be its own short paragraph, visually separated"));
+  assert.ok(input.includes("If the caption closes with a CTA or contact details, put them in their own short final paragraph, separated by a blank line."));
+  assert.ok(!input.includes("Always include a clear call-to-action"), "regeneration has no mandatory CTA");
+  // Calendar generation keeps the original shared rule unchanged.
+  const { CAPTION_GENERATION_RULES_LINES } = await import("@/lib/calendar-post-utils");
+  assert.ok(CAPTION_GENERATION_RULES_LINES.some((l) => l.includes("The CTA + contact-info paragraph must be its own short paragraph, visually separated")));
 });
 

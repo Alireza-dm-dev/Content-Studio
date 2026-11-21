@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireResourceBrandAccess } from "@/lib/brand-access";
+import { getRelevantBrandKnowledge } from "@/lib/brand-knowledge";
+import { findBrandOwnedCalendarPost } from "@/lib/brand-ownership";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { normalizeBrandIdentityOutput, createCompactBrandVisualIdentitySummaryForVideoPrompt } from "@/lib/brand-identity-utils";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
@@ -175,9 +177,8 @@ export async function POST(request, { params }) {
     const [brand, identity, post] = await Promise.all([
       prisma.brand.findUnique({ where: { id: brandId } }),
       prisma.brandIdentity.findFirst({ where: { brandId }, orderBy: { createdAt: "desc" } }),
-      calendarPostId
-        ? prisma.calendarPost.findUnique({ where: { id: calendarPostId } })
-        : Promise.resolve(null),
+      // Follow the stored post link only within the storyboard's own brand.
+      findBrandOwnedCalendarPost(prisma, calendarPostId, brandId),
     ]);
 
     if (!brand) {
@@ -218,11 +219,20 @@ export async function POST(request, { params }) {
       aperture:       cinematicValue(norm?.aperture),
     };
 
+    // Visual/brand-guideline knowledge for the storyboard's own brand; never throws.
+    const knowledge = await getRelevantBrandKnowledge({
+      brandId,
+      purpose: "video_prompt",
+      query: [approvedStoryboard.slice(0, 2000), norm?.visualDirection, norm?.visualMood, norm?.hookTitle, norm?.coreMessage, videoGoal, videoFormat]
+        .filter((v) => typeof v === "string" && v).join("\n"),
+    });
+
     // ── 3. Build combined raw video input ──────────────────────────────────
     const combinedLines = [
       "Brand Identity Summary:",
       brandSummary,
       "",
+      ...(knowledge.block ? [knowledge.block, ""] : []),
       calendarPostSummary ? "Calendar Post:" : null,
       calendarPostSummary || null,
       "",
