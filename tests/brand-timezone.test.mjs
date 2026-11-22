@@ -19,6 +19,10 @@ mock.module("@/lib/prisma", {
           return db.brands[where.id];
         },
       },
+      publishedPostCollaborator: {
+        findFirst: async () => null,
+        deleteMany: async () => ({ count: 0 }),
+      },
       publishedPost: {
         findFirst: async ({ where }) => {
           const p = db.posts[where.id];
@@ -33,7 +37,7 @@ mock.module("@/lib/prisma", {
   },
 });
 mock.module("@/lib/brand-access", {
-  exports: { requireBrandAccess: async () => db.access },
+  exports: { requireBrandAccess: async () => db.access, getAccessibleBrandIds: async () => null, canUserAccessBrand: async () => true, isAdminUser: () => false },
 });
 mock.module("@/lib/published-post-webhook", {
   exports: {

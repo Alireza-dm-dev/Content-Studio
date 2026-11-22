@@ -16,7 +16,7 @@ mock.module("fs/promises", {
     unlink: async () => {},
   },
 });
-mock.module("@/lib/brand-access", { exports: { requireBrandAccess: async () => ({ ok: true, user: { id: "u", role: "user" } }) } });
+mock.module("@/lib/brand-access", { exports: { requireBrandAccess: async () => ({ ok: true, user: { id: "u", role: "user" } }), getAccessibleBrandIds: async () => null, canUserAccessBrand: async () => true, isAdminUser: () => false } });
 mock.module("@/lib/published-post-remote-media", {
   exports: {
     uploadPublishedPostMedia: async () => { state.remoteCalls++; return { success: false, detailCode: "MOCK", error: "mocked" }; },

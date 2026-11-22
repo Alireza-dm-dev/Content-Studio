@@ -95,6 +95,7 @@ mock.module("@/lib/prisma", {
         },
       },
       brandAssignment: { findUnique: async () => null },
+      publishedPostCollaborator: { findFirst: async () => null },
       publishedPost: {
         findFirst: async ({ where }) =>
           posts.find((p) => p.id === where.id && p.brandId === where.brandId) ?? null,

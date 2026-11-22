@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireBrandAccess } from "@/lib/brand-access";
+import { requireBrandAccess, getAccessibleBrandIds } from "@/lib/brand-access";
 import { writeFile, mkdir, rm } from "fs/promises";
 import path from "path";
 import { randomUUID } from "node:crypto";
@@ -23,6 +23,13 @@ import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { uploadPublishedPostMedia, isCanonicalMediaUrl } from "@/lib/published-post-remote-media";
 import { parseScheduledDate, resolveBrandTimezone, hasBrandTimezone } from "@/lib/timezone";
 import { validateThumbnailFile, saveThumbnailFile, isNoFile } from "@/lib/published-post-thumbnail";
+import {
+  COLLABORATION_INCLUDE,
+  publishedPostGridWhere,
+  parseCollaboratorBrandIds,
+  validateCollaboratorBrands,
+  decorateCollaboration,
+} from "@/lib/published-post-collaborators";
 
 const MAX_POSTS_PER_BRAND = 21;
 
@@ -42,31 +49,38 @@ export async function GET(request, { params }) {
     return NextResponse.json({ error: "Brand not found" }, { status: 404 });
   }
 
-  const where = { brandId: id };
+  let platform = null;
   try {
     const platformParam = new URL(request.url).searchParams.get("platform");
     if (platformParam) {
-      const normalized = normalizePublishedPostPlatform(platformParam);
-      if (normalized) {
-        where.platform = normalized;
-      }
+      platform = normalizePublishedPostPlatform(platformParam);
     }
   } catch {
     // ignore malformed URL; fall back to returning all posts
   }
 
+  // Own posts + Instagram posts this brand collaborates on, in ONE query over
+  // PublishedPost: each row appears once and the shared ordering is untouched.
   const posts = await prisma.publishedPost.findMany({
-    where,
+    where: publishedPostGridWhere(id, platform),
     orderBy: PUBLISHED_POST_ORDER_BY,
     include: {
       media: { orderBy: { order: "asc" } },
       _count: { select: { comments: true } },
+      ...COLLABORATION_INCLUDE,
     },
   });
 
+  const accessibleBrandIds = await getAccessibleBrandIds(brandAccess.user);
+
   // Normalize on read: media rows hold local /uploads paths, the public URLs
   // live in jsonPayload. Without this the grid renders paths that 404.
-  return NextResponse.json(serializePublishedPosts(posts));
+  const serialized = serializePublishedPosts(posts);
+  return NextResponse.json(
+    serialized.map((post, i) =>
+      decorateCollaboration(post, posts[i], { viewerBrandId: id, accessibleBrandIds }),
+    ),
+  );
 }
 
 async function enforcePublishedPostsLimit(brandId) {
@@ -137,6 +151,23 @@ export async function POST(request, { params }) {
   const notes = formData.get("notes") || "";
   const rawStatus = formData.get("status") || "draft";
   const thumbnailFile = formData.get("thumbnail");
+
+  // Optional Instagram collaborator brands. Re-authorized here; the client
+  // dropdown is never trusted. Validated before any file is written.
+  const parsedCollaborators = parseCollaboratorBrandIds(formData.getAll("collaboratorBrandIds"));
+  if (!parsedCollaborators.ok) {
+    return NextResponse.json({ error: parsedCollaborators.error }, { status: parsedCollaborators.status });
+  }
+  const collaboratorCheck = await validateCollaboratorBrands({
+    user: brandAccess.user,
+    primaryBrandId: id,
+    platform,
+    brandIds: parsedCollaborators.ids,
+  });
+  if (!collaboratorCheck.ok) {
+    return NextResponse.json({ error: collaboratorCheck.error }, { status: collaboratorCheck.status });
+  }
+  const collaboratorBrands = collaboratorCheck.brands;
   
   const mediaFiles = rawFiles.filter((f) => f && typeof f !== "string");
   if (mediaFiles.length === 0) {
@@ -364,6 +395,12 @@ export async function POST(request, { params }) {
         },
       });
 
+      for (const collaborator of collaboratorBrands) {
+        await tx.publishedPostCollaborator.create({
+          data: { publishedPostId: post.id, brandId: collaborator.id },
+        });
+      }
+
       const mediaRecords = [];
       for (const md of mediaRecordsData) {
         const rec = await tx.publishedPostMedia.create({
@@ -533,8 +570,17 @@ export async function POST(request, { params }) {
 
   await enforcePublishedPostsLimit(id);
 
+  const createdPost = decorateCollaboration(
+    serializePublishedPost(result),
+    {
+      brand: { id: brand.id, name: brand.name, timezone: brand.timezone ?? null },
+      collaborators: collaboratorBrands.map((b) => ({ brandId: b.id, brand: b })),
+    },
+    { viewerBrandId: id, accessibleBrandIds: null }, // creator just passed requireBrandAccess(id)
+  );
+
   return NextResponse.json(
-    { post: serializePublishedPost(result), webhookResult, remoteResult },
+    { post: createdPost, webhookResult, remoteResult },
     { status: 201 },
   );
   } catch (error) {

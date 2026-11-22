@@ -20,7 +20,7 @@ after(() => server.close());
 const state = { brand: null, created: [], post: null };
 
 mock.module("fs/promises", { exports: { writeFile: async () => {}, mkdir: async () => {}, rm: async () => {}, readdir: async () => [], unlink: async () => {} } });
-mock.module("@/lib/brand-access", { exports: { requireBrandAccess: async () => ({ ok: true, user: { id: "u", role: "user" } }) } });
+mock.module("@/lib/brand-access", { exports: { requireBrandAccess: async () => ({ ok: true, user: { id: "u", role: "user" } }), getAccessibleBrandIds: async () => null, canUserAccessBrand: async () => true, isAdminUser: () => false } });
 mock.module("@/lib/published-post-remote-media", {
   exports: {
     uploadPublishedPostMedia: async () => ({ success: true, thumbnailUrl: null, media: [{ order: 1, fileUrl: "https://files.leadsagna.com/a.png" }] }),

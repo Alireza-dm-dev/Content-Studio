@@ -12,6 +12,7 @@ import {
   scheduledValueForSubmit,
 } from "@/lib/timezone";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
+import CollaboratorBrandPicker, { CollaborationBadge } from "@/components/CollaboratorBrandPicker";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -125,7 +126,11 @@ function formatPostIdShort(postNumber) {
   return `P-${String(postNumber).padStart(3, "0")}`;
 }
 
-export default function PostDetailModal({ post, brandId, brandTimezone, onClose, onUpdated, onDeleted, onCrossPlatformCreated }) {
+// `brandId` is the brand whose API URL this modal calls. For a collaboration
+// post that is the OWNING brand when the viewer may manage it. `readOnly` is
+// set when the viewer only has access through a collaborator brand: every
+// manage action is hidden (the server would refuse them anyway).
+export default function PostDetailModal({ post, brandId, brandTimezone, readOnly = false, onClose, onUpdated, onDeleted, onCrossPlatformCreated }) {
   const [copied, setCopied] = useState(false);
   const [showJson, setShowJson] = useState(false);
   const [carouselIdx, setCarouselIdx] = useState(0);
@@ -136,7 +141,13 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showAdapt, setShowAdapt] = useState(false);
   const [thumbBusy, setThumbBusy] = useState(false);
+  const [managingCollab, setManagingCollab] = useState(false);
+  const [collabDraft, setCollabDraft] = useState([]);
+  const [collabSaving, setCollabSaving] = useState(false);
   const closedRef = useRef(false);
+
+  const isInstagramPost = (post.platform || "Instagram") === "Instagram";
+  const collaboratorBrands = post.collaboratorBrands || [];
 
   // The brand timezone is the authority for every date/time shown or edited here.
   const tz = resolveBrandTimezone(brandTimezone);
@@ -330,6 +341,33 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
     }
   }
 
+  // Collaborators: saved immediately and independently of Edit, like the
+  // thumbnail. Display-only in Content Studio: nothing is sent to n8n.
+  function handleManageCollab() {
+    setCollabDraft(collaboratorBrands.map((b) => b.id));
+    setManagingCollab(true);
+  }
+
+  async function handleSaveCollab() {
+    setCollabSaving(true);
+    try {
+      const res = await fetch(`/api/brands/${brandId}/published-posts/${post.id}/collaborators`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brandIds: collabDraft }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.error || `Collaborator update failed (${res.status})`);
+      toast.success(collabDraft.length ? "Collaborators updated." : "Collaborator removed.");
+      setManagingCollab(false);
+      if (onUpdated && data?.post) onUpdated(data.post);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setCollabSaving(false);
+    }
+  }
+
   // Thumbnail / cover: applied immediately and independent of the main media.
   async function handleThumbnail(file) {
     if (file) {
@@ -494,7 +532,10 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
             )}
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            {!editing && (
+            {readOnly && (
+              <span style={{ ...lbl, fontSize: 9 }}>View only</span>
+            )}
+            {!editing && !readOnly && (
               <>
                 <button
                   type="button"
@@ -672,7 +713,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
         </div>
 
         {/* ── Thumbnail / Cover (Instagram; shown separately, never replaces the media) ── */}
-        {post.platform !== "LinkedIn" && (
+        {post.platform !== "LinkedIn" && !readOnly && (
           <div style={{ padding: "12px 18px", borderBottom: "1px solid var(--sketch-line)" }}>
             <PostThumbnailField
               previewUrl={post.thumbnailUrl || null}
@@ -771,6 +812,62 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
             </>
           ) : (
             <>
+              {/* Collaboration (Instagram only) */}
+              {isInstagramPost && (post.isCollaboration || !readOnly) && (
+                <div style={{ border: "1px solid var(--sketch-line)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    {post.isCollaboration ? (
+                      <CollaborationBadge />
+                    ) : (
+                      <span style={lbl}>Collaboration</span>
+                    )}
+                    {!readOnly && !managingCollab && (
+                      <button type="button" onClick={handleManageCollab} style={inkBtn}>
+                        {post.isCollaboration ? "Change collaborator" : "Add collaborator brand"}
+                      </button>
+                    )}
+                  </div>
+                  {post.isCollaboration && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <PlainInfoField label="Primary Brand" value={post.primaryBrand?.name || "—"} />
+                      <PlainInfoField
+                        label={collaboratorBrands.length > 1 ? "Collaborating Brands" : "Collaborating Brand"}
+                        value={collaboratorBrands.map((b) => b.name).join(", ")}
+                      />
+                    </div>
+                  )}
+                  {post.isCollaboration && (
+                    <div style={{ ...lbl, fontSize: 9, textTransform: "none", letterSpacing: "0.02em", color: "var(--sketch-ink-soft)" }}>
+                      Shown in every listed brand&apos;s Instagram grid. The Instagram collab invite itself is not automated.
+                    </div>
+                  )}
+                  {managingCollab && (
+                    <>
+                      <CollaboratorBrandPicker
+                        currentBrandId={post.brandId}
+                        value={collabDraft}
+                        onChange={setCollabDraft}
+                        disabled={collabSaving}
+                        knownBrands={collaboratorBrands}
+                      />
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                        <button type="button" onClick={() => setManagingCollab(false)} disabled={collabSaving} style={inkBtn}>
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveCollab}
+                          disabled={collabSaving}
+                          style={{ ...inkBtn, borderColor: "var(--sketch-vermilion)", color: "var(--sketch-vermilion)" }}
+                        >
+                          {collabSaving ? "Saving\u2026" : "Save collaborators"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
               {/* Metadata rows */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <InfoField label="Post Type" value={post.postType} />
@@ -861,6 +958,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
                   >
                     Download JSON
                   </button>
+                  {!readOnly && (
                   <button
                     type="button"
                     onClick={handleSendToN8n}
@@ -873,6 +971,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, onClose,
                   >
                     {sending ? "Sending\u2026" : "Send to n8n"}
                   </button>
+                  )}
                 </div>
               </div>
             )}
@@ -920,6 +1019,18 @@ function InfoField({ label, value }) {
         textTransform: "capitalize",
       }}>
         {String(value)}
+      </div>
+    </div>
+  );
+}
+
+// Like InfoField but without capitalisation (brand names keep their casing).
+function PlainInfoField({ label, value }) {
+  return (
+    <div>
+      <div style={{ ...lbl, marginBottom: 2 }}>{label}</div>
+      <div style={{ fontFamily: "var(--font-mono-ink)", fontSize: 11, color: "var(--sketch-ink)" }}>
+        {value}
       </div>
     </div>
   );

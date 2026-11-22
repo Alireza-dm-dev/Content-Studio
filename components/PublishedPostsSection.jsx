@@ -10,6 +10,7 @@ import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { resolveBrandTimezone } from "@/lib/timezone";
 import { getPublishedPostFooterState } from "@/lib/published-post-footer";
 import { sortPublishedPosts } from "@/lib/published-post-order";
+import { CollaborationBadge } from "@/components/CollaboratorBrandPicker";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -120,6 +121,11 @@ function GridCard({ post, timeZone, onClick, onCommentClick }) {
         />
       ) : (
         <MediaPlaceholder />
+      )}
+
+      {/* Collaboration marker (separate from the publishing state below) */}
+      {post.isCollaboration && (
+        <CollaborationBadge style={{ position: "absolute", top: 6, left: 6 }} />
       )}
 
       {/* Bottom overlay with post ID, publishing state, comment button, media indicators */}
@@ -254,6 +260,38 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
   const [selectedPost, setSelectedPost] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
 
+  // ── Collaboration posts ────────────────────────────────────────────────────
+  // A post may be owned by another brand and only shown here as a collaborator.
+  // Manage actions (edit/delete/thumbnail/n8n/adapt/comments) always go to the
+  // OWNING brand's URL; the server re-checks access to it. A viewer without
+  // access to the owner gets a read-only modal and read-only comments, routed
+  // through this brand's URL (which the server allows for viewing only).
+  function apiBrandIdFor(post) {
+    if (!post || post.canManage === false) return brand.id;
+    return post.brandId || brand.id;
+  }
+
+  function isReadOnly(post) {
+    return post?.canManage === false;
+  }
+
+  // The schedule belongs to the owning brand, so show it in that brand's zone.
+  function timezoneFor(post) {
+    if (post?.brandId && post.brandId !== brand.id && post.primaryBrand) {
+      return post.primaryBrand.timezone;
+    }
+    return brand.timezone;
+  }
+
+  function belongsInThisGrid(post) {
+    if (!post) return false;
+    if (!post.brandId || post.brandId === brand.id) return true;
+    return (
+      post.platform === "Instagram" &&
+      (post.collaboratorBrands || []).some((b) => b.id === brand.id)
+    );
+  }
+
   function addPostToSection(post) {
     setPosts((prev) => {
       const exists = prev.some((p) => p.id === post.id);
@@ -303,13 +341,27 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
   }
 
   function handleUpdated(updatedPost) {
+    // Some responses (thumbnail, send-webhook) do not carry the collaboration
+    // fields; keep the ones we already have unless the response replaces them.
+    const previous = posts.find((p) => p.id === updatedPost.id);
+    const merged = previous ? { ...previous, ...updatedPost } : updatedPost;
+
+    if (!belongsInThisGrid(merged)) {
+      // e.g. this brand was removed as a collaborator: drop it from this grid.
+      setPosts((prev) => prev.filter((p) => p.id !== merged.id));
+      setSelectedPost(null);
+      return;
+    }
     setPosts((prev) =>
-      sortPublishedPosts(prev.map((p) => (p.id === updatedPost.id ? updatedPost : p)))
+      sortPublishedPosts(prev.map((p) => (p.id === merged.id ? merged : p)))
     );
-    setSelectedPost(updatedPost);
+    setSelectedPost(merged);
   }
 
   function handleCrossPlatformCreated(createdPost) {
+    // An adaptation of a collaboration post is created under its owning brand;
+    // it does not belong in this brand's sections.
+    if (createdPost.brandId && createdPost.brandId !== brand.id) return;
     if (createdPost.platform === "Instagram") {
       addPostToSection(createdPost);
     } else {
@@ -409,7 +461,7 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
             <GridCard
               key={post.id}
               post={post}
-              timeZone={resolveBrandTimezone(brand)}
+              timeZone={resolveBrandTimezone(timezoneFor(post))}
               onClick={() => setSelectedPost(post)}
               onCommentClick={(p) => setCommentsPost(p)}
             />
@@ -421,8 +473,9 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
       {selectedPost && (
         <PostDetailModal
           post={selectedPost}
-          brandId={brand.id}
-          brandTimezone={brand.timezone}
+          brandId={apiBrandIdFor(selectedPost)}
+          brandTimezone={timezoneFor(selectedPost)}
+          readOnly={isReadOnly(selectedPost)}
           onClose={() => setSelectedPost(null)}
           onUpdated={handleUpdated}
           onDeleted={handleDeleted}
@@ -434,7 +487,8 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
       {commentsPost && (
         <PublishedPostCommentsPanel
           key={commentsPost.id}
-          brandId={brand.id}
+          brandId={apiBrandIdFor(commentsPost)}
+          readOnly={isReadOnly(commentsPost)}
           postId={commentsPost.id}
           postLabel={getPostLabel(commentsPost)}
           initialCommentCount={commentsPost.commentCount ?? 0}

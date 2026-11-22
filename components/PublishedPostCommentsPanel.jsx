@@ -62,6 +62,7 @@ export default function PublishedPostCommentsPanel({
   initialCommentCount = 0,
   onCountChange,
   onClose,
+  readOnly = false,
 }) {
   const [comments, setComments] = useState([]);
   const [commentCount, setCommentCount] = useState(initialCommentCount);
@@ -431,7 +432,7 @@ export default function PublishedPostCommentsPanel({
                         {fmtDate(comment.createdAt)}
                       </span>
                     </div>
-                    {comment.canDelete && (
+                    {comment.canDelete && !readOnly && (
                       <button
                         type="button"
                         onClick={() => handleDelete(comment.id)}
@@ -473,7 +474,12 @@ export default function PublishedPostCommentsPanel({
           )}
         </div>
 
-        {/* ── Composer ── */}
+        {/* ── Composer (hidden when viewing a collaboration post from a collaborator brand) ── */}
+        {readOnly ? (
+          <div style={{ borderTop: "1px solid var(--sketch-line)", padding: "12px 18px", ...lbl, lineHeight: 1.5 }}>
+            Read-only: comments on a collaboration post are managed by its primary brand.
+          </div>
+        ) : (
         <div
           style={{
             borderTop: "1px solid var(--sketch-line)",
@@ -538,6 +544,7 @@ export default function PublishedPostCommentsPanel({
             </div>
           </form>
         </div>
+        )}
       </div>
     </div>
   );

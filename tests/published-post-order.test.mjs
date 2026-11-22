@@ -5,6 +5,7 @@
 
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
+import { matchesWhere } from "./helpers/prisma-where.mjs";
 
 let rows = [];
 
@@ -38,9 +39,7 @@ mock.module("@/lib/prisma", {
       publishedPost: {
         findMany: async ({ where, orderBy }) =>
           applyOrder(
-            rows.filter(
-              (r) => r.brandId === where.brandId && (!where.platform || r.platform === where.platform),
-            ),
+            rows.filter((r) => matchesWhere(r, where)),
             orderBy,
           ),
       },
@@ -48,7 +47,7 @@ mock.module("@/lib/prisma", {
   },
 });
 mock.module("@/lib/brand-access", {
-  exports: { requireBrandAccess: async () => ({ ok: true }) },
+  exports: { requireBrandAccess: async () => ({ ok: true }), getAccessibleBrandIds: async () => null, canUserAccessBrand: async () => true, isAdminUser: () => false },
 });
 
 const { GET } = await import("../app/api/brands/[id]/published-posts/route.js");

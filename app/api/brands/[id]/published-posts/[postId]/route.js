@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireBrandAccess } from "@/lib/brand-access";
+import { requireBrandAccess, getAccessibleBrandIds } from "@/lib/brand-access";
 import {
   deletePublishedPostFiles,
   buildN8nPayload,
@@ -21,6 +21,24 @@ import {
 } from "@/lib/published-post-delete-webhook";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { parseScheduledDate, resolveBrandTimezone } from "@/lib/timezone";
+import {
+  COLLABORATION_INCLUDE,
+  COLLABORATION_PLATFORM,
+  COLLABORATOR_MANAGE_FORBIDDEN,
+  viewablePublishedPostWhere,
+  isCollaboratorOnlyPost,
+  decorateCollaboration,
+} from "@/lib/published-post-collaborators";
+
+// Mutations stay scoped to the PRIMARY brand ({ id, brandId }). When the post is
+// only a collaboration of the URL brand, answer 403 rather than 404 so the
+// client can tell "not yours to change" from "gone".
+async function notFoundOrCollaboratorForbidden(brandId, postId) {
+  if (await isCollaboratorOnlyPost(brandId, postId)) {
+    return NextResponse.json({ error: COLLABORATOR_MANAGE_FORBIDDEN }, { status: 403 });
+  }
+  return NextResponse.json({ error: "Published post not found" }, { status: 404 });
+}
 
 // The local row survives every one of these, so the client can retry.
 const DELETE_WEBHOOK_ERROR_STATUS = {
@@ -45,11 +63,13 @@ export async function GET(request, { params }) {
     return NextResponse.json({ error: "Brand not found" }, { status: 404 });
   }
 
+  // Read access: the post's own brand, or an Instagram collaborator brand.
   const post = await prisma.publishedPost.findFirst({
-    where: { id: postId, brandId: id },
+    where: viewablePublishedPostWhere(id, postId),
     include: {
       media: { orderBy: { order: "asc" } },
       _count: { select: { comments: true } },
+      ...COLLABORATION_INCLUDE,
     },
   });
 
@@ -57,7 +77,13 @@ export async function GET(request, { params }) {
     return NextResponse.json({ error: "Published post not found" }, { status: 404 });
   }
 
-  return NextResponse.json(serializePublishedPost(post));
+  const accessibleBrandIds = await getAccessibleBrandIds(brandAccess.user);
+  return NextResponse.json(
+    decorateCollaboration(serializePublishedPost(post), post, {
+      viewerBrandId: id,
+      accessibleBrandIds,
+    }),
+  );
 }
 
 export async function DELETE(request, { params }) {
@@ -82,7 +108,7 @@ export async function DELETE(request, { params }) {
   });
 
   if (!post) {
-    return NextResponse.json({ error: "Published post not found" }, { status: 404 });
+    return notFoundOrCollaboratorForbidden(id, postId);
   }
 
   // Instagram and LinkedIn posts also exist on the social network, and n8n owns
@@ -114,7 +140,9 @@ export async function DELETE(request, { params }) {
     }
   }
 
-  // Delete DB records first (media cascade from publishedPost)
+  // Delete DB records first (media, comments and collaborator rows cascade from
+  // publishedPost). One row, so one webhook and one file cleanup, however many
+  // brand grids showed it.
   await prisma.publishedPost.delete({ where: { id: postId } });
 
   // Best-effort cleanup of uploaded files from disk
@@ -149,7 +177,7 @@ export async function POST(request, { params }) {
     });
 
     if (!existing) {
-      return NextResponse.json({ error: "Published post not found" }, { status: 404 });
+      return notFoundOrCollaboratorForbidden(id, postId);
     }
 
     let body;
@@ -320,10 +348,17 @@ export async function POST(request, { params }) {
       updateData.status = isValidStatus(body.status) ? body.status : "draft";
     }
 
+    // Collaboration is Instagram-only: moving a post to another platform drops
+    // its collaborator rows (never the post or its media).
+    if (finalPlatform !== COLLABORATION_PLATFORM) {
+      await prisma.publishedPostCollaborator.deleteMany({ where: { publishedPostId: postId } });
+    }
+
     // ── Update post ───────────────────────────────────────────────────────────
     const updated = await prisma.publishedPost.update({
       where: { id: postId },
       data: updateData,
+      include: COLLABORATION_INCLUDE,
     });
 
     // ── Rebuild jsonPayload with updated fields ───────────────────────────────
@@ -388,12 +423,17 @@ export async function POST(request, { params }) {
 
     // Same serializer as the list/single-item read paths, so an edited post is
     // shaped exactly like it will be on the next page load.
-    const result = serializePublishedPost({
-      ...updated,
-      jsonPayload: payloadJson,
-      media: remoteAwareMedia,
-      _count: existing._count,
-    });
+    // The editor passed requireBrandAccess on the primary brand: canManage.
+    const result = decorateCollaboration(
+      serializePublishedPost({
+        ...updated,
+        jsonPayload: payloadJson,
+        media: remoteAwareMedia,
+        _count: existing._count,
+      }),
+      updated,
+      { viewerBrandId: id, accessibleBrandIds: null },
+    );
 
     return NextResponse.json({ ...result, webhookResult });
   } catch (error) {

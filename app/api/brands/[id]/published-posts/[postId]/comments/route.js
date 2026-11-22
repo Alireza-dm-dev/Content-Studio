@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireBrandAccess } from "@/lib/brand-access";
+import { requireBrandAccess, canUserAccessBrand } from "@/lib/brand-access";
+import { viewablePublishedPostWhere } from "@/lib/published-post-collaborators";
 
 const MAX_BODY = 2000;
 
@@ -14,7 +15,7 @@ async function requireBrandMemberOrReject(brandId) {
   return { admin: access.user };
 }
 
-function serializeComment(c) {
+function serializeComment(c, { canDelete = true } = {}) {
   return {
     id: c.id,
     publishedPostId: c.publishedPostId,
@@ -23,10 +24,13 @@ function serializeComment(c) {
     body: c.body,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
-    canDelete: true,
+    canDelete,
   };
 }
 
+// Reading comments is also allowed from an Instagram collaborator brand's grid.
+// Writing/deleting stays with the post's own brand (POST below and the
+// [commentId] route still match on { id, brandId }).
 export async function GET(request, { params }) {
   const { id, postId } = await params;
 
@@ -34,7 +38,7 @@ export async function GET(request, { params }) {
   if (auth.error) return auth.error;
 
   const post = await prisma.publishedPost.findFirst({
-    where: { id: postId, brandId: id },
+    where: viewablePublishedPostWhere(id, postId),
   });
   if (!post) {
     return NextResponse.json({ error: "Published post not found" }, { status: 404 });
@@ -45,7 +49,9 @@ export async function GET(request, { params }) {
       where: { publishedPostId: postId },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     });
-    const serialized = comments.map(serializeComment);
+    const canDelete =
+      post.brandId === id || (await canUserAccessBrand(auth.admin, post.brandId));
+    const serialized = comments.map((c) => serializeComment(c, { canDelete }));
     return NextResponse.json({
       comments: serialized,
       commentCount: serialized.length,

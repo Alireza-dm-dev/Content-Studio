@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { brandTimezoneLabel } from "@/lib/timezone";
 import PostThumbnailField, { checkThumbnailFile } from "@/components/PostThumbnailField";
+import CollaboratorBrandPicker from "@/components/CollaboratorBrandPicker";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -52,6 +53,9 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
   const [notes, setNotes] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
+  // Instagram-only: brands whose grid should also show this post.
+  const [collaboratorBrandIds, setCollaboratorBrandIds] = useState([]);
+  const isInstagram = (platform || "Instagram").trim().toLowerCase() === "instagram";
 
   const mediaInputRef = useRef(null);
   // Optional cover image, held locally until the post is submitted.
@@ -123,6 +127,12 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
       }
 
       fd.append("notes", notes);
+
+      if (isInstagram) {
+        for (const collaboratorId of collaboratorBrandIds) {
+          fd.append("collaboratorBrandIds", collaboratorId);
+        }
+      }
 
       const res = await fetch(`/api/brands/${brandId}/published-posts`, {
         method: "POST",
@@ -288,6 +298,16 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
             style={{ ...fieldStyle, resize: "vertical" }}
           />
         </div>
+
+        {/* Collaboration (Instagram only) */}
+        {isInstagram && (
+          <CollaboratorBrandPicker
+            currentBrandId={brandId}
+            value={collaboratorBrandIds}
+            onChange={setCollaboratorBrandIds}
+            disabled={uploading}
+          />
+        )}
 
         {/* Error */}
         {error && (

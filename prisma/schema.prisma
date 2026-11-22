@@ -34,6 +34,7 @@ model Brand {
   videoStoryboards         VideoStoryboard[]
   generatedMedia           GeneratedMedia[]
   publishedPosts           PublishedPost[]
+  postCollaborations       PublishedPostCollaborator[]
   brandAssignments         BrandAssignment[]
   brandMemberships         BrandMembership[]
   workspaceReviews         WorkspaceReview[]
@@ -419,7 +420,26 @@ model PublishedPost {
 
   comments PublishedPostComment[]
 
+  // Instagram collaboration: extra Brands whose grid also shows this post.
+  // The post is still owned by `brandId`; these rows only add visibility.
+  collaborators PublishedPostCollaborator[]
+
   @@index([brandId, platform])
+}
+
+// Join row: "this PublishedPost also appears in this Brand's Instagram grid".
+// Never a copy of the post. Removed automatically when either side is deleted.
+model PublishedPostCollaborator {
+  id              String   @id @default(cuid())
+  publishedPostId String
+  brandId         String
+  createdAt       DateTime @default(now())
+
+  publishedPost PublishedPost @relation(fields: [publishedPostId], references: [id], onDelete: Cascade)
+  brand         Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([publishedPostId, brandId])
+  @@index([brandId])
 }
 
 model PublishedPostMedia {
