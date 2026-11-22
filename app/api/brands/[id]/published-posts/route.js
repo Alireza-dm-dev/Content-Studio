@@ -30,6 +30,7 @@ import {
   validateCollaboratorBrands,
   decorateCollaboration,
 } from "@/lib/published-post-collaborators";
+import { validateInstagramCaptionForBrand, captionRulesErrorBody } from "@/lib/instagram-caption-check";
 
 const MAX_POSTS_PER_BRAND = 21;
 
@@ -135,7 +136,7 @@ export async function POST(request, { params }) {
 // ── Read fields ──────────────────────────────────────────────────────────────
   const rawFiles = formData.getAll("files") || formData.getAll("file") || [];
   const rawPostType = formData.get("postType") || formData.get("post_type") || "";
-  const caption = formData.get("caption") || "";
+  const rawCaption = formData.get("caption") || "";
   const rawPlatform = formData.get("platform");
 
   // Canonical internal platform: "LinkedIn" (never "Linkedin").
@@ -146,6 +147,12 @@ export async function POST(request, { params }) {
       { status: 400 }
     );
   }
+
+  // multipart/form-data encodes every line break in a text field as CRLF
+  // (HTML spec), so a caption typed as "a\n\nb" arrives as "a\r\n\r\nb".
+  // Undo that transport artifact for Instagram so the caption is stored and
+  // sent to n8n exactly as checked. LinkedIn keeps its existing behaviour.
+  const caption = platform === "Instagram" ? String(rawCaption).replace(/\r\n?/g, "\n") : rawCaption;
   
   const rawScheduledDate = formData.get("scheduledDate") || formData.get("scheduled_date") || "";
   const notes = formData.get("notes") || "";
@@ -168,6 +175,17 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: collaboratorCheck.error }, { status: collaboratorCheck.status });
   }
   const collaboratorBrands = collaboratorCheck.brands;
+
+  // Instagram caption rules are a save gate (spacing, Brand footer, exactly 5
+  // hashtags). The server never rewrites the caption here: the client runs
+  // "Check caption" and the user applies the result. The footer is always the
+  // uploading (primary) brand's, never a collaborator's.
+  if (platform === "Instagram") {
+    const captionCheck = await validateInstagramCaptionForBrand(caption, id);
+    if (!captionCheck.ok) {
+      return NextResponse.json(captionRulesErrorBody(captionCheck), { status: 422 });
+    }
+  }
   
   const mediaFiles = rawFiles.filter((f) => f && typeof f !== "string");
   if (mediaFiles.length === 0) {

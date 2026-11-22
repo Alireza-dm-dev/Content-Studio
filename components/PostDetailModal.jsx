@@ -13,6 +13,7 @@ import {
 } from "@/lib/timezone";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
 import CollaboratorBrandPicker, { CollaborationBadge } from "@/components/CollaboratorBrandPicker";
+import CaptionCheckPanel from "@/components/CaptionCheckPanel";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -145,6 +146,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
   const [collabDraft, setCollabDraft] = useState([]);
   const [collabSaving, setCollabSaving] = useState(false);
   const closedRef = useRef(false);
+  const captionCheckRef = useRef(null);
 
   const isInstagramPost = (post.platform || "Instagram") === "Instagram";
   const collaboratorBrands = post.collaboratorBrands || [];
@@ -300,6 +302,18 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
   }
 
   async function handleSave() {
+    // Same rule as the server gate: an Instagram caption is re-checked when the
+    // edit changes it or turns the post into an Instagram post.
+    const editIsInstagram = String(editPlatform || "").trim().toLowerCase() === "instagram";
+    const needsCaptionCheck =
+      editIsInstagram && (editCaption !== (post.caption || "") || !isInstagramPost);
+    if (needsCaptionCheck && captionCheckRef.current) {
+      const ready = await captionCheckRef.current.ensureReady();
+      if (!ready) {
+        toast.error("Review the caption check, click Apply (or edit the caption), then save again.");
+        return;
+      }
+    }
     setSaving(true);
     try {
       // Unchanged → original instant (no drift); changed → wall-clock string that
@@ -329,7 +343,8 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
         throw new Error(`Save failed with status ${res.status}`);
       }
       if (!res.ok) {
-        throw new Error(data?.error || `Save failed with status ${res.status}`);
+        const failures = (data?.failures || []).map((f) => f.message);
+        throw new Error([data?.error || `Save failed with status ${res.status}`, ...failures].join(" "));
       }
       toast.success("Post updated.");
       setEditing(false);
@@ -735,10 +750,21 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                 <textarea
                   value={editCaption}
                   onChange={(e) => setEditCaption(e.target.value)}
-                  rows={3}
+                  rows={String(editPlatform || "").trim().toLowerCase() === "instagram" ? 8 : 3}
+                  dir="auto"
                   style={fieldStyle}
                 />
               </EditField>
+              {String(editPlatform || "").trim().toLowerCase() === "instagram" && (
+                <CaptionCheckPanel
+                  ref={captionCheckRef}
+                  brandId={brandId}
+                  postId={post.id}
+                  caption={editCaption}
+                  onApply={setEditCaption}
+                  disabled={saving}
+                />
+              )}
               <EditField label="Platform">
                 <input
                   type="text"

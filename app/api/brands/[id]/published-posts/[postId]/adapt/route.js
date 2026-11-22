@@ -20,6 +20,7 @@ import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
 import { uploadPublishedPostMedia, isCanonicalMediaUrl, isLocalMediaUrl, copyMediaToTarget } from "@/lib/published-post-remote-media";
 import { parseScheduledDate, resolveBrandTimezone } from "@/lib/timezone";
 import { readBoundedJsonBody } from "@/lib/read-bounded-json";
+import { validateInstagramCaptionForBrand, captionRulesErrorBody } from "@/lib/instagram-caption-check";
 
 function isValidSourcePlatform(platform) {
   return platform === "Instagram" || platform === "LinkedIn";
@@ -158,6 +159,15 @@ export async function POST(request, { params }) {
     const rawScheduledDate = body.scheduledDate || "";
     const rawStatus = body.status || "draft";
     const sendToN8n = body.sendToN8n === true;
+
+    // Same Instagram caption save gate as upload/edit (LinkedIn targets are
+    // unchanged). The source post belongs to this brand, so it is the primary.
+    if (targetPlatform === "Instagram") {
+      const captionCheck = await validateInstagramCaptionForBrand(caption, id);
+      if (!captionCheck.ok) {
+        return NextResponse.json(captionRulesErrorBody(captionCheck), { status: 422 });
+      }
+    }
     const rawFiles = Array.isArray(body.files) ? body.files : [];
     const rawThumbnail = body.thumbnail || null;
 

@@ -51,6 +51,15 @@ mock.module("@/lib/prisma", {
   },
 });
 
+// The Instagram caption save gate is covered by tests/instagram-caption*.test.mjs;
+// this file is about something else, so the gate is stubbed open here.
+mock.module("@/lib/instagram-caption-check", {
+  exports: {
+    validateInstagramCaptionForBrand: async () => ({ ok: true, failures: [], warnings: [] }),
+    captionRulesErrorBody: (v) => v,
+  },
+});
+
 const create = await import("../app/api/brands/[id]/published-posts/route.js");
 const edit = await import("../app/api/brands/[id]/published-posts/[postId]/route.js");
 const resend = await import("../app/api/brands/[id]/published-posts/[postId]/send-webhook/route.js");

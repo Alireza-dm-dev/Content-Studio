@@ -232,6 +232,15 @@ mock.module("@/lib/published-post-delete-webhook", {
   },
 });
 
+// The Instagram caption save gate is covered by tests/instagram-caption*.test.mjs;
+// this file is about something else, so the gate is stubbed open here.
+mock.module("@/lib/instagram-caption-check", {
+  exports: {
+    validateInstagramCaptionForBrand: async () => ({ ok: true, failures: [], warnings: [] }),
+    captionRulesErrorBody: (v) => v,
+  },
+});
+
 const listRoute = await import("../app/api/brands/[id]/published-posts/route.js");
 const itemRoute = await import("../app/api/brands/[id]/published-posts/[postId]/route.js");
 const collabRoute = await import("../app/api/brands/[id]/published-posts/[postId]/collaborators/route.js");

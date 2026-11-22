@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { brandTimezoneLabel } from "@/lib/timezone";
 import PostThumbnailField, { checkThumbnailFile } from "@/components/PostThumbnailField";
 import CollaboratorBrandPicker from "@/components/CollaboratorBrandPicker";
+import CaptionCheckPanel from "@/components/CaptionCheckPanel";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -58,6 +59,7 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
   const isInstagram = (platform || "Instagram").trim().toLowerCase() === "instagram";
 
   const mediaInputRef = useRef(null);
+  const captionCheckRef = useRef(null);
   // Optional cover image, held locally until the post is submitted.
   const [thumb, setThumb] = useState(null); // { file, url }
   const thumbFile = thumb?.file ?? null;
@@ -100,6 +102,16 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
     if (postType === "static" && files.length > 1) {
       setError("Static posts accept only one file. Use Carousel for multiple files.");
       return;
+    }
+
+    // Instagram captions must pass the caption rules before upload. If they do
+    // not yet, run the check and let the user review/apply instead of saving.
+    if (isInstagram && captionCheckRef.current) {
+      const ready = await captionCheckRef.current.ensureReady();
+      if (!ready) {
+        setError("Review the caption check below, click Apply (or edit the caption), then upload again.");
+        return;
+      }
     }
 
     setUploading(true);
@@ -159,7 +171,8 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
       }
 
       if (!res.ok) {
-        throw new Error(data?.error || `Upload failed (${res.status})`);
+        const failures = (data?.failures || []).map((f) => f.message);
+        throw new Error([data?.error || `Upload failed (${res.status})`, ...failures].join(" "));
       }
 
       const createdPost = data.post || data;
@@ -272,10 +285,22 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
           <textarea
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
-            rows={3}
+            rows={isInstagram ? 8 : 3}
+            dir="auto"
             style={{ ...fieldStyle, resize: "vertical" }}
           />
         </div>
+
+        {/* Instagram caption check (grammar, Brand alignment, format rules) */}
+        {isInstagram && (
+          <CaptionCheckPanel
+            ref={captionCheckRef}
+            brandId={brandId}
+            caption={caption}
+            onApply={setCaption}
+            disabled={uploading}
+          />
+        )}
 
         {/* Scheduled date */}
         <div>

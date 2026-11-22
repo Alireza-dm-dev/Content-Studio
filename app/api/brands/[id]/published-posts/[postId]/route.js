@@ -29,6 +29,7 @@ import {
   isCollaboratorOnlyPost,
   decorateCollaboration,
 } from "@/lib/published-post-collaborators";
+import { validateInstagramCaptionForBrand, captionRulesErrorBody } from "@/lib/instagram-caption-check";
 
 // Mutations stay scoped to the PRIMARY brand ({ id, brandId }). When the post is
 // only a collaboration of the URL brand, answer 403 rather than 404 so the
@@ -346,6 +347,20 @@ export async function POST(request, { params }) {
 
     if (body.status !== undefined) {
       updateData.status = isValidStatus(body.status) ? body.status : "draft";
+    }
+
+    // Instagram caption rules: re-checked whenever the edit changes the caption
+    // or turns the post into an Instagram post. Untouched legacy captions keep
+    // saving (e.g. a status-only edit), so old posts are never locked.
+    const captionChanged = updateData.caption !== undefined && updateData.caption !== existing.caption;
+    const becameInstagram =
+      normalizePublishedPostPlatform(existing.platform) !== "Instagram" && finalPlatform === "Instagram";
+    if (finalPlatform === "Instagram" && (captionChanged || becameInstagram)) {
+      const finalCaption = updateData.caption !== undefined ? updateData.caption : existing.caption;
+      const captionCheck = await validateInstagramCaptionForBrand(finalCaption ?? "", id);
+      if (!captionCheck.ok) {
+        return NextResponse.json(captionRulesErrorBody(captionCheck), { status: 422 });
+      }
     }
 
     // Collaboration is Instagram-only: moving a post to another platform drops

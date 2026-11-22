@@ -48,6 +48,15 @@ mock.module("@/lib/published-post-webhook", {
   },
 });
 
+// The Instagram caption save gate is covered by tests/instagram-caption*.test.mjs;
+// this file is about something else, so the gate is stubbed open here.
+mock.module("@/lib/instagram-caption-check", {
+  exports: {
+    validateInstagramCaptionForBrand: async () => ({ ok: true, failures: [], warnings: [] }),
+    captionRulesErrorBody: (v) => v,
+  },
+});
+
 const tz = await import("@/lib/timezone");
 const { buildN8nPayload } = await import("@/lib/published-post-utils");
 const { getPublishedPostFooterState } = await import("@/lib/published-post-footer");

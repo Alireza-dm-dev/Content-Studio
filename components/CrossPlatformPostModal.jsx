@@ -8,6 +8,7 @@ import {
   brandTimezoneLabel,
   scheduledValueForSubmit,
 } from "@/lib/timezone";
+import CaptionCheckPanel from "@/components/CaptionCheckPanel";
 
 // Matches the server's new max SFTP upload budget (30 min). Image/PDF uploads
 // finish in milliseconds, so this only extends the ceiling for large video
@@ -345,6 +346,8 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
 
   const isImgTarget = targetPlatform === "Instagram";
   const isLiTarget = targetPlatform === "LinkedIn";
+  const isIgTarget = targetPlatform === "Instagram";
+  const captionCheckRef = useRef(null);
 
   const compatiblePostTypes = TARGET_POST_TYPES[targetPlatform] || [];
   const availableStrategies = useMemo(
@@ -468,6 +471,14 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
       setError("Upload compatible Instagram media before continuing.");
       return;
     }
+    // Instagram target: same caption rules as upload/edit (server re-checks).
+    if (isIgTarget && captionCheckRef.current) {
+      const ready = await captionCheckRef.current.ensureReady();
+      if (!ready) {
+        setError("Review the caption check, click Apply (or edit the caption), then continue.");
+        return;
+      }
+    }
 
     submittingRef.current = true;
     setSubmitting(true);
@@ -554,7 +565,9 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
       }
 
       if (!res.ok) {
-        throw new Error(data?.error || `Adaptation failed (${res.status})`);
+        throw new Error(
+          [data?.error || `Adaptation failed (${res.status})`, ...(data?.failures || []).map((f) => f.message)].join(" "),
+        );
       }
 
       const createdPost = data.post;
@@ -885,14 +898,24 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
             {/* Caption */}
             <div>
               <div style={{ ...lbl, marginBottom: 4, fontSize: 9 }}>Caption</div>
-              <textarea value={caption} onChange={(e) => setCaption(e.target.value)} rows={3} style={{ ...fieldStyle, fontSize: 10, resize: "vertical" }} />
+              <textarea value={caption} onChange={(e) => setCaption(e.target.value)} rows={isIgTarget ? 8 : 3} dir="auto" style={{ ...fieldStyle, fontSize: 10, resize: "vertical" }} />
             </div>
 
-            {/* Hashtags */}
-            <div>
-              <div style={{ ...lbl, marginBottom: 4, fontSize: 9 }}>Hashtags</div>
-              <input type="text" value={hashtags} onChange={(e) => setHashtags(e.target.value)} style={fieldStyle} placeholder="#tag1 #tag2" />
-            </div>
+            {/* Instagram: hashtags live in the caption and are handled by the check */}
+            {isIgTarget ? (
+              <CaptionCheckPanel
+                ref={captionCheckRef}
+                brandId={brandId}
+                caption={caption}
+                onApply={setCaption}
+                disabled={submitting}
+              />
+            ) : (
+              <div>
+                <div style={{ ...lbl, marginBottom: 4, fontSize: 9 }}>Hashtags</div>
+                <input type="text" value={hashtags} onChange={(e) => setHashtags(e.target.value)} style={fieldStyle} placeholder="#tag1 #tag2" />
+              </div>
+            )}
 
             {/* LinkedIn specific */}
             {isLiTarget && (
