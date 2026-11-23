@@ -8,11 +8,17 @@ import {
   saveThumbnailFile,
   removeThumbnailFiles,
 } from "@/lib/published-post-thumbnail";
+import {
+  postTypeSupportsCover,
+  COVER_NOT_SUPPORTED_CODE,
+  COVER_NOT_SUPPORTED_MESSAGE,
+} from "@/lib/published-post-cover";
 
 export const dynamic = "force-dynamic";
 
 // Thumbnail / cover image for an existing Instagram Published Post.
-//   PUT    multipart "thumbnail" — add or replace (old file deleted after the DB update)
+//   PUT    multipart "thumbnail" — add or replace (old file deleted after the DB update).
+//                                  Reel / Video only; Static / Carousel → 400 COVER_NOT_SUPPORTED.
 //   DELETE                       — remove the thumbnail only; media is never touched
 //
 // Same authorization as editing the post: brand access, and the post must
@@ -59,6 +65,12 @@ export async function PUT(request, { params }) {
   const ctx = await loadPost(request, params);
   if (ctx.response) return ctx.response;
   const { id, postId, post } = ctx;
+
+  // Only Reel / Video posts take a separate cover. DELETE stays allowed for any
+  // type so a legacy cover on an old Static/Carousel row can still be cleared.
+  if (!postTypeSupportsCover(post.postType)) {
+    return fail(COVER_NOT_SUPPORTED_MESSAGE, 400, COVER_NOT_SUPPORTED_CODE);
+  }
 
   let form;
   try { form = await request.formData(); } catch { return fail("Invalid multipart request", 400); }

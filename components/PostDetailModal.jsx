@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import PostThumbnailField, { checkThumbnailFile } from "@/components/PostThumbnailField";
+import { postTypeSupportsCover } from "@/lib/published-post-cover";
 import {
   formatToDateTimeLocalInTz,
   formatLegacyN8nScheduledDate,
@@ -737,13 +738,15 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
           )}
         </div>
 
-        {/* ── Thumbnail / Cover (Instagram; shown separately, never replaces the media) ── */}
-        {post.platform !== "LinkedIn" && !readOnly && (
+        {/* ── Thumbnail / Cover (Instagram Reel / Video only; shown separately, never replaces the media).
+             Static / Carousel use their first image as the preview; a legacy cover stored on one
+             is left untouched in the data but not offered for editing here. ── */}
+        {post.platform !== "LinkedIn" && !readOnly && postTypeSupportsCover(post.postType) && (
           <div style={{ padding: "12px 18px", borderBottom: "1px solid var(--sketch-line)" }}>
             <PostThumbnailField
               previewUrl={post.thumbnailUrl || null}
               caption={post.caption}
-              recommended={post.postType === "reel"}
+              recommended
               busy={thumbBusy}
               hint="JPG, PNG or WebP, up to 10 MB. Saved immediately; use Send to n8n to update an already-sent post."
               onPick={(file) => handleThumbnail(file)}

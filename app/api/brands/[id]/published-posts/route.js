@@ -36,6 +36,11 @@ import {
   retentionResult,
   LINKEDIN_RETENTION_REMOVED_MESSAGE,
 } from "@/lib/linkedin-retention";
+import {
+  postTypeSupportsCover,
+  COVER_NOT_SUPPORTED_CODE,
+  COVER_NOT_SUPPORTED_MESSAGE,
+} from "@/lib/published-post-cover";
 
 const MAX_POSTS_PER_BRAND = 21;
 
@@ -330,6 +335,14 @@ export async function POST(request, { params }) {
   // Instagram thumbnail / cover: optional, strictly validated, rejected (not
   // silently skipped) when invalid. LinkedIn keeps its existing handling below.
   let instagramThumbnail = null;
+  // Static / Carousel take no separate cover: refuse it outright (before any
+  // file is written) so a client can never attach one by bypassing the UI.
+  if (platform === "Instagram" && !isNoFile(thumbnailFile) && !postTypeSupportsCover(postType)) {
+    return NextResponse.json(
+      { error: COVER_NOT_SUPPORTED_MESSAGE, code: COVER_NOT_SUPPORTED_CODE },
+      { status: 400 },
+    );
+  }
   if (platform === "Instagram" && !isNoFile(thumbnailFile)) {
     const v = await validateThumbnailFile(thumbnailFile);
     if (!v.ok) {

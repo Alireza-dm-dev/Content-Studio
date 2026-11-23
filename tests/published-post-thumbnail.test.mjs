@@ -159,14 +159,103 @@ test("video post with JPG cover: video stays main media, cover stored separately
   assert.equal(JSON.parse(stored(post.id).jsonPayload).thumbnail_url, post.thumbnailUrl);
 });
 
-test("PNG and WebP covers are accepted; image posts may also have a cover", async () => {
+test("PNG and WebP covers are accepted on Reel / Video", async () => {
   const png = await createPost(A, { thumbnail: F.png() });
   assert.equal(png.status, 201);
   assert.match(png.body.post.thumbnailUrl, /\.png$/);
-  const webp = await createPost(A, { files: [F.jpg("photo.jpg")], postType: "static", thumbnail: F.webp() });
+  // "video" is the legacy alias of "reel".
+  const webp = await createPost(A, { postType: "video", thumbnail: F.webp() });
   assert.equal(webp.status, 201);
+  assert.equal(webp.body.post.postType, "reel");
   assert.match(webp.body.post.thumbnailUrl, /\.webp$/);
-  assert.equal(webp.body.post.media[0].mediaType, "IMAGE");
+  assert.equal(webp.body.post.media[0].mediaType, "VIDEO");
+});
+
+// ── Cover is Reel / Video only ───────────────────────────────────────────────
+
+test("rule: only Reel / Video take a separate cover", async () => {
+  const { postTypeSupportsCover } = await import("../lib/published-post-cover.js");
+  for (const t of ["reel", "Reel", " video ", "VIDEO"]) assert.equal(postTypeSupportsCover(t), true, t);
+  for (const t of ["static", "carousel", "Carousel", "", null, undefined, "reels"]) assert.equal(postTypeSupportsCover(t), false, String(t));
+});
+
+test("Static / Carousel create with a cover is refused before anything is written", async () => {
+  const cases = [
+    { postType: "static", files: [F.jpg("photo.jpg")], thumbnail: F.webp() },
+    { postType: "carousel", files: [F.jpg("a.jpg"), F.png("b.png")], thumbnail: F.jpg() },
+    // Even a hostile "cover" gets the same deterministic answer for these types.
+    { postType: "static", files: [F.jpg("photo.jpg")], thumbnail: new File([pad([0x3c, 0x68])], "x.html", { type: "text/html" }) },
+  ];
+  for (const c of cases) {
+    const r = await createPost(A, c);
+    assert.equal(r.status, 400, c.postType);
+    assert.equal(r.body.code, "COVER_NOT_SUPPORTED");
+    assert.match(r.body.error, /only used for Reel \/ Video/);
+  }
+  assert.equal(state.posts.length, 0);
+  assert.equal(existsSync(path.join(UPLOADS, A)), false);
+});
+
+test("Static / Carousel create without a cover (or with an empty file part) still works", async () => {
+  const s = await createPost(A, { postType: "static", files: [F.jpg("photo.jpg")] });
+  assert.equal(s.status, 201);
+  assert.equal(s.body.post.thumbnailUrl, null);
+  // A browser sends an empty, unnamed part when no file was picked.
+  const c = await createPost(A, { postType: "carousel", files: [F.jpg("a.jpg"), F.png("b.png")], thumbnail: new File([], "", { type: "application/octet-stream" }) });
+  assert.equal(c.status, 201);
+  assert.equal(c.body.post.thumbnailUrl, null);
+  // n8n: no cover is sent for these types.
+  assert.equal(JSON.parse(stored(s.body.post.id).jsonPayload).thumbnail_url, "");
+  assert.equal(JSON.parse(stored(c.body.post.id).jsonPayload).thumbnail_url, "");
+});
+
+test("thumbnail PUT refuses Static / Carousel posts (400) and writes nothing", async () => {
+  const s = (await createPost(A, { postType: "static", files: [F.jpg("photo.jpg")] })).body.post;
+  const c = (await createPost(A, { postType: "carousel", files: [F.jpg("a.jpg"), F.png("b.png")] })).body.post;
+  for (const post of [s, c]) {
+    const before = files(A, post.id);
+    const r = await putThumb(A, post.id, F.jpg());
+    assert.equal(r.status, 400);
+    assert.equal(r.body.code, "COVER_NOT_SUPPORTED");
+    assert.equal(stored(post.id).thumbnailUrl, null);
+    assert.deepEqual(files(A, post.id), before);
+  }
+});
+
+test("thumbnail PUT on a legacy 'video' post type still works", async () => {
+  const id = (await createPost(A)).body.post.id;
+  stored(id).postType = "video"; // pre-normalization row
+  const r = await putThumb(A, id, F.jpg());
+  assert.equal(r.status, 200);
+  assert.match(r.body.post.thumbnailUrl, /thumbnail-.*\.jpg$/);
+});
+
+test("old Static with a stored cover: kept as-is, readable, not editable, still removable", async () => {
+  const post = (await createPost(A, { postType: "static", files: [F.jpg("photo.jpg")] })).body.post;
+  // Simulate a row created before this rule, when Static could carry a cover.
+  const legacyUrl = `/uploads/${A}/published-posts/${post.id}/thumbnail.jpg`;
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(localFile(legacyUrl), pad([0xff, 0xd8, 0xff, 0xe0]));
+  stored(post.id).thumbnailUrl = legacyUrl;
+  stored(post.id).jsonPayload = JSON.stringify({ ...JSON.parse(stored(post.id).jsonPayload), thumbnail_url: legacyUrl });
+
+  // Reading/serializing never crashes and never drops the data.
+  const serialized = utils.serializePublishedPost(withRelations(stored(post.id), { media: true, _count: true }));
+  assert.equal(serialized.thumbnailUrl, legacyUrl);
+  assert.equal(serialized.imageUrl, post.media[0].url, "primary image is still the image");
+  // Its existing n8n value is untouched (no automatic deletion).
+  assert.equal(JSON.parse(stored(post.id).jsonPayload).thumbnail_url, legacyUrl);
+
+  // No new cover can be attached…
+  assert.equal((await putThumb(A, post.id, F.png())).status, 400);
+  assert.equal(stored(post.id).thumbnailUrl, legacyUrl);
+  assert.ok(existsSync(localFile(legacyUrl)));
+  // …but the legacy one can be cleared explicitly.
+  const del = await deleteThumb(A, post.id);
+  assert.equal(del.status, 200);
+  assert.equal(stored(post.id).thumbnailUrl, null);
+  assert.equal(existsSync(localFile(legacyUrl)), false);
+  assert.ok(existsSync(localFile(post.media[0].url)), "the image itself is never touched");
 });
 
 test("invalid, mislabelled, oversized and zero-byte covers are rejected before anything is written", async () => {

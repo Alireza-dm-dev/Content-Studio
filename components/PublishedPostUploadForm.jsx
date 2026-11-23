@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import { brandTimezoneLabel } from "@/lib/timezone";
 import PostThumbnailField, { checkThumbnailFile } from "@/components/PostThumbnailField";
+import { postTypeSupportsCover } from "@/lib/published-post-cover";
 import CollaboratorBrandPicker from "@/components/CollaboratorBrandPicker";
 import CaptionCheckPanel from "@/components/CaptionCheckPanel";
 
@@ -64,6 +65,9 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
   const [thumb, setThumb] = useState(null); // { file, url }
   const thumbFile = thumb?.file ?? null;
   const thumbUrlRef = useRef(null);
+  // Shown when switching away from Reel / Video discarded a picked cover.
+  const [coverNotice, setCoverNotice] = useState(null);
+  const coverAllowed = postTypeSupportsCover(postType);
 
   function replaceThumb(next) {
     if (thumbUrlRef.current) URL.revokeObjectURL(thumbUrlRef.current);
@@ -77,11 +81,22 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
     const problem = checkThumbnailFile(file);
     if (problem) { setError(problem); return; }
     setError(null);
+    setCoverNotice(null);
     replaceThumb({ file, url: URL.createObjectURL(file) });
   }
 
   function handlePostTypeChange(e) {
-    setPostType(e.target.value);
+    const nextType = e.target.value;
+    setPostType(nextType);
+    // Static / Carousel take no cover: drop a pending one (revoking its preview
+    // URL) so it can never be submitted, and say so. Coming back to Reel starts
+    // with an empty cover field.
+    if (!postTypeSupportsCover(nextType) && thumb) {
+      replaceThumb(null);
+      setCoverNotice("Cover removed — Static and Carousel posts use their first image as the preview.");
+    } else {
+      setCoverNotice(null);
+    }
   }
 
   async function handleSubmit(e) {
@@ -124,7 +139,8 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
         fd.append("files", files[i]);
       }
 
-      if (thumbFile) {
+      // Defence in depth: only Reel / Video ever sends a cover.
+      if (thumbFile && postTypeSupportsCover(postType)) {
         fd.append("thumbnail", thumbFile);
       }
 
@@ -243,15 +259,22 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
           )}
         </div>
 
-        {/* Thumbnail / cover (separate from the media; never replaces it) */}
-        <PostThumbnailField
-          previewUrl={thumb?.url ?? null}
-          caption={caption}
-          recommended={postType === "reel" || postType === "video"}
-          busy={uploading}
-          onPick={handleThumbPick}
-          onRemove={() => replaceThumb(null)}
-        />
+        {/* Thumbnail / cover: Reel / Video only (separate from the media; never replaces it) */}
+        {coverAllowed && (
+          <PostThumbnailField
+            previewUrl={thumb?.url ?? null}
+            caption={caption}
+            recommended
+            busy={uploading}
+            onPick={handleThumbPick}
+            onRemove={() => replaceThumb(null)}
+          />
+        )}
+        {coverNotice && (
+          <div role="status" style={{ ...lbl, fontSize: 9, letterSpacing: "0.04em", textTransform: "none", color: "var(--sketch-ink-soft)" }}>
+            {coverNotice}
+          </div>
+        )}
 
         {/* Post type */}
         <div>
