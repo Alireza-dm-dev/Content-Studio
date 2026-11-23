@@ -31,6 +31,11 @@ import {
   decorateCollaboration,
 } from "@/lib/published-post-collaborators";
 import { validateInstagramCaptionForBrand, captionRulesErrorBody } from "@/lib/instagram-caption-check";
+import {
+  enforceLinkedInRetention,
+  retentionResult,
+  LINKEDIN_RETENTION_REMOVED_MESSAGE,
+} from "@/lib/linkedin-retention";
 
 const MAX_POSTS_PER_BRAND = 21;
 
@@ -457,6 +462,28 @@ export async function POST(request, { params }) {
     throw dbError;
   }
 
+  // ── LinkedIn retention: all queued + at most 5 historical, no exemption ─────
+  // Runs as soon as the row exists and BEFORE remote upload / n8n, so a post
+  // that falls outside the window is never published anywhere. Never on GET.
+  let linkedInRetention = null;
+  if (platform === "LinkedIn") {
+    const { deletedIds } = await enforceLinkedInRetention(id, { timeZone: brand.timezone ?? null });
+    linkedInRetention = retentionResult(deletedIds, result.id);
+    if (linkedInRetention.currentPostRemoved) {
+      return NextResponse.json(
+        {
+          post: null,
+          kept: false,
+          webhookResult: null,
+          remoteResult: null,
+          linkedInRetention,
+          message: LINKEDIN_RETENTION_REMOVED_MESSAGE,
+        },
+        { status: 200 },
+      );
+    }
+  }
+
   // ── Remote media upload (best-effort) ──────────────────────────────────────
   let remoteResult;
   try {
@@ -598,7 +625,7 @@ export async function POST(request, { params }) {
   );
 
   return NextResponse.json(
-    { post: createdPost, webhookResult, remoteResult },
+    { post: createdPost, webhookResult, remoteResult, linkedInRetention },
     { status: 201 },
   );
   } catch (error) {

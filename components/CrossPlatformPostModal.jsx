@@ -570,6 +570,14 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
         );
       }
 
+      // LinkedIn retention removed the new copy at once (older than the five
+      // kept history posts): say so and insert nothing.
+      if (data.linkedInRetention?.currentPostRemoved) {
+        toast.info(data.message || "This post was not kept by LinkedIn retention.");
+        if (!closedRef.current) onCreated(null, data.linkedInRetention);
+        return;
+      }
+
       const createdPost = data.post;
 
       if (data.webhookResult?.success) {
@@ -584,7 +592,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
       }
 
       if (!closedRef.current) {
-        onCreated(createdPost);
+        onCreated(createdPost, data.linkedInRetention);
       }
     } catch (err) {
       if (err.name === "AbortError") {

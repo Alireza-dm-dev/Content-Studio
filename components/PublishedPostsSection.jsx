@@ -358,19 +358,27 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
     setSelectedPost(merged);
   }
 
-  function handleCrossPlatformCreated(createdPost) {
+  function handleCrossPlatformCreated(createdPost, linkedInRetention) {
+    // LinkedIn retention removed the new copy itself: only pass the pruning on.
+    if (!createdPost) {
+      onCrossPlatformPostCreated?.(null, linkedInRetention);
+      return;
+    }
     // An adaptation of a collaboration post is created under its owning brand;
     // it does not belong in this brand's sections.
     if (createdPost.brandId && createdPost.brandId !== brand.id) return;
     if (createdPost.platform === "Instagram") {
       addPostToSection(createdPost);
     } else {
-      onCrossPlatformPostCreated?.(createdPost);
+      onCrossPlatformPostCreated?.(createdPost, linkedInRetention);
     }
   }
 
-  function handleDeleted(deletedId) {
+  function handleDeleted(deletedId, linkedInRetention) {
     setPosts((prev) => prev.filter((p) => p.id !== deletedId));
+    // An Instagram post edited into LinkedIn can trigger LinkedIn retention;
+    // let the LinkedIn section drop whatever it removed.
+    if (linkedInRetention?.deletedIds?.length) onCrossPlatformPostCreated?.(null, linkedInRetention);
   }
 
   return (

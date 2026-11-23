@@ -1,17 +1,21 @@
 "use client";
 
-import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { StatusPill } from "@/components/content-report/StatusPill";
-import { FileText, Image as ImageIcon, Video as VideoIcon, MessageCircle, CheckCircle } from "lucide-react";
+import { FileText, Image as ImageIcon, Video as VideoIcon, MessageCircle, CheckCircle, Play, AlignLeft } from "lucide-react";
 import LinkedInPostUploadForm from "@/components/LinkedInPostUploadForm";
 import LinkedInPostDetailModal from "@/components/LinkedInPostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
 import { resolveBrandTimezone } from "@/lib/timezone";
 import { getPublishedPostFooterState } from "@/lib/published-post-footer";
 import { sortPublishedPosts } from "@/lib/published-post-order";
+import { detectKind, getLinkedInPreview, buildCaptionExcerpt } from "@/lib/linkedin-post-preview";
+
+// Re-exported for existing importers (LinkedInPostDetailModal).
+export { detectKind };
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -57,38 +61,195 @@ function fmtDate(date, timeZone) {
   }
 }
 
-// Determine the row kind using post.postType and the first media record.
-// Defensive about case differences (IMAGE/image, VIDEO/video, document/DOCUMENT).
-export function detectKind(post) {
-  const first = post.media?.[0];
-  const postType = (post.postType || "").toLowerCase();
-  const mt = (first?.mediaType || "").toLowerCase();
-  const fileType = (first?.fileType || "").toLowerCase();
-  const fileName = (first?.fileName || "").toLowerCase();
-
-  if (postType === "reel" || postType === "video" || mt === "video") return "video";
-  if (
-    postType === "carousel" &&
-    (mt === "document" || fileType === "application/pdf" || fileName.endsWith(".pdf"))
-  ) {
-    return "pdf";
-  }
-  if (postType === "static" || mt === "image") return "image";
-  if (mt === "document") return "pdf";
-  // Legacy LinkedIn posts default to PDF behavior.
-  return "pdf";
-}
-
 const KIND_META = {
   image: { label: "Single Image", Icon: ImageIcon, action: "Open Image" },
   pdf: { label: "PDF Carousel", Icon: FileText, action: "Open PDF" },
   video: { label: "Video", Icon: VideoIcon, action: "Open Video" },
 };
 
+const PREVIEW_SIZE = 88;
+
+const tileBase = {
+  width: PREVIEW_SIZE,
+  height: PREVIEW_SIZE,
+  flexShrink: 0,
+  position: "relative",
+  overflow: "hidden",
+  border: "1px solid var(--sketch-line)",
+  background: "var(--sketch-paper-raw)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+};
+
+function PlayBadge() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        inset: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        pointerEvents: "none",
+      }}
+    >
+      <span
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: "50%",
+          background: "rgba(28,24,18,0.65)",
+          color: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Play size={14} fill="currentColor" />
+      </span>
+    </span>
+  );
+}
+
+function FallbackTile({ Icon, label, sub, dark }) {
+  return (
+    <div
+      style={{
+        ...tileBase,
+        flexDirection: "column",
+        gap: 4,
+        background: dark ? "var(--sketch-ink)" : "var(--sketch-paper-raw)",
+        color: dark ? "var(--sketch-paper-bright)" : "var(--sketch-ink-faint)",
+        padding: 6,
+        textAlign: "center",
+      }}
+    >
+      <Icon size={22} aria-hidden="true" />
+      <span style={{ ...lbl, fontSize: 9, color: "inherit" }}>{label}</span>
+      {sub ? (
+        <span
+          style={{
+            ...lbl,
+            fontSize: 8,
+            letterSpacing: "0.04em",
+            textTransform: "none",
+            color: "inherit",
+            opacity: 0.8,
+            maxWidth: "100%",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {sub}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+// Mounts a metadata-only <video> once the tile is near the viewport, so a long
+// list never starts fetching every video. preload="metadata" + #t=0.1 asks the
+// browser for just enough to paint the first frame, never the whole file.
+function LazyVideoFrame({ src, fileName }) {
+  const ref = useRef(null);
+  const [visible, setVisible] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    // No observer → stay on the play-badge tile rather than load every video.
+    if (!el || visible || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisible(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visible]);
+
+  if (failed) return <FallbackTile Icon={VideoIcon} label="Video" sub={fileName} dark />;
+
+  return (
+    <div ref={ref} style={{ ...tileBase, background: "var(--sketch-ink)" }}>
+      {visible ? (
+        <video
+          src={`${src}#t=0.1`}
+          preload="metadata"
+          muted
+          playsInline
+          tabIndex={-1}
+          aria-hidden="true"
+          onError={() => setFailed(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
+        />
+      ) : null}
+      <PlayBadge />
+    </div>
+  );
+}
+
+function LinkedInPreviewTile({ post }) {
+  const preview = getLinkedInPreview(post);
+  const [failedSrc, setFailedSrc] = useState(null);
+  const alt = `${KIND_META[preview.kind]?.label || "LinkedIn post"} preview`;
+
+  if (preview.mode === "image" && preview.src && failedSrc !== preview.src) {
+    return (
+      <div style={tileBase}>
+        <img
+          src={preview.src}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailedSrc(preview.src)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+        />
+        {preview.kind === "video" ? <PlayBadge /> : null}
+        {preview.kind === "pdf" ? (
+          <span
+            style={{
+              ...lbl,
+              position: "absolute",
+              left: 4,
+              bottom: 4,
+              fontSize: 8,
+              padding: "1px 4px",
+              background: "var(--sketch-paper-bright)",
+              color: "var(--sketch-ink)",
+            }}
+          >
+            PDF
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+  // A failed video poster falls through to the lazy first-frame preview.
+  if (preview.kind === "video" && preview.videoSrc) {
+    return <LazyVideoFrame src={preview.videoSrc} fileName={preview.fileName} />;
+  }
+  if (preview.kind === "pdf") {
+    return <FallbackTile Icon={FileText} label="PDF" sub={preview.fileName} />;
+  }
+  if (preview.kind === "image") {
+    return <FallbackTile Icon={ImageIcon} label="Image" sub={preview.fileName} />;
+  }
+  return <FallbackTile Icon={AlignLeft} label="Text" />;
+}
+
 function PostRow({ post, timeZone, onOpen, onCommentClick }) {
   const kind = detectKind(post);
   const meta = KIND_META[kind] || KIND_META.pdf;
-  const { Icon, label, action } = meta;
+  const { label, action } = meta;
+  const captionExcerpt = buildCaptionExcerpt(post.caption);
 
   const firstMedia = post.media?.[0];
   const fileName =
@@ -128,10 +289,8 @@ function PostRow({ post, timeZone, onOpen, onCommentClick }) {
         cursor: canOpenModal ? "pointer" : "default",
       }}
     >
-      {/* Icon */}
-      <div style={{ flexShrink: 0, color: "var(--sketch-ink-faint)" }}>
-        <Icon size={22} aria-hidden="true" />
-      </div>
+      {/* Visual preview */}
+      <LinkedInPreviewTile post={post} />
 
       {/* Main info */}
       <div
@@ -169,19 +328,23 @@ function PostRow({ post, timeZone, onOpen, onCommentClick }) {
           </span>
         </div>
 
-        {post.caption ? (
+        {captionExcerpt ? (
           <div
-            title={post.caption}
+            className="li-caption-excerpt"
             style={{
               fontFamily: "var(--font-mono-ink)",
               fontSize: 11,
+              lineHeight: 1.45,
               color: "var(--sketch-ink)",
+              whiteSpace: "pre-line",
+              overflowWrap: "anywhere",
+              display: "-webkit-box",
+              WebkitBoxOrient: "vertical",
+              WebkitLineClamp: 3,
               overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
             }}
           >
-            {post.caption}
+            {captionExcerpt}
           </div>
         ) : (
           <div style={{ ...lbl, fontSize: 9 }}>No caption</div>
@@ -309,7 +472,17 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
   const [selectedPost, setSelectedPost] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
 
-  function addPostToSection(post) {
+  // Drop rows the server removed by LinkedIn retention after a create/edit.
+  function removePrunedPosts(linkedInRetention) {
+    const ids = linkedInRetention?.deletedIds;
+    if (!Array.isArray(ids) || ids.length === 0) return;
+    const gone = new Set(ids);
+    setPosts((prev) => prev.filter((p) => !gone.has(p.id)));
+  }
+
+  function addPostToSection(post, linkedInRetention) {
+    removePrunedPosts(linkedInRetention);
+    if (!post) return; // retention removed the new post itself: nothing to insert
     setPosts((prev) => {
       const exists = prev.some((p) => p.id === post.id);
       if (exists) return prev.map((p) => (p.id === post.id ? post : p));
@@ -363,28 +536,41 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
     };
   }, [brand.id]);
 
-  function handleCreated(newPost) {
+  function handleCreated(newPost, linkedInRetention) {
+    removePrunedPosts(linkedInRetention);
+    if (!newPost) {
+      // Not kept by retention; the form already explained why.
+      setShowForm(false);
+      return;
+    }
     setPosts((prev) => sortPublishedPosts([{ ...newPost, commentCount: newPost.commentCount ?? 0 }, ...prev]));
     setShowForm(false);
     toast.success("LinkedIn post added.");
   }
 
-  function handleUpdated(updatedPost) {
+  function handleUpdated(updatedResponse) {
+    const { linkedInRetention, ...updatedPost } = updatedResponse || {};
+    removePrunedPosts(linkedInRetention);
     setPosts((prev) =>
       sortPublishedPosts(prev.map((p) => (p.id === updatedPost.id ? updatedPost : p))),
     );
     setSelectedPost(updatedPost);
   }
 
-  function handleCrossPlatformCreated(createdPost) {
+  function handleCrossPlatformCreated(createdPost, linkedInRetention) {
+    if (!createdPost) {
+      removePrunedPosts(linkedInRetention);
+      return;
+    }
     if (createdPost.platform === "LinkedIn") {
-      addPostToSection(createdPost);
+      addPostToSection(createdPost, linkedInRetention);
     } else {
-      onCrossPlatformPostCreated?.(createdPost);
+      onCrossPlatformPostCreated?.(createdPost, linkedInRetention);
     }
   }
 
-  function handleDeleted(deletedId) {
+  function handleDeleted(deletedId, linkedInRetention) {
+    removePrunedPosts(linkedInRetention);
     setPosts((prev) => prev.filter((p) => p.id !== deletedId));
     setSelectedPost(null);
   }

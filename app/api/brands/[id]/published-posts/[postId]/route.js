@@ -30,6 +30,11 @@ import {
   decorateCollaboration,
 } from "@/lib/published-post-collaborators";
 import { validateInstagramCaptionForBrand, captionRulesErrorBody } from "@/lib/instagram-caption-check";
+import {
+  enforceLinkedInRetention,
+  retentionResult,
+  LINKEDIN_RETENTION_REMOVED_MESSAGE,
+} from "@/lib/linkedin-retention";
 
 // Mutations stay scoped to the PRIMARY brand ({ id, brandId }). When the post is
 // only a collaboration of the URL brand, answer 403 rather than 404 so the
@@ -417,6 +422,31 @@ export async function POST(request, { params }) {
       data: { jsonPayload: payloadJson },
     });
 
+    // ── LinkedIn retention after a relevant edit ───────────────────────────────
+    // The schedule moved, or the post became a LinkedIn post. Metadata-only
+    // edits (caption/notes/status) skip it. No exemption for the edited post:
+    // if it now falls outside the newest 5 historical posts it is removed, and
+    // that happens BEFORE n8n is notified so a removed post is never sent.
+    const timeOf = (d) => (d ? new Date(d).getTime() : null);
+    const scheduleChanged =
+      updateData.scheduledDate !== undefined &&
+      timeOf(updateData.scheduledDate) !== timeOf(existing.scheduledDate);
+    const becameLinkedIn = normalizePublishedPostPlatform(existing.platform) !== "LinkedIn";
+    let linkedInRetention = null;
+    if (finalPlatform === "LinkedIn" && (scheduleChanged || becameLinkedIn)) {
+      const { deletedIds } = await enforceLinkedInRetention(id, { timeZone: brand.timezone ?? null });
+      linkedInRetention = retentionResult(deletedIds, postId);
+      if (linkedInRetention.currentPostRemoved) {
+        return NextResponse.json({
+          id: postId,
+          kept: false,
+          webhookResult: null,
+          linkedInRetention,
+          message: LINKEDIN_RETENTION_REMOVED_MESSAGE,
+        });
+      }
+    }
+
     // ── Notify n8n of the edit ───────────────────────────────────────────────
     // Same fire-and-forget contract as publish: the edit is already saved above,
     // so a webhook failure is reported back but never rolls back or blocks it.
@@ -450,7 +480,7 @@ export async function POST(request, { params }) {
       { viewerBrandId: id, accessibleBrandIds: null },
     );
 
-    return NextResponse.json({ ...result, webhookResult });
+    return NextResponse.json({ ...result, webhookResult, linkedInRetention });
   } catch (error) {
     console.error("[PublishedPosts] update failed", error);
     return NextResponse.json(

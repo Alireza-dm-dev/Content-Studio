@@ -516,6 +516,15 @@ export default function LinkedInPostDetailModal({
       if (!res.ok) {
         throw new Error(data?.error || `Save failed with status ${res.status}`);
       }
+      if (data.linkedInRetention?.currentPostRemoved) {
+        // Moved outside the five kept history posts: retention removed it.
+        toast.info(data.message || "This post was not kept by LinkedIn retention.");
+        setEditing(false);
+        if (onDeleted && !closedRef.current) onDeleted(post.id, data.linkedInRetention);
+        closedRef.current = true;
+        onClose();
+        return;
+      }
       toast.success("LinkedIn post updated.");
       setEditing(false);
       if (onUpdated && !closedRef.current) onUpdated(data);
@@ -561,8 +570,8 @@ export default function LinkedInPostDetailModal({
     }
   }
 
-  function handleAdaptCreated(createdPost) {
-    if (onCrossPlatformCreated) onCrossPlatformCreated(createdPost);
+  function handleAdaptCreated(createdPost, linkedInRetention) {
+    if (onCrossPlatformCreated) onCrossPlatformCreated(createdPost, linkedInRetention);
     setShowAdapt(false);
     closedRef.current = true;
     onClose();

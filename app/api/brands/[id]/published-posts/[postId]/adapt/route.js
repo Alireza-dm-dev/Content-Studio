@@ -21,6 +21,11 @@ import { uploadPublishedPostMedia, isCanonicalMediaUrl, isLocalMediaUrl, copyMed
 import { parseScheduledDate, resolveBrandTimezone } from "@/lib/timezone";
 import { readBoundedJsonBody } from "@/lib/read-bounded-json";
 import { validateInstagramCaptionForBrand, captionRulesErrorBody } from "@/lib/instagram-caption-check";
+import {
+  enforceLinkedInRetention,
+  retentionResult,
+  LINKEDIN_RETENTION_REMOVED_MESSAGE,
+} from "@/lib/linkedin-retention";
 
 function isValidSourcePlatform(platform) {
   return platform === "Instagram" || platform === "LinkedIn";
@@ -703,6 +708,25 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: "Failed to create adapted post." }, { status: 500 });
     }
 
+    // A cross-platform copy INTO LinkedIn is a LinkedIn create: apply retention
+    // (all queued + at most 5 historical, no exemption) before any remote upload
+    // or n8n send, so a copy that is not kept is never published.
+    let linkedInRetention = null;
+    if (targetPlatform === "LinkedIn") {
+      const { deletedIds } = await enforceLinkedInRetention(id, { timeZone: brand.timezone ?? null });
+      linkedInRetention = retentionResult(deletedIds, result.id);
+      if (linkedInRetention.currentPostRemoved) {
+        return NextResponse.json({
+          post: null,
+          kept: false,
+          webhookResult: null,
+          remoteResult: null,
+          linkedInRetention,
+          message: LINKEDIN_RETENTION_REMOVED_MESSAGE,
+        }, { status: 200 });
+      }
+    }
+
     // ── Remote media upload (only for new files) ────────────────────────────
     // Only newly uploaded files need SFTP upload. Reused canonical media
     // records have no local file in the target directory — skip them.
@@ -868,6 +892,7 @@ export async function POST(request, { params }) {
       post: serializePublishedPost(cleanPost),
       webhookResult,
       remoteResult,
+      linkedInRetention,
     };
     try {
       JSON.stringify(responsePayload);

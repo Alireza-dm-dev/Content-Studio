@@ -290,6 +290,16 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
         throw new Error(data?.error || `Upload failed (${res.status})`);
       }
 
+      // Retention removed the new post at once (older than the five kept
+      // history posts): explain it and insert no card. Nothing was sent to n8n.
+      if (data.linkedInRetention?.currentPostRemoved) {
+        toast.info(data.message || "This post was not kept by LinkedIn retention.");
+        setThumbnailFile(null);
+        resetThumbnailInput();
+        onCreated(null, data.linkedInRetention);
+        return;
+      }
+
       const createdPost = data.post || data;
       const webhookResult = data.webhookResult;
       const remoteResult = data.remoteResult;
@@ -323,7 +333,7 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
       // Reset the optional thumbnail on success (parent will unmount the form).
       setThumbnailFile(null);
       resetThumbnailInput();
-      onCreated(createdPost);
+      onCreated(createdPost, data.linkedInRetention);
     } catch (err) {
       if (err.name === "AbortError") {
         setError("Request timed out. The post may still be processing.");

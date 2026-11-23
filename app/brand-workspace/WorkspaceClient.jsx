@@ -283,9 +283,13 @@ export default function WorkspaceClient({ brand, initialCalendars = [] }) {
   const igSectionRef = useRef(null);
   const liSectionRef = useRef(null);
 
-  function handleCrossPlatformPostCreated(createdPost) {
+  function handleCrossPlatformPostCreated(createdPost, linkedInRetention) {
+    if (!createdPost) {
+      liSectionRef.current?.addPost(null, linkedInRetention);
+      return;
+    }
     if (createdPost.platform === "LinkedIn") {
-      liSectionRef.current?.addPost(createdPost);
+      liSectionRef.current?.addPost(createdPost, linkedInRetention);
     } else if (createdPost.platform === "Instagram") {
       igSectionRef.current?.addPost(createdPost);
     }
