@@ -4,6 +4,12 @@ import { getAdminAccess } from "@/lib/auth";
 import { generateWithPromptTemplate } from "@/lib/ai";
 import { selectCameraMovement } from "@/lib/video-camera-movements";
 import { buildVideoStyleBlock, resolveCinematicStyle } from "@/lib/cinematic-styles";
+import {
+  readRawIdeaRequest,
+  analyzeReferenceFrame,
+  buildReferenceFrameBlock,
+  referenceImageSummary,
+} from "@/lib/video-reference-frame";
 
 // The video-prompt-enhancer-raw-idea template always starts its final
 // structured prompt with this exact sentence. If the model instead detects
@@ -45,11 +51,17 @@ export async function POST(request) {
   console.log("[VideoRawIdea] POST /api/video/raw-idea/generate");
 
   try {
-    let body;
-    try { body = await request.json(); }
-    catch (e) {
-      return NextResponse.json({ success: false, error: "Invalid request body.", details: e.message }, { status: 400 });
+    // JSON (no image — original contract) or multipart with an optional
+    // FIRST FRAME / REFERENCE IMAGE, validated in memory and never stored.
+    const parsedRequest = await readRawIdeaRequest(request);
+    if (!parsedRequest.ok) {
+      return NextResponse.json(
+        { success: false, error: parsedRequest.error, ...(parsedRequest.details ? { details: parsedRequest.details } : {}) },
+        { status: parsedRequest.status },
+      );
     }
+    const body = parsedRequest.body;
+    const reference = parsedRequest.reference;
 
     const {
       rawVideoIdea,
@@ -109,6 +121,7 @@ export async function POST(request) {
     };
 
     const inputs = { rawVideoIdea: rawVideoIdea.trim(), targetVideoCreatorModel, duration, aspectRatio, videoType, cinematicControls };
+    if (reference) inputs.referenceImage = referenceImageSummary(reference);
     console.log("[VideoRawIdea] inputs:", inputs);
 
     // ── Build userInput block ─────────────────────────────────────────────────
@@ -133,6 +146,29 @@ export async function POST(request) {
       if (styleBlock) {
         userInputParts.push("", styleBlock);
       }
+    }
+
+    // Reference frame: a vision step extracts visible properties from the
+    // in-memory image; only that sanitized analysis (never the filename) joins
+    // the otherwise unchanged text-only prompt call below.
+    if (reference) {
+      const analyzed = await analyzeReferenceFrame(reference);
+      if (!analyzed.ok) {
+        if (analyzed.error === "not-configured") {
+          return NextResponse.json({
+            success: false,
+            code: "OPENAI_NOT_CONFIGURED",
+            error: "OpenAI is not configured. Ask an administrator to add the API key in Settings.",
+          }, { status: 503 });
+        }
+        return NextResponse.json({
+          success: false,
+          code: "REFERENCE_IMAGE_ANALYSIS_FAILED",
+          error: "The reference image could not be analyzed. Try again, use a different image, or remove the image.",
+        }, { status: 502 });
+      }
+      inputs.referenceImage.analysis = analyzed.analysis;
+      userInputParts.push("", buildReferenceFrameBlock(analyzed.analysis));
     }
 
     const userInput = userInputParts.join("\n");
@@ -172,6 +208,14 @@ export async function POST(request) {
           details: aiErr.message,
         }, { status: 500 });
       }
+      if (reference) {
+        // Never echo provider details for a reference-image request.
+        return NextResponse.json({
+          success: false,
+          code: "REFERENCE_IMAGE_GENERATION_FAILED",
+          error: "Video prompt generation with the reference image failed. Try again, use a different image, or remove the image.",
+        }, { status: 502 });
+      }
       return NextResponse.json({
         success: false,
         error: "Video prompt generation failed. Please try again.",
@@ -192,6 +236,10 @@ export async function POST(request) {
         error: "The AI needs clarification before it can generate a video prompt. Please review its response and adjust your inputs.",
         details: finalPrompt,
       }, { status: 422 });
+    }
+
+    if (reference && !/reference frame\s*:/i.test(finalPrompt)) {
+      console.warn("[VideoRawIdea] reference image attached but output has no 'reference frame:' field");
     }
 
     // ── Save to GeneratedPrompt ───────────────────────────────────────────────

@@ -15,6 +15,7 @@ import {
   Copy, Check, Video, Lightbulb, AlertCircle,
 } from "lucide-react";
 import { CINEMATIC_STYLE_OPTIONS } from "@/lib/cinematic-styles";
+import VideoReferenceImagePicker from "@/components/VideoReferenceImagePicker";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -803,6 +804,7 @@ function BrandBasedView({ onBack }) {
 
 function RawIdeaView({ onBack }) {
   const [rawVideoIdea, setRawVideoIdea]         = useState("");
+  const [referenceImage, setReferenceImage]     = useState(null); // optional first frame (File)
   const [model, setModel]                        = useState("Higgsfield");
   const [customModel, setCustomModel]            = useState("");
   const [duration, setDuration]                  = useState("15 seconds");
@@ -858,24 +860,37 @@ function RawIdeaView({ onBack }) {
     setSavedId(null);
 
     try {
-      const res = await fetch("/api/video/raw-idea/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rawVideoIdea:            rawVideoIdea.trim(),
-          targetVideoCreatorModel: resolvedModel,
-          duration,
-          aspectRatio,
-          videoType:               resolvedVideoType,
-          speedRamp:               resolvedSpeedRamp,
-          cameraMovement:          resolvedCameraMovement,
-          camera,
-          lens,
-          focalLength,
-          aperture,
-          cinematicStyle,
-        }),
-      });
+      const fields = {
+        rawVideoIdea:            rawVideoIdea.trim(),
+        targetVideoCreatorModel: resolvedModel,
+        duration,
+        aspectRatio,
+        videoType:               resolvedVideoType,
+        speedRamp:               resolvedSpeedRamp,
+        cameraMovement:          resolvedCameraMovement,
+        camera,
+        lens,
+        focalLength,
+        aperture,
+        cinematicStyle,
+      };
+
+      // No image → the original JSON request, unchanged. With an image → the
+      // same fields as multipart plus the file (browser sets the boundary).
+      let requestInit;
+      if (referenceImage) {
+        const fd = new FormData();
+        for (const [k, v] of Object.entries(fields)) fd.append(k, v ?? "");
+        fd.append("referenceImage", referenceImage);
+        requestInit = { method: "POST", body: fd };
+      } else {
+        requestInit = {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(fields),
+        };
+      }
+      const res = await fetch("/api/video/raw-idea/generate", requestInit);
 
       const data = await safeParseJsonResponse(res);
 
@@ -934,6 +949,12 @@ function RawIdeaView({ onBack }) {
             disabled={generating}
           />
         </div>
+
+        <VideoReferenceImagePicker
+          file={referenceImage}
+          onChange={setReferenceImage}
+          disabled={generating}
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
