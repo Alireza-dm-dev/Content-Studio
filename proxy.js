@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, getSessionUserByToken } from "@/lib/auth";
 import { requireBrandAccess } from "@/lib/brand-access";
+import { canViewCollaborationUpload } from "@/lib/published-post-collaborators";
 
 const PUBLIC_PATHS = new Set([
   "/login",
@@ -59,6 +60,7 @@ const ADMIN_ONLY_MATCHERS = [
  * they can see.
  */
 const USER_PAGE_PREFIXES = [
+  "/today",
   "/calendar-portal",
   "/brand-workspace",
   "/brands",
@@ -71,6 +73,8 @@ const USER_PAGE_PREFIXES = [
 ];
 
 const USER_API_PREFIXES = [
+  // Today dashboard (read-only; scoped to the user's Brands inside the route).
+  "/api/today",
   // Brand records, identity, files, chat, published posts, workspace.
   "/api/brands",
   // Calendars and their posts.
@@ -240,7 +244,9 @@ export async function proxy(request) {
       // Brand-owned local media still requires membership, so another brand's
       // uploads stay unreachable through the app.
       const access = await requireBrandAccess(uploadBrandId, { user });
-      if (!access.ok) {
+      // A collaborator Brand's member may also load that one collaboration
+      // post's media (same rule as viewing the post), never anything else.
+      if (!access.ok && !(await canViewCollaborationUpload(user, pathname))) {
         return new NextResponse(null, { status: 403 });
       }
     }

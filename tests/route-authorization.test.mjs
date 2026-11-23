@@ -33,6 +33,18 @@ const PROMPTS = [
 
 let currentUser = null;
 
+// Collaboration media fixtures: B owns the posts; A is a collaborator on one.
+const POSTS = [
+  { id: "collab-post", brandId: BRAND_B, platform: "Instagram" },
+  { id: "plain-b", brandId: BRAND_B, platform: "Instagram" },
+  { id: "li-b", brandId: BRAND_B, platform: "LinkedIn" },
+];
+const COLLABORATORS = [
+  { id: "c1", publishedPostId: "collab-post", brandId: BRAND_A },
+  { id: "c2", publishedPostId: "li-b", brandId: BRAND_A }, // invalid data: LinkedIn never collaborates
+];
+let failCollabLookup = false;
+
 function matchWhere(row, where) {
   if (!where) return true;
   if (where.brandId?.in) return where.brandId.in.includes(row.brandId);
@@ -61,6 +73,16 @@ mock.module("@/lib/prisma", {
       brandAssignment: {
         findUnique: async () => null,
         findMany: async () => [],
+      },
+      publishedPost: {
+        findFirst: async ({ where }) => {
+          if (failCollabLookup) throw new Error("db down");
+          return POSTS.find((p) => p.id === where.id && p.brandId === where.brandId && p.platform === where.platform) ?? null;
+        },
+      },
+      publishedPostCollaborator: {
+        findFirst: async ({ where }) =>
+          COLLABORATORS.find((c) => c.publishedPostId === where.publishedPostId && where.brandId.in.includes(c.brandId)) ?? null,
       },
       generatedPrompt: {
         findMany: async ({ where } = {}) => {
@@ -304,6 +326,36 @@ test("an admin can load any brand's local media", async () => {
     });
     assert.equal(res.location, null);
     assert.notEqual(res.status, 403);
+  }
+});
+
+test("a collaborator Brand's member can load THAT collaboration post's media, nothing else", async () => {
+  const ok = await runProxy(`/uploads/${BRAND_B}/published-posts/collab-post/image.png`, { token: "token-a" });
+  assert.notEqual(ok.status, 403, "collaboration post media is viewable, like the post itself");
+  assert.equal(ok.location, null);
+
+  for (const path of [
+    `/uploads/${BRAND_B}/published-posts/plain-b/image.png`,            // owner's other post
+    `/uploads/${BRAND_B}/published-posts/li-b/image.png`,               // LinkedIn never collaborates
+    `/uploads/${BRAND_B}/published-posts/unknown/image.png`,            // guessed id
+    `/uploads/${BRAND_A}/published-posts/collab-post/image.png`.replace(BRAND_A, "brand-x"), // wrong owner
+    `/uploads/${BRAND_B}/published-posts/collab-post/sub/image.png`,    // nested path
+    `/uploads/${BRAND_B}/forum/collab-post/image.png`,                  // other feature folder
+    `/uploads/${BRAND_B}/story-content/collab-post/image.png`,
+  ]) {
+    assert.equal((await runProxy(path, { token: "token-a" })).status, 403, path);
+  }
+  // A user with no Brands gets nothing, even for the collaboration post.
+  assert.equal((await runProxy(`/uploads/${BRAND_B}/published-posts/collab-post/image.png`, { token: "token-none" })).status, 403);
+});
+
+test("collaboration media check fails closed on a lookup error", async () => {
+  failCollabLookup = true;
+  try {
+    const res = await runProxy(`/uploads/${BRAND_B}/published-posts/collab-post/image.png`, { token: "token-a" });
+    assert.equal(res.status, 403);
+  } finally {
+    failCollabLookup = false;
   }
 });
 
