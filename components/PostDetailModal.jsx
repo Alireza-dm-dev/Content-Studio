@@ -9,6 +9,7 @@ import {
   scheduledValueForSubmit,
 } from "@/lib/timezone";
 import { useServerSchedule, SCHEDULE_UNAVAILABLE_TEXT } from "@/components/useServerSchedule";
+import TrialSendSection from "@/components/TrialSendSection";
 import { useCanonicalPayload } from "@/components/useCanonicalPayload";
 import CanonicalPayloadStatus from "@/components/CanonicalPayloadStatus";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
@@ -941,6 +942,8 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                   </button>
                   )}
                 </div>
+                {/* Collaborator-only (read-only) viewers never get Trial Send. */}
+                {!readOnly && <TrialSendSection key={`${post.id}|${post.scheduledDate ?? ""}|${post.updatedAt ?? ""}`} brandId={brandId} postId={post.id} />}
               </div>
             )}
           </div>

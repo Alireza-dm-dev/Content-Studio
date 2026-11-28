@@ -11,6 +11,7 @@ import {
   NOT_SCHEDULED_LABEL,
 } from "@/lib/timezone";
 import { useServerSchedule, SCHEDULE_UNAVAILABLE_TEXT } from "@/components/useServerSchedule";
+import TrialSendSection from "@/components/TrialSendSection";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
 import { useCanonicalPayload } from "@/components/useCanonicalPayload";
 import CanonicalPayloadStatus from "@/components/CanonicalPayloadStatus";
@@ -1136,6 +1137,7 @@ export default function LinkedInPostDetailModal({
                     {sending ? "Sending…" : "Send to n8n"}
                   </button>
                 </div>
+                <TrialSendSection key={`${post.id}|${post.scheduledDate ?? ""}|${post.updatedAt ?? ""}`} brandId={brandId} postId={post.id} />
               </div>
             )}
           </div>

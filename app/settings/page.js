@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { toast } from "sonner";
 import { Eye, EyeOff, Save, HardDriveUpload, AlertCircle, Coins } from "lucide-react";
 import AiTestCard from "./AiTestCard";
+import N8nWebhooksCard from "./N8nWebhooksCard";
 
 function ApiKeyCard() {
   const [showKey, setShowKey] = useState(false);
@@ -346,6 +347,7 @@ export default function SettingsPage() {
         <HiggsfieldApiKeyCard />
         <HiggsfieldTokenManagementCard />
         <AiTestCard />
+        <N8nWebhooksCard />
         <Card>
           <CardHeader>
             <CardTitle className="text-base">User Management</CardTitle>
