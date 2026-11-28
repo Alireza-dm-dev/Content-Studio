@@ -283,15 +283,17 @@ export default function WorkspaceClient({ brand, initialCalendars = [] }) {
   const igSectionRef = useRef(null);
   const liSectionRef = useRef(null);
 
-  function handleCrossPlatformPostCreated(createdPost, linkedInRetention) {
+  // extra: { publishingMode, trial } from a Trial / Save Only adaptation, so
+  // the target section can open the saved post with its trial result.
+  function handleCrossPlatformPostCreated(createdPost, linkedInRetention, extra) {
     if (!createdPost) {
       liSectionRef.current?.addPost(null, linkedInRetention);
       return;
     }
     if (createdPost.platform === "LinkedIn") {
-      liSectionRef.current?.addPost(createdPost, linkedInRetention);
+      liSectionRef.current?.addPost(createdPost, linkedInRetention, extra);
     } else if (createdPost.platform === "Instagram") {
-      igSectionRef.current?.addPost(createdPost);
+      igSectionRef.current?.addPost(createdPost, null, extra);
     }
   }
 

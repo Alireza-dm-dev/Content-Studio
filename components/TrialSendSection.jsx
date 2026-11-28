@@ -73,13 +73,21 @@ const OUTCOME_COLOR = {
   response_truncated: "var(--sketch-ink)",
 };
 
-export default function TrialSendSection({ brandId, postId }) {
+// initialTrial: the `trial` block returned by a Trial-mode upload/adaptation of
+// THIS post ({ sent, result } or { sent: false, error, code }). Shown once, as
+// if the trial had been run here; a retry always uses this saved post.
+function initialError(t) {
+  if (!t || t.sent || t.result) return null;
+  return { message: t.error || "Post saved. The trial was not sent.", code: t.code, blockedFields: t.blockedFields, mediaUpload: t.mediaUpload };
+}
+
+export default function TrialSendSection({ brandId, postId, initialTrial = null }) {
   const url = `/api/brands/${brandId}/published-posts/${postId}/trial-webhook`;
   const [preflight, setPreflight] = useState(null); // preflight
   const [confirm, setConfirm] = useState(null); // preflight shown in the dialog
   const [running, setRunning] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState(null);
+  const [result, setResult] = useState(() => (initialTrial?.result ?? null));
+  const [error, setError] = useState(() => initialError(initialTrial));
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous duplicate-click guard
 
@@ -119,10 +127,13 @@ export default function TrialSendSection({ brandId, postId }) {
     setConfirm(b);
   }
 
-  async function run(payloadOnly) {
+  // mode: "full" | "payload-only" | "upload-media"
+  async function run(mode) {
     if (inFlight.current || !confirm) return;
     inFlight.current = true;
     const confirmFingerprint = confirm.fingerprint;
+    const payloadOnly = mode === "payload-only";
+    const uploadMedia = mode === "upload-media";
     setRunning(true);
     setError(null);
     setResult(null);
@@ -130,12 +141,12 @@ export default function TrialSendSection({ brandId, postId }) {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payloadOnly, confirmFingerprint }),
+        body: JSON.stringify({ payloadOnly, uploadMedia, confirmFingerprint }),
       });
       const b = await readJson(res);
       if (!alive.current) return; // modal closed / another post opened: drop it
       if (!res.ok || !b?.result) {
-        setError({ message: b?.error || `The trial could not be run (HTTP ${res.status}).`, code: b?.code, blockedFields: b?.blockedFields, unavailableMedia: b?.unavailableMedia });
+        setError({ message: b?.error || `The trial could not be run (HTTP ${res.status}).`, code: b?.code, blockedFields: b?.blockedFields, unavailableMedia: b?.unavailableMedia, mediaUpload: b?.mediaUpload });
       } else {
         setResult(b.result);
       }
@@ -212,17 +223,27 @@ export default function TrialSendSection({ brandId, postId }) {
                 {confirm.unavailableMedia.map((f) => <li key={f}>{f}</li>)}
               </ul>
               You can run a payload-only trial: the payload is sent unchanged and media delivery is not verified.
+              {confirm.canUploadMedia && (
+                <> Or upload the media first: <strong>Upload Media &amp; Run Trial</strong> publishes the files to the public media server (the social post itself is not published), saves their public URLs on this post so a later production send reuses them, then runs a full-media trial. It never sends to production and does not change the post&apos;s mode, schedule or status.</>
+              )}
             </div>
           )}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
             <button type="button" onClick={() => setConfirm(null)} style={btn}>Cancel</button>
             {!confirm.blockedFields?.length && (
               confirm.unavailableMedia?.length ? (
-                <button type="button" onClick={() => run(true)} disabled={running} style={{ ...btn, borderColor: "var(--sketch-vermilion)", color: "var(--sketch-vermilion)" }}>
-                  Run payload-only trial
-                </button>
+                <>
+                  {confirm.canUploadMedia && (
+                    <button type="button" onClick={() => run("upload-media")} disabled={running} style={{ ...btn, borderColor: "var(--sketch-vermilion)", color: "var(--sketch-vermilion)" }}>
+                      Upload Media &amp; Run Trial
+                    </button>
+                  )}
+                  <button type="button" onClick={() => run("payload-only")} disabled={running} style={{ ...btn, borderColor: "var(--sketch-vermilion)", color: "var(--sketch-vermilion)" }}>
+                    Run payload-only trial
+                  </button>
+                </>
               ) : (
-                <button type="button" onClick={() => run(false)} disabled={running} style={{ ...btn, borderColor: "var(--sketch-vermilion)", color: "var(--sketch-vermilion)" }}>
+                <button type="button" onClick={() => run("full")} disabled={running} style={{ ...btn, borderColor: "var(--sketch-vermilion)", color: "var(--sketch-vermilion)" }}>
                   Run Trial
                 </button>
               )
@@ -236,6 +257,11 @@ export default function TrialSendSection({ brandId, postId }) {
       {error && (
         <div role="alert" style={{ ...box, borderColor: "var(--sketch-vermilion)" }} data-testid="trial-error">
           <div style={{ ...mono, color: "var(--sketch-vermilion)", overflowWrap: "anywhere" }}>{error.message}</div>
+          {error.mediaUpload && (
+            <div style={{ ...mono, color: "var(--sketch-ink-soft)", overflowWrap: "anywhere" }}>
+              Media upload: {[error.mediaUpload.detailCode, error.mediaUpload.details].filter(Boolean).join(" — ")}
+            </div>
+          )}
           {error.blockedFields?.length > 0 && (
             <ul style={{ ...mono, margin: "0 0 0 16px" }}>{error.blockedFields.map((f) => <li key={f.field}>{f.field} — {f.reason}</li>)}</ul>
           )}

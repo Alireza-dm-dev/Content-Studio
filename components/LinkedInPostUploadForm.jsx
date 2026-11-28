@@ -3,6 +3,10 @@
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { brandTimezoneShortLabel } from "@/lib/timezone";
+import { usePublishingMode, PublishingModeSelector, modeSubmitLabel } from "@/components/PublishingMode";
+import { handleModeResult, appendPublishingMode } from "@/components/publishing-mode-submit";
+
+const POST_TYPE_LABEL = { carousel: "PDF Carousel", static: "Image", reel: "Video" };
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -136,6 +140,9 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
   const [thumbnailFile, setThumbnailFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
+  // Per-post publishing mode: starts at Production for every new form.
+  const pm = usePublishingMode(brandId);
+  const submittingRef = useRef(false); // synchronous duplicate-submit guard
 
   const fileInputRef = useRef(null);
   const thumbnailInputRef = useRef(null);
@@ -226,6 +233,7 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError(null);
 
     if (!file) {
@@ -240,9 +248,10 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
       return;
     }
 
+    submittingRef.current = true;
     setUploading(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
+    let timeoutId = null;
 
     try {
       const fd = new FormData();
@@ -262,6 +271,21 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
         fd.append("thumbnail", thumbnailFile);
       }
 
+      // Trial: explicit confirmation bound to this exact form state.
+      const proceed = await appendPublishingMode(fd, pm, {
+        brandId,
+        summary: {
+          platform: "LinkedIn",
+          postType: POST_TYPE_LABEL[format] || format,
+          schedule: scheduledDate ? `${scheduledDate.replace("T", " ")} · ${brandTimezoneShortLabel(brandTimezone)}` : "",
+        },
+      });
+      if (!proceed.ok) {
+        if (proceed.error) setError(proceed.error);
+        return;
+      }
+
+      timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
       const res = await fetch(`/api/brands/${brandId}/published-posts`, {
         method: "POST",
         body: fd,
@@ -301,6 +325,16 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
       }
 
       const createdPost = data.post || data;
+      // Trial / Save Only: their own messages; the post detail opens with the trial result.
+      if (handleModeResult(data, {
+        setError,
+        createdPost,
+        onCreated: (p, extra) => {
+          setThumbnailFile(null);
+          resetThumbnailInput();
+          onCreated(p, data.linkedInRetention, extra);
+        },
+      })) return;
       const webhookResult = data.webhookResult;
       const remoteResult = data.remoteResult;
       const remoteFailed =
@@ -343,7 +377,8 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
         toast.error(err.message);
       }
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
+      submittingRef.current = false;
       setUploading(false);
     }
   }
@@ -524,6 +559,9 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
           </div>
         </div>
 
+        {/* Publishing mode (this post only) */}
+        <PublishingModeSelector pm={pm} disabled={uploading} />
+
         {/* Notes */}
         <div>
           <div style={{ ...lbl, marginBottom: 4 }}>Notes (optional)</div>
@@ -577,10 +615,11 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
               opacity: uploading ? 0.5 : 1,
             }}
           >
-            {uploading ? "Uploading…" : "Upload LinkedIn Post"}
+            {uploading ? "Uploading…" : modeSubmitLabel(pm.mode, { production: "Upload Post", trial: "Upload & Run Trial", save_only: "Save Post" })}
           </button>
         </div>
       </div>
+      {pm.dialog}
     </form>
   );
 }

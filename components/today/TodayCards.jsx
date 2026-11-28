@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import { StatusPill } from "@/components/content-report/StatusPill";
+import { DeliveryModeBadge } from "@/components/DeliveryMode";
 import { buildCaptionExcerpt, getLinkedInPreview } from "@/lib/linkedin-post-preview";
 import { FileText, Play, Image as ImageIcon, AlignLeft, MessageCircle, Users } from "lucide-react";
 
@@ -32,7 +33,7 @@ export const inkBtn = {
 
 const THUMB = 76;
 
-function Badge({ children, tone = "ink", title }) {
+function Badge({ children, tone = "ink", title, testId }) {
   const tones = {
     ink: { border: "var(--sketch-line)", color: "var(--sketch-ink-soft)", bg: "transparent" },
     alert: { border: "var(--sketch-vermilion)", color: "var(--sketch-paper-bright)", bg: "var(--sketch-vermilion)" },
@@ -43,6 +44,7 @@ function Badge({ children, tone = "ink", title }) {
   return (
     <span
       title={title}
+      data-testid={testId}
       style={{
         ...lbl,
         fontSize: 9,
@@ -153,8 +155,16 @@ export function TodayPostCard({ post, onOpen }) {
           {number && <span style={{ fontFamily: "var(--font-mono-ink)", fontSize: 11, color: "var(--sketch-vermilion)" }}>{number}</span>}
           <span style={{ ...lbl, fontSize: 9 }}>{type}</span>
           <StatusPill status={status} label={status.toUpperCase()} />
+          {/* Trial / Save Only: scheduled, but NOT queued for production. */}
+          <DeliveryModeBadge mode={post.deliveryMode} />
           {post.today?.overdue && (
             <Badge tone="alert" title="The scheduled time has passed and the post is not marked Published.">Overdue</Badge>
+          )}
+          {post.today?.scheduleNotice === "not_sent" && (
+            <Badge title="Trial / Save Only post: it was never sent to the production webhook." testId="today-not-sent">Scheduled time passed — not sent to production</Badge>
+          )}
+          {post.today?.scheduleNotice === "attempt_unconfirmed" && (
+            <Badge tone="alert" title="A production send was attempted but not confirmed (failed or timed out). n8n may still have received it." testId="today-attempt-unconfirmed">Scheduled time passed — production send attempted, not confirmed</Badge>
           )}
           {post.isCollaboration && (
             <Badge title={viaCollab ? `Published by ${post.primaryBrand?.name || "the primary Brand"}` : undefined}>

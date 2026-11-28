@@ -11,6 +11,7 @@ import { resolveBrandTimezone } from "@/lib/timezone";
 import { getSavedPostFooterState } from "@/lib/published-post-footer";
 import { sortPublishedPosts } from "@/lib/published-post-order";
 import { CollaborationBadge } from "@/components/CollaboratorBrandPicker";
+import { DeliveryModeBadge } from "@/components/DeliveryMode";
 
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
@@ -128,6 +129,9 @@ function GridCard({ post, timeZone, onClick, onCommentClick }) {
       {post.isCollaboration && (
         <CollaborationBadge style={{ position: "absolute", top: 6, left: 6 }} />
       )}
+
+      {/* Delivery mode (Trial / Save Only / Production). Legacy posts: none. */}
+      <DeliveryModeBadge mode={post.deliveryMode} style={{ position: "absolute", top: 6, right: 6 }} />
 
       {/* Bottom overlay with post ID, publishing state, comment button, media indicators */}
       <div
@@ -260,6 +264,14 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
   const [showForm, setShowForm] = useState(false);
   const [selectedPost, setSelectedPost] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
+  // The trial result of a Trial-mode upload/adaptation, shown once in that
+  // post's detail modal ({ postId, trial }). Cleared on close/edit/other post.
+  const [trialHandoff, setTrialHandoff] = useState(null);
+  function openWithTrial(post, extra) {
+    if (extra?.publishingMode !== "trial" || !post) return;
+    setTrialHandoff({ postId: post.id, trial: extra.trial ?? null });
+    setSelectedPost(post);
+  }
 
   // ── Collaboration posts ────────────────────────────────────────────────────
   // A post may be owned by another brand and only shown here as a collaborator.
@@ -293,12 +305,13 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
     );
   }
 
-  function addPostToSection(post) {
+  function addPostToSection(post, _linkedInRetention, extra) {
     setPosts((prev) => {
       const exists = prev.some((p) => p.id === post.id);
       if (exists) return prev.map((p) => (p.id === post.id ? post : p));
       return sortPublishedPosts([{ ...post, commentCount: post.commentCount ?? 0 }, ...prev]);
     });
+    openWithTrial(post, extra);
   }
 
   useImperativeHandle(ref, () => ({
@@ -336,9 +349,10 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
       .finally(() => setLoading(false));
   }, [brand.id]);
 
-  function handleCreated(newPost) {
+  function handleCreated(newPost, extra) {
     setPosts((prev) => sortPublishedPosts([{ ...newPost, commentCount: newPost.commentCount ?? 0 }, ...prev]));
     setShowForm(false);
+    openWithTrial(newPost, extra);
   }
 
   function handleUpdated(updatedPost) {
@@ -356,10 +370,11 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
     setPosts((prev) =>
       sortPublishedPosts(prev.map((p) => (p.id === merged.id ? merged : p)))
     );
+    setTrialHandoff(null); // an edit/send makes the upload's trial result stale
     setSelectedPost(merged);
   }
 
-  function handleCrossPlatformCreated(createdPost, linkedInRetention) {
+  function handleCrossPlatformCreated(createdPost, linkedInRetention, extra) {
     // LinkedIn retention removed the new copy itself: only pass the pruning on.
     if (!createdPost) {
       onCrossPlatformPostCreated?.(null, linkedInRetention);
@@ -369,9 +384,9 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
     // it does not belong in this brand's sections.
     if (createdPost.brandId && createdPost.brandId !== brand.id) return;
     if (createdPost.platform === "Instagram") {
-      addPostToSection(createdPost);
+      addPostToSection(createdPost, null, extra);
     } else {
-      onCrossPlatformPostCreated?.(createdPost, linkedInRetention);
+      onCrossPlatformPostCreated?.(createdPost, linkedInRetention, extra);
     }
   }
 
@@ -471,7 +486,7 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
               key={post.id}
               post={post}
               timeZone={resolveBrandTimezone(timezoneFor(post))}
-              onClick={() => setSelectedPost(post)}
+              onClick={() => { setTrialHandoff(null); setSelectedPost(post); }}
               onCommentClick={(p) => setCommentsPost(p)}
             />
           ))}
@@ -485,7 +500,8 @@ const PublishedPostsSection = forwardRef(function PublishedPostsSection({ brand,
           brandId={apiBrandIdFor(selectedPost)}
           brandTimezone={timezoneFor(selectedPost)}
           readOnly={isReadOnly(selectedPost)}
-          onClose={() => setSelectedPost(null)}
+          initialTrial={trialHandoff?.postId === selectedPost.id ? trialHandoff.trial : null}
+          onClose={() => { setSelectedPost(null); setTrialHandoff(null); }}
           onUpdated={handleUpdated}
           onDeleted={handleDeleted}
           onCrossPlatformCreated={handleCrossPlatformCreated}

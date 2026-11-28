@@ -5,6 +5,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { StatusPill } from "@/components/content-report/StatusPill";
+import { DeliveryModeBadge } from "@/components/DeliveryMode";
 import { FileText, Image as ImageIcon, Video as VideoIcon, MessageCircle, CheckCircle, Play, AlignLeft } from "lucide-react";
 import LinkedInPostUploadForm from "@/components/LinkedInPostUploadForm";
 import LinkedInPostDetailModal from "@/components/LinkedInPostDetailModal";
@@ -319,6 +320,7 @@ function PostRow({ post, timeZone, onOpen, onCommentClick }) {
             </span>
           )}
           <StatusPill status={post.status} />
+          <DeliveryModeBadge mode={post.deliveryMode} />
           <span
             style={{
               fontFamily: "var(--font-mono-ink)",
@@ -489,6 +491,14 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
   const [showForm, setShowForm] = useState(false);
   const [selectedPost, setSelectedPost] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
+  // The trial result of a Trial-mode upload/adaptation, shown once in that
+  // post's detail modal ({ postId, trial }). Cleared on close/edit/other post.
+  const [trialHandoff, setTrialHandoff] = useState(null);
+  function openWithTrial(post, extra) {
+    if (extra?.publishingMode !== "trial" || !post) return;
+    setTrialHandoff({ postId: post.id, trial: extra.trial ?? null });
+    setSelectedPost(post);
+  }
 
   // Drop rows the server removed by LinkedIn retention after a create/edit.
   function removePrunedPosts(linkedInRetention) {
@@ -498,7 +508,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
     setPosts((prev) => prev.filter((p) => !gone.has(p.id)));
   }
 
-  function addPostToSection(post, linkedInRetention) {
+  function addPostToSection(post, linkedInRetention, extra) {
     removePrunedPosts(linkedInRetention);
     if (!post) return; // retention removed the new post itself: nothing to insert
     setPosts((prev) => {
@@ -506,6 +516,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
       if (exists) return prev.map((p) => (p.id === post.id ? keepServerSchedule(p, post) : p));
       return sortPublishedPosts([{ ...post, commentCount: post.commentCount ?? 0 }, ...prev]);
     });
+    openWithTrial(post, extra);
   }
 
   useImperativeHandle(ref, () => ({
@@ -554,7 +565,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
     };
   }, [brand.id]);
 
-  function handleCreated(newPost, linkedInRetention) {
+  function handleCreated(newPost, linkedInRetention, extra) {
     removePrunedPosts(linkedInRetention);
     if (!newPost) {
       // Not kept by retention; the form already explained why.
@@ -563,7 +574,8 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
     }
     setPosts((prev) => sortPublishedPosts([{ ...newPost, commentCount: newPost.commentCount ?? 0 }, ...prev]));
     setShowForm(false);
-    toast.success("LinkedIn post added.");
+    if (!extra?.publishingMode) toast.success("LinkedIn post added.");
+    openWithTrial(newPost, extra);
   }
 
   function handleUpdated(updatedResponse) {
@@ -575,18 +587,19 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
     setPosts((prev) =>
       sortPublishedPosts(prev.map((p) => (p.id === updatedPost.id ? updatedPost : p))),
     );
+    setTrialHandoff(null); // an edit/send makes the upload's trial result stale
     setSelectedPost(updatedPost);
   }
 
-  function handleCrossPlatformCreated(createdPost, linkedInRetention) {
+  function handleCrossPlatformCreated(createdPost, linkedInRetention, extra) {
     if (!createdPost) {
       removePrunedPosts(linkedInRetention);
       return;
     }
     if (createdPost.platform === "LinkedIn") {
-      addPostToSection(createdPost, linkedInRetention);
+      addPostToSection(createdPost, linkedInRetention, extra);
     } else {
-      onCrossPlatformPostCreated?.(createdPost, linkedInRetention);
+      onCrossPlatformPostCreated?.(createdPost, linkedInRetention, extra);
     }
   }
 
@@ -738,7 +751,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
               key={post.id}
               post={post}
               timeZone={brand.timezone ?? null}
-              onOpen={() => setSelectedPost(post)}
+              onOpen={() => { setTrialHandoff(null); setSelectedPost(post); }}
               onCommentClick={(p) => setCommentsPost(p)}
             />
           ))}
@@ -752,7 +765,8 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
           post={selectedPost}
           brandId={brand.id}
           brandTimezone={brand.timezone}
-          onClose={() => setSelectedPost(null)}
+          initialTrial={trialHandoff?.postId === selectedPost.id ? trialHandoff.trial : null}
+          onClose={() => { setSelectedPost(null); setTrialHandoff(null); }}
           onUpdated={handleUpdated}
           onDeleted={handleDeleted}
           onCrossPlatformCreated={handleCrossPlatformCreated}

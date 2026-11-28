@@ -603,19 +603,26 @@ test("authorization matrix; client cannot choose destination or payload; no cred
   assert.equal(prod.requests.length, 0, "production received zero requests in this test");
 });
 
-test("trial never touches create/edit/adapt/status/thumbnail/Today/preview paths", () => {
+test("trial never touches edit/status/thumbnail/Today/preview/production-send paths", () => {
   const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+  // V1.3.56: these paths must never import or run trial transport.
   for (const f of [
-    "app/api/brands/[id]/published-posts/route.js",
     "app/api/brands/[id]/published-posts/[postId]/route.js",
-    "app/api/brands/[id]/published-posts/[postId]/adapt/route.js",
     "app/api/brands/[id]/published-posts/[postId]/thumbnail/route.js",
     "app/api/brands/[id]/published-posts/[postId]/payload/route.js",
     "app/api/brands/[id]/published-posts/[postId]/send-webhook/route.js",
     "lib/today.js",
     "lib/published-post-webhook.js",
   ]) {
-    assert.ok(!/trial/i.test(read(f).replace(/buildOutboundPublishBody[^\n]*|The trial send serializes through the same function\.|production send and the trial send/g, "")), `${f} must not reference trial sending`);
+    assert.ok(!/n8n-trial-webhook|n8n-trial-runner|sendPinnedRequest|executeTrial|runTrialForSavedPost/.test(read(f)), `${f} must not reference trial sending`);
+  }
+  // Create / adapt (Trial publishing mode) reach the trial ONLY through the
+  // shared runner, never the transport directly.
+  for (const f of [
+    "app/api/brands/[id]/published-posts/route.js",
+    "app/api/brands/[id]/published-posts/[postId]/adapt/route.js",
+  ]) {
+    assert.ok(!/n8n-trial-webhook|sendPinnedRequest/.test(read(f)), `${f} must use the shared trial runner only`);
   }
   const ui = read("components/TrialSendSection.jsx");
   assert.match(ui, /onClick=\{openConfirm\}/, "trial starts only from an explicit click");

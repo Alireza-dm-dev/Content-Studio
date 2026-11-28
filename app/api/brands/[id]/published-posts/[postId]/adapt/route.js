@@ -17,6 +17,19 @@ import {
   extractHashtags,
 } from "@/lib/published-post-utils";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
+import {
+  parseAdaptPublishingMode,
+  adaptTrialBinding,
+  PUBLISHING_MODE_PRODUCTION,
+  PUBLISHING_MODE_TRIAL,
+  PUBLISHING_MODE_SAVE_ONLY,
+  PRODUCTION_DELIVERY_SKIPPED_CODE,
+  PRODUCTION_DELIVERY_SKIPPED_MESSAGE,
+} from "@/lib/publishing-mode";
+import { withSubmissionGuard, jsonBodyFingerprint } from "@/lib/submission-guard";
+import { markSubmissionSaved } from "@/lib/submission-receipt";
+// The trial runner is loaded only for Trial-mode requests (see trialRunner()).
+const trialRunner = () => import("@/lib/n8n-trial-runner");
 import { uploadPublishedPostMedia, isCanonicalMediaUrl, isLocalMediaUrl, copyMediaToTarget } from "@/lib/published-post-remote-media";
 import { parseScheduledDate, resolveBrandTimezone } from "@/lib/timezone";
 import { readBoundedJsonBody } from "@/lib/read-bounded-json";
@@ -35,7 +48,12 @@ function canReuseSourceMedia(sourceUrl) {
   return typeof sourceUrl === "string" && isCanonicalMediaUrl(sourceUrl);
 }
 
-export async function POST(request, { params }) {
+// Duplicate-submission protection wraps the adaptation (see lib/submission-guard).
+export async function POST(request, ctx) {
+  return adaptPublishedPost(request, ctx);
+}
+
+async function adaptPublishedPost(request, { params }, preParsed = {}) {
   try {
     const { id, postId } = await params;
 
@@ -98,7 +116,7 @@ export async function POST(request, { params }) {
     const MAX_ENCODED_BODY = MAX_FILE_SIZE * 2;                   // 200 MB
     const MAX_COMBINED_DECODED = Math.floor(MAX_ENCODED_BODY * 0.75); // 150 MB
 
-    const parseResult = await readBoundedJsonBody(request, MAX_ENCODED_BODY);
+    const parseResult = preParsed.body ? { body: preParsed.body } : await readBoundedJsonBody(request, MAX_ENCODED_BODY);
 
     if (parseResult.error === "PAYLOAD_TOO_LARGE") {
       return NextResponse.json(
@@ -112,6 +130,21 @@ export async function POST(request, { params }) {
     }
 
     const body = parseResult.body;
+
+    // Same submission id + same request → never a second post or webhook
+    // (durable receipt, see lib/submission-guard); same id + different request
+    // → refused. No id → unchanged. Runs after user, Brand and source checks.
+    if (!preParsed.guarded) {
+      return withSubmissionGuard({
+        submissionId: body?.submissionId,
+        userId: user.id,
+        brandId: id,
+        operation: "adapt",
+        sourcePostId: postId,
+        brandTimezone: brand.timezone ?? null,
+        fingerprint: () => jsonBodyFingerprint(body),
+      }, ({ receipt }) => adaptPublishedPost(request, { params }, { body, guarded: true, receipt }));
+    }
 
     const rawTargetPlatform = body.targetPlatform || "";
     const targetPlatform = normalizePublishedPostPlatform(rawTargetPlatform);
@@ -163,7 +196,16 @@ export async function POST(request, { params }) {
     const orderedManifest = Array.isArray(body.orderedMediaManifest) ? body.orderedMediaManifest : [];
     const rawScheduledDate = body.scheduledDate || "";
     const rawStatus = body.status || "draft";
-    const sendToN8n = body.sendToN8n === true;
+    // Per-post publishing mode (V1.3.56). Without publishingMode the legacy
+    // sendToN8n boolean keeps its meaning (true → production, else save_only);
+    // an explicit publishingMode is authoritative and a conflicting sendToN8n
+    // is rejected, so it can never turn Trial / Save Only into production.
+    const modeParse = parseAdaptPublishingMode(body.publishingMode, body.sendToN8n);
+    if (!modeParse.ok) {
+      return NextResponse.json({ error: modeParse.error, code: modeParse.code }, { status: 400 });
+    }
+    const publishingMode = modeParse.mode;
+    const sendToN8n = publishingMode === PUBLISHING_MODE_PRODUCTION;
 
     // Same Instagram caption save gate as upload/edit (LinkedIn targets are
     // unchanged). The source post belongs to this brand, so it is the primary.
@@ -539,6 +581,17 @@ export async function POST(request, { params }) {
       }
     }
 
+    // ── Trial mode: configuration, confirmation and destination BEFORE saving ──
+    let trialConfigVersion = null;
+    if (publishingMode === PUBLISHING_MODE_TRIAL) {
+      const verified = await (await trialRunner()).verifyTrialSubmission({
+        binding: await adaptTrialBinding(id, postId, body),
+        token: body.trialConfirmation,
+      });
+      if (!verified.ok) return NextResponse.json(verified.body, { status: verified.status });
+      trialConfigVersion = verified.configVersion;
+    }
+
     // ── Compute next postNumber ──────────────────────────────────────────────
     const lastPost = await prisma.publishedPost.findFirst({
       where: { brandId: id },
@@ -661,8 +714,11 @@ export async function POST(request, { params }) {
             scheduledDate,
             postNumber: nextPostNumber,
             notes: publishTitle || null,
+            deliveryMode: publishingMode,
           },
         });
+        // The submission receipt becomes "saved" in the SAME transaction.
+        if (preParsed.receipt) await markSubmissionSaved(tx, preParsed.receipt.id, newPost.id);
 
         const mediaRecords = [];
         for (const md of mediaRecordsData) {
@@ -737,8 +793,13 @@ export async function POST(request, { params }) {
       (m) => !reusedOrders.has(m.order)
     );
 
+    // Save Only defers the public upload of new / copied media until an
+    // explicit Send to n8n or "Upload Media & Run Trial" needs it. Reused
+    // canonical media already has its public URL and is kept as-is.
     let remoteResult = null;
-    if (hasNewFiles) {
+    if (hasNewFiles && publishingMode === PUBLISHING_MODE_SAVE_ONLY) {
+      remoteResult = { success: false, skipped: true, deferred: true, detailCode: "PUBLIC_UPLOAD_DEFERRED" };
+    } else if (hasNewFiles) {
       try {
         remoteResult = await uploadPublishedPostMedia({
           post: result,
@@ -846,9 +907,31 @@ export async function POST(request, { params }) {
       }
     }
 
+    // ── Trial: send ONLY to the trial webhook (never production, no fallback) ──
+    let trial = null;
+    if (publishingMode === PUBLISHING_MODE_TRIAL) {
+      // "skipped" only counts when nothing needed uploading (success + skipped);
+      // an unconfigured media server is skipped but NOT a success.
+      if (remoteUploadSuccessful || (remoteResult?.success && remoteResult?.skipped)) {
+        trial = await (await trialRunner()).runTrialForSavedPost({ post: result, brand, configVersion: trialConfigVersion });
+      } else {
+        trial = {
+          sent: false,
+          code: "REMOTE_MEDIA_UPLOAD_FAILED",
+          error: "Post saved, but its media could not be uploaded to the public media server. No trial was sent. Use Upload Media & Run Trial on the saved post to retry.",
+          mediaUpload: {
+            detailCode: remoteResult?.detailCode || "SFTP_UPLOAD_FAILED",
+            details: remoteResult?.error || remoteResult?.details || remoteResult?.detailCode || null,
+          },
+        };
+      }
+    }
+
     // ── Send to n8n (only when explicitly requested and remote media is available) ──
     let webhookResult = null;
-    if (sendToN8n) {
+    if (!sendToN8n && modeParse.explicit) {
+      webhookResult = { success: null, skipped: true, code: PRODUCTION_DELIVERY_SKIPPED_CODE, deliveryMode: publishingMode, message: PRODUCTION_DELIVERY_SKIPPED_MESSAGE };
+    } else if (sendToN8n) {
       if (remoteUploadSuccessful || remoteResult?.skipped) {
         try {
           webhookResult = await sendPublishedPostToN8n({
@@ -893,6 +976,8 @@ export async function POST(request, { params }) {
       webhookResult,
       remoteResult,
       linkedInRetention,
+      ...(modeParse.explicit ? { publishingMode } : {}),
+      ...(trial ? { trial } : {}),
     };
     try {
       JSON.stringify(responsePayload);

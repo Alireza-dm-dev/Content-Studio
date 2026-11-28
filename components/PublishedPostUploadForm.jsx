@@ -7,6 +7,8 @@ import PostThumbnailField, { checkThumbnailFile } from "@/components/PostThumbna
 import { postTypeSupportsCover } from "@/lib/published-post-cover";
 import CollaboratorBrandPicker from "@/components/CollaboratorBrandPicker";
 import CaptionCheckPanel from "@/components/CaptionCheckPanel";
+import { usePublishingMode, PublishingModeSelector, modeSubmitLabel } from "@/components/PublishingMode";
+import { handleModeResult, appendPublishingMode } from "@/components/publishing-mode-submit";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -58,6 +60,9 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
   // Instagram-only: brands whose grid should also show this post.
   const [collaboratorBrandIds, setCollaboratorBrandIds] = useState([]);
   const isInstagram = (platform || "Instagram").trim().toLowerCase() === "instagram";
+  // Per-post publishing mode: starts at Production for every new form.
+  const pm = usePublishingMode(brandId);
+  const submittingRef = useRef(false); // synchronous duplicate-submit guard
 
   const mediaInputRef = useRef(null);
   const captionCheckRef = useRef(null);
@@ -101,6 +106,7 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError(null);
 
     if (!brandId) {
@@ -129,9 +135,10 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
       }
     }
 
+    submittingRef.current = true;
     setUploading(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
+    let timeoutId = null;
 
     try {
       const fd = new FormData();
@@ -162,6 +169,21 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
         }
       }
 
+      // Trial: explicit confirmation bound to this exact form state.
+      const proceed = await appendPublishingMode(fd, pm, {
+        brandId,
+        summary: {
+          platform: platform || "Instagram",
+          postType: { static: "Static", carousel: "Carousel", reel: "Reel / Video" }[postType] || postType,
+          schedule: scheduledDate ? `${scheduledDate.replace("T", " ")} · ${brandTimezoneLabel(brandTimezone)}` : "",
+        },
+      });
+      if (!proceed.ok) {
+        if (proceed.error) setError(proceed.error);
+        return;
+      }
+
+      timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
       const res = await fetch(`/api/brands/${brandId}/published-posts`, {
         method: "POST",
         body: fd,
@@ -192,6 +214,8 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
       }
 
       const createdPost = data.post || data;
+      // Trial / Save Only: their own messages; the post detail opens with the trial result.
+      if (handleModeResult(data, { setError, onCreated, createdPost })) return;
       const webhookResult = data.webhookResult;
       const remoteResult = data.remoteResult;
       const remoteFailed = remoteResult == null ||
@@ -225,7 +249,8 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
         toast.error(err.message);
       }
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
+      submittingRef.current = false;
       setUploading(false);
     }
   }
@@ -336,6 +361,9 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
           />
         </div>
 
+        {/* Publishing mode (this post only) */}
+        <PublishingModeSelector pm={pm} disabled={uploading} />
+
         {/* Notes */}
         <div>
           <div style={{ ...lbl, marginBottom: 4 }}>Notes (optional)</div>
@@ -385,10 +413,11 @@ export default function PublishedPostUploadForm({ brandId, brandTimezone, onCrea
               opacity: uploading ? 0.5 : 1,
             }}
           >
-            {uploading ? "Uploading\u2026" : "Upload Post"}
+            {uploading ? "Uploading\u2026" : modeSubmitLabel(pm.mode, { production: "Upload Post", trial: "Upload & Run Trial", save_only: "Save Post" })}
           </button>
         </div>
       </div>
+      {pm.dialog}
     </form>
   );
 }

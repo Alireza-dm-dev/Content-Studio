@@ -37,6 +37,19 @@ import {
   LINKEDIN_RETENTION_REMOVED_MESSAGE,
 } from "@/lib/linkedin-retention";
 import {
+  parseCreatePublishingMode,
+  uploadTrialBinding,
+  PUBLISHING_MODE_PRODUCTION,
+  PUBLISHING_MODE_TRIAL,
+  PUBLISHING_MODE_SAVE_ONLY,
+  PRODUCTION_DELIVERY_SKIPPED_CODE,
+  PRODUCTION_DELIVERY_SKIPPED_MESSAGE,
+} from "@/lib/publishing-mode";
+import { withSubmissionGuard, formDataFingerprint } from "@/lib/submission-guard";
+import { markSubmissionSaved } from "@/lib/submission-receipt";
+// The trial runner is loaded only for Trial-mode requests (see trialRunner()).
+const trialRunner = () => import("@/lib/n8n-trial-runner");
+import {
   postTypeSupportsCover,
   COVER_NOT_SUPPORTED_CODE,
   COVER_NOT_SUPPORTED_MESSAGE,
@@ -119,7 +132,12 @@ async function enforcePublishedPostsLimit(brandId) {
   }
 }
 
-export async function POST(request, { params }) {
+// Duplicate-submission protection wraps the create (see lib/submission-guard).
+export async function POST(request, ctx) {
+  return createPublishedPost(request, ctx);
+}
+
+async function createPublishedPost(request, { params }, preParsed = {}) {
   try {
     const { id } = await params;
 
@@ -138,9 +156,23 @@ export async function POST(request, { params }) {
 
     let formData;
     try {
-      formData = await request.formData();
+      formData = preParsed.formData ?? await request.formData();
     } catch {
       return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
+    }
+
+    // Same submission id + same request → never a second post or webhook
+    // (durable receipt, see lib/submission-guard); same id + different request
+    // → refused. No id → unchanged. Runs after Brand authorization above.
+    if (!preParsed.guarded) {
+      return withSubmissionGuard({
+        submissionId: formData.get("submissionId"),
+        userId: brandAccess.user?.id,
+        brandId: id,
+        operation: "create",
+        brandTimezone: brand.timezone ?? null,
+        fingerprint: () => formDataFingerprint(formData),
+      }, ({ receipt }) => createPublishedPost(request, { params }, { formData, guarded: true, receipt }));
     }
 
 // ── Read fields ──────────────────────────────────────────────────────────────
@@ -157,6 +189,14 @@ export async function POST(request, { params }) {
       { status: 400 }
     );
   }
+
+  // Per-post publishing mode (V1.3.56). Absent → Production (existing
+  // behaviour). Any other value than the three modes is rejected.
+  const modeParse = parseCreatePublishingMode(formData.get("publishingMode"));
+  if (!modeParse.ok) {
+    return NextResponse.json({ error: modeParse.error, code: modeParse.code }, { status: 400 });
+  }
+  const publishingMode = modeParse.mode;
 
   // multipart/form-data encodes every line break in a text field as CRLF
   // (HTML spec), so a caption typed as "a\n\nb" arrives as "a\r\n\r\nb".
@@ -351,6 +391,20 @@ export async function POST(request, { params }) {
     instagramThumbnail = v;
   }
 
+  // ── Trial mode: configuration, confirmation and destination BEFORE saving ──
+  // The confirmation token is bound to the current trial configuration and to
+  // this exact form submission; a direct API request without a valid one, or
+  // with no trial webhook configured, saves nothing.
+  let trialConfigVersion = null;
+  if (publishingMode === PUBLISHING_MODE_TRIAL) {
+    const verified = await (await trialRunner()).verifyTrialSubmission({
+      binding: await uploadTrialBinding(id, formData),
+      token: formData.get("trialConfirmation"),
+    });
+    if (!verified.ok) return NextResponse.json(verified.body, { status: verified.status });
+    trialConfigVersion = verified.configVersion;
+  }
+
   // ── Compute next postNumber ──────────────────────────────────────────────────
   const lastPost = await prisma.publishedPost.findFirst({
     where: { brandId: id },
@@ -428,8 +482,11 @@ export async function POST(request, { params }) {
           scheduledDate,
           notes: notes || null,
           postNumber: nextPostNumber,
+          deliveryMode: publishingMode,
         },
       });
+      // The submission receipt becomes "saved" in the SAME transaction.
+      if (preParsed.receipt) await markSubmissionSaved(tx, preParsed.receipt.id, post.id);
 
       for (const collaborator of collaboratorBrands) {
         await tx.publishedPostCollaborator.create({
@@ -497,7 +554,34 @@ export async function POST(request, { params }) {
     }
   }
 
+  // ── Save Only: no public upload, no webhook ────────────────────────────────
+  // Media stays local; public upload is deferred until an explicit Send to n8n
+  // or "Upload Media & Run Trial" needs it.
+  if (publishingMode === PUBLISHING_MODE_SAVE_ONLY) {
+    await enforcePublishedPostsLimit(id);
+    const savedPost = decorateCollaboration(
+      serializePublishedPost(result, { brandTimezone: brand.timezone ?? null }),
+      {
+        brand: { id: brand.id, name: brand.name, timezone: brand.timezone ?? null },
+        collaborators: collaboratorBrands.map((b) => ({ brandId: b.id, brand: b })),
+      },
+      { viewerBrandId: id, accessibleBrandIds: null },
+    );
+    return NextResponse.json(
+      {
+        post: savedPost,
+        publishingMode,
+        webhookResult: { success: null, skipped: true, code: PRODUCTION_DELIVERY_SKIPPED_CODE, deliveryMode: publishingMode, message: PRODUCTION_DELIVERY_SKIPPED_MESSAGE },
+        remoteResult: null,
+        linkedInRetention,
+      },
+      { status: 201 },
+    );
+  }
+
   // ── Remote media upload (best-effort) ──────────────────────────────────────
+  // Production and Trial both prepare public media (a trial must test the
+  // real public files); a later production send reuses these URLs.
   let remoteResult;
   try {
     remoteResult = await uploadPublishedPostMedia({
@@ -589,9 +673,29 @@ export async function POST(request, { params }) {
     }
   }
 
+  // ── Trial: send ONLY to the trial webhook (never production, no fallback) ──
+  let trial = null;
+  if (publishingMode === PUBLISHING_MODE_TRIAL) {
+    if (remoteUploadSuccessful) {
+      trial = await (await trialRunner()).runTrialForSavedPost({ post: result, brand, configVersion: trialConfigVersion });
+    } else {
+      trial = {
+        sent: false,
+        code: "REMOTE_MEDIA_UPLOAD_FAILED",
+        error: "Post saved, but its media could not be uploaded to the public media server. No trial was sent. Use Upload Media & Run Trial on the saved post to retry.",
+        mediaUpload: {
+          detailCode: remoteResult?.detailCode || "SFTP_UPLOAD_FAILED",
+          details: remoteResult?.error || remoteResult?.details || remoteResult?.detailCode || null,
+        },
+      };
+    }
+  }
+
   // ── Auto-send to n8n (only when canonical remote media is available) ────────
   let webhookResult = null;
-  if (remoteUploadSuccessful) {
+  if (publishingMode !== PUBLISHING_MODE_PRODUCTION) {
+    webhookResult = { success: null, skipped: true, code: PRODUCTION_DELIVERY_SKIPPED_CODE, deliveryMode: publishingMode, message: PRODUCTION_DELIVERY_SKIPPED_MESSAGE };
+  } else if (remoteUploadSuccessful) {
     try {
       webhookResult = await sendPublishedPostToN8n({
         post: result,
@@ -638,7 +742,14 @@ export async function POST(request, { params }) {
   );
 
   return NextResponse.json(
-    { post: createdPost, webhookResult, remoteResult, linkedInRetention },
+    {
+      post: createdPost,
+      webhookResult,
+      remoteResult,
+      linkedInRetention,
+      ...(modeParse.explicit ? { publishingMode } : {}),
+      ...(trial ? { trial } : {}),
+    },
     { status: 201 },
   );
   } catch (error) {

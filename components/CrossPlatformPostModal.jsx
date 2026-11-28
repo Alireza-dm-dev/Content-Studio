@@ -12,6 +12,8 @@ import {
 } from "@/lib/timezone";
 import CaptionCheckPanel from "@/components/CaptionCheckPanel";
 import { SCHEDULE_UNAVAILABLE_TEXT } from "@/components/useServerSchedule";
+import { usePublishingMode, PublishingModeSelector, modeSubmitLabel } from "@/components/PublishingMode";
+import { handleModeResult, addAdaptPublishingMode } from "@/components/publishing-mode-submit";
 
 // Matches the server's new max SFTP upload budget (30 min). Image/PDF uploads
 // finish in milliseconds, so this only extends the ceiling for large video
@@ -342,7 +344,9 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
     return buildInitialManifest(sourcePost, targetPlatform, getDefaultPostType(sourcePost, targetPlatform));
   });
   const [status, setStatus] = useState("draft");
-  const [sendToN8n, setSendToN8n] = useState(false);
+  // Per-post publishing mode for the adapted copy (replaces the old
+  // "Send to n8n after saving" checkbox). Starts at Production per modal.
+  const pm = usePublishingMode(brandId);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [dragIdx, setDragIdx] = useState(null);
@@ -468,8 +472,9 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
     });
   }
 
-  async function handleSubmit({ sendToN8n } = {}) {
+  async function handleSubmit() {
     if (submittingRef.current) return;
+    const sendToN8n = pm.mode === "production";
     const guard = validationError;
     if (guard) {
       setError(guard);
@@ -492,13 +497,8 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
     setSubmitting(true);
     setError(null);
 
-    // Clear the send-to-n8n checkbox so a subsequent draft click does not re-fire n8n
-    if (sendToN8n) {
-      setSendToN8n(false);
-    }
-
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
+    let timeoutId = null;
 
     try {
       const payload = {
@@ -530,10 +530,6 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
         // Same as an untouched prefill: the source's own instant, never "now".
         payload.scheduledDate = new Date(sourceInstantMs).toISOString();
       }
-      if (sendToN8n) {
-        payload.sendToN8n = true;
-      }
-
       const newFiles = manifest.filter((m) => (m.action === "new" || m.action === "uploadNew") && m.file);
       if (newFiles.length > 0) {
         payload.files = await Promise.all(newFiles.map(async (item) => ({
@@ -544,6 +540,24 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
         })));
       }
 
+      // publishingMode is authoritative; Trial needs an explicit confirmation
+      // bound to this exact request body.
+      const proceed = await addAdaptPublishingMode(payload, pm, {
+        brandId,
+        sourcePostId: sourcePost.id,
+        summary: {
+          platform: targetPlatform,
+          postType: targetPostType,
+          schedule: payload.scheduledDate ? `${scheduledDate ? scheduledDate.replace("T", " ") : payload.scheduledDate} · ${brandTimezoneLabel(brandTimezone)}` : "",
+          source: `${sourcePost.platform} post${sourcePost.postNumber ? ` #${sourcePost.postNumber}` : ""}`,
+        },
+      });
+      if (!proceed.ok) {
+        if (proceed.error) setError(proceed.error);
+        return;
+      }
+
+      timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
       const url = `/api/brands/${brandId}/published-posts/${sourcePost.id}/adapt`;
       const res = await fetch(url, {
         method: "POST",
@@ -591,6 +605,12 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
 
       const createdPost = data.post;
 
+      if (handleModeResult(data, {
+        setError,
+        createdPost,
+        onCreated: (p, extra) => { if (!closedRef.current) onCreated(p, data.linkedInRetention, extra); },
+      })) return;
+
       if (data.webhookResult?.success) {
         toast.success(`${targetPlatform === "Instagram" ? "Instagram" : "LinkedIn"} post created and sent to n8n.`);
       } else if (data.webhookResult?.success === false && sendToN8n) {
@@ -614,7 +634,7 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
         toast.error(err.message);
       }
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       setSubmitting(false);
       submittingRef.current = false;
     }
@@ -984,11 +1004,8 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
               New post will be saved as <strong>draft</strong>.
             </div>
 
-            {/* Send to n8n toggle */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input type="checkbox" id="send-to-n8n" checked={sendToN8n} onChange={(e) => setSendToN8n(e.target.checked)} />
-              <label htmlFor="send-to-n8n" style={{ ...lbl, fontSize: 9, cursor: "pointer" }}>Send to n8n after saving</label>
-            </div>
+            {/* Publishing mode (this adapted post only) */}
+            <PublishingModeSelector pm={pm} disabled={submitting} />
 
             {/* Error */}
             {(error || validationError) && (
@@ -1004,24 +1021,18 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
               </button>
               <button
                 type="button"
-                onClick={() => handleSubmit({ sendToN8n: false })}
+                onClick={() => handleSubmit()}
                 disabled={submitDisabled}
-                style={{ ...inkBtn, borderColor: "var(--sketch-ink)", opacity: submitDisabled ? 0.5 : 1 }}
-              >
-                {submitting ? "Saving\u2026" : "Save as draft"}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSubmit({ sendToN8n: true })}
-                disabled={submitDisabled}
+                data-testid="adapt-submit"
                 style={{ ...inkBtn, borderColor: "var(--sketch-vermilion)", background: "var(--sketch-vermilion)", color: "var(--sketch-paper-bright)", opacity: submitDisabled ? 0.5 : 1 }}
               >
-                {submitting ? "Sending\u2026" : "Save and send to n8n"}
+                {submitting ? "Saving\u2026" : modeSubmitLabel(pm.mode, { production: "Save & Send to n8n", trial: "Save & Run Trial", save_only: "Save Post" })}
               </button>
             </div>
           </div>
         </div>
       </form>
+      {pm.dialog}
     </div>
   );
 }

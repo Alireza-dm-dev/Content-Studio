@@ -10,6 +10,7 @@ import {
 } from "@/lib/timezone";
 import { useServerSchedule, SCHEDULE_UNAVAILABLE_TEXT } from "@/components/useServerSchedule";
 import TrialSendSection from "@/components/TrialSendSection";
+import { DeliveryModeBadge, PromotionConfirm, needsPromotionConfirm, reportPromotion, reportEditDelivery } from "@/components/DeliveryMode";
 import { useCanonicalPayload } from "@/components/useCanonicalPayload";
 import CanonicalPayloadStatus from "@/components/CanonicalPayloadStatus";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
@@ -35,9 +36,11 @@ function formatPostIdShort(postNumber) {
 // post that is the OWNING brand when the viewer may manage it. `readOnly` is
 // set when the viewer only has access through a collaborator brand: every
 // manage action is hidden (the server would refuse them anyway).
-export default function PostDetailModal({ post, brandId, brandTimezone, readOnly = false, onClose, onUpdated, onDeleted, onCrossPlatformCreated }) {
+export default function PostDetailModal({ post, brandId, brandTimezone, readOnly = false, onClose, onUpdated, onDeleted, onCrossPlatformCreated, initialTrial = null }) {
   const [copied, setCopied] = useState(false);
-  const [showJson, setShowJson] = useState(false);
+  // A Trial-mode upload opens straight onto its trial result.
+  const [showJson, setShowJson] = useState(Boolean(initialTrial));
+  const [promotionOpen, setPromotionOpen] = useState(false);
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [sending, setSending] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -111,11 +114,17 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
     }
   }
 
-  async function handleSendToN8n() {
+  // confirmed: the user accepted the Trial / Save Only → Production warning.
+  async function handleSendToN8n(confirmed = false) {
     if (!brandId) {
       toast.error("Missing brand ID for sending to n8n.");
       return;
     }
+    if (confirmed !== true && needsPromotionConfirm(post)) {
+      setPromotionOpen(true);
+      return;
+    }
+    setPromotionOpen(false);
     setSending(true);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), CLIENT_FETCH_TIMEOUT);
@@ -123,6 +132,8 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
       console.log("[SendToN8n] sending", { brandId, postId: post.id });
       const res = await fetch(`/api/brands/${brandId}/published-posts/${post.id}/send-webhook`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmPromotion: confirmed === true }),
         signal: controller.signal,
       });
       let data;
@@ -170,6 +181,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
               : wr.error || "Sent to n8n with warnings.",
           );
         }
+        reportPromotion(data);
       } else {
         throw new Error(data?.error || `Send failed with status ${res.status}`);
       }
@@ -271,6 +283,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
         return;
       }
       toast.success("Post updated.");
+      reportEditDelivery(data);
       setEditing(false);
       if (onUpdated) onUpdated(data);
     } catch (err) {
@@ -374,8 +387,8 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
     setCarouselIdx((prev) => (prev < orderedMedia.length - 1 ? prev + 1 : 0));
   }
 
-  function handleAdaptCreated(createdPost, linkedInRetention) {
-    if (onCrossPlatformCreated) onCrossPlatformCreated(createdPost, linkedInRetention);
+  function handleAdaptCreated(createdPost, linkedInRetention, extra) {
+    if (onCrossPlatformCreated) onCrossPlatformCreated(createdPost, linkedInRetention, extra);
     setShowAdapt(false);
     closedRef.current = true;
     onClose();
@@ -833,6 +846,12 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                 <InfoField label="Uploaded" value={uploadDate} />
                 {scheduledDateStr && <InfoField label="Scheduled" value={scheduledDateStr} />}
                 {post.status && <InfoField label="Status" value={post.status} />}
+                {post.deliveryMode && (
+                  <div>
+                    <div style={{ ...lbl, marginBottom: 2 }}>Delivery mode</div>
+                    <DeliveryModeBadge mode={post.deliveryMode} />
+                  </div>
+                )}
                 {post.notes && <InfoField label="Notes" value={post.notes} />}
               </div>
 
@@ -930,7 +949,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                   {!readOnly && (
                   <button
                     type="button"
-                    onClick={handleSendToN8n}
+                    onClick={() => handleSendToN8n(false)}
                     disabled={sending}
                     style={{
                       ...inkBtn,
@@ -942,8 +961,11 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                   </button>
                   )}
                 </div>
+                {!readOnly && promotionOpen && (
+                  <PromotionConfirm onCancel={() => setPromotionOpen(false)} onConfirm={() => handleSendToN8n(true)} />
+                )}
                 {/* Collaborator-only (read-only) viewers never get Trial Send. */}
-                {!readOnly && <TrialSendSection key={`${post.id}|${post.scheduledDate ?? ""}|${post.updatedAt ?? ""}`} brandId={brandId} postId={post.id} />}
+                {!readOnly && <TrialSendSection key={`${post.id}|${post.scheduledDate ?? ""}|${post.updatedAt ?? ""}`} brandId={brandId} postId={post.id} initialTrial={initialTrial} />}
               </div>
             )}
           </div>

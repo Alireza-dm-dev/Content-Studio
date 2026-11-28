@@ -412,6 +412,15 @@ model PublishedPost {
   notes         String?
   thumbnailUrl  String?
   jsonPayload   String?
+  // Per-post delivery mode, separate from `status`. null = legacy row (existing
+  // behaviour). "production" | "trial" | "save_only" (validated in
+  // lib/publishing-mode.js). Only null/"production" auto-send to production on
+  // edit. Never part of the n8n payload.
+  deliveryMode  String?
+  // When a PRODUCTION publish webhook request was last initiated for this post
+  // (set just before the HTTP request). NOT proof of delivery: a failed or
+  // timed-out request keeps it. Never part of the n8n payload.
+  productionDeliveryAttemptedAt DateTime?
   postNumber    Int?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -595,4 +604,25 @@ model BrandStoryAsset {
   createdAt        DateTime          @default(now())
 
   @@index([storyContentId, sortOrder])
+}
+
+// Durable duplicate-submission receipt for Published Post create / adapt
+// (V1.3.56). One row per client submission id, scoped by a hashed key of
+// (user, owning Brand, operation, source post, submission id). Holds NO
+// caption, payload, credentials or media: only the request digest, state,
+// resulting post id (no FK: it must outlive retention deletes) and a small
+// outcome summary. Rows older than 30 days are pruned.
+model PublishedPostSubmission {
+  id            String   @id @default(cuid())
+  scopeKey      String   @unique
+  requestDigest String
+  // "processing" (reserved, no post yet) | "saved" (post committed with this
+  // receipt, outcome not recorded) | "completed" (outcome recorded)
+  state         String
+  postId        String?
+  outcome       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([createdAt])
 }

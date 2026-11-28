@@ -3,6 +3,19 @@ import { prisma } from "@/lib/prisma";
 import { requireBrandAccess } from "@/lib/brand-access";
 import { safeParseJson, serializePublishedPost } from "@/lib/published-post-utils";
 import { uploadPublishedPostMedia } from "@/lib/published-post-remote-media";
+import { isNonProductionDeliveryMode } from "@/lib/publishing-mode";
+import { storedPayloadHasCanonicalUrls } from "@/lib/published-post-media-prepare";
+
+/** Are the post's media files (ignoring the cover) already on the public server? */
+function mediaIsPublic(post) {
+  try {
+    const p = JSON.parse(post.jsonPayload || "null");
+    if (!p) return false;
+    return storedPayloadHasCanonicalUrls({ jsonPayload: { ...p, thumbnail_url: "" } });
+  } catch {
+    return false;
+  }
+}
 import {
   validateThumbnailFile,
   saveThumbnailFile,
@@ -94,8 +107,12 @@ export async function PUT(request, { params }) {
   // Best-effort: publish the thumbnail on the public media server (thumbnail
   // only, no media re-upload), same as the create path. On failure the payload
   // keeps the local path, and "Send to n8n" re-uploads before sending.
+  // Trial / Save Only posts whose media is not public yet defer this too:
+  // nothing goes to the public server until Send to n8n or "Upload Media &
+  // Run Trial" uploads the whole post (cover included) in one go.
   let remoteUrl = null;
-  try {
+  const deferPublicUpload = isNonProductionDeliveryMode(post.deliveryMode) && !mediaIsPublic(post);
+  if (!deferPublicUpload) try {
     const remote = await uploadPublishedPostMedia({
       post: { ...post, thumbnailUrl: localUrl },
       mediaRecords: [],

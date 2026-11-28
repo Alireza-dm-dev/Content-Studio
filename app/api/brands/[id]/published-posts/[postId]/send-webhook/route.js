@@ -2,45 +2,24 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireBrandAccess } from "@/lib/brand-access";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
+import { getEnvConfig } from "@/lib/published-post-remote-media";
+import { serializePublishedPost } from "@/lib/published-post-utils";
 import {
-  uploadPublishedPostMedia,
-  isCanonicalMediaUrl,
-  getEnvConfig,
-} from "@/lib/published-post-remote-media";
-import { buildN8nPayload, serializePublishedPost } from "@/lib/published-post-utils";
+  preparePublicMedia,
+  storedPayloadHasCanonicalUrls,
+  reloadPublishedPost as reloadPost,
+} from "@/lib/published-post-media-prepare";
+import {
+  PUBLISHING_MODE_PRODUCTION,
+  isNonProductionDeliveryMode,
+  PROMOTION_WARNING,
+} from "@/lib/publishing-mode";
 
-function hasCanonicalUrlsInStoredPayload(post) {
-  if (!post.jsonPayload) return false;
-  try {
-    const p = typeof post.jsonPayload === "string"
-      ? JSON.parse(post.jsonPayload)
-      : post.jsonPayload;
-    if (p.video_url && !isCanonicalMediaUrl(p.video_url)) return false;
-    if (p.thumbnail_url && !isCanonicalMediaUrl(p.thumbnail_url)) return false;
-    if (Array.isArray(p.files)) {
-      for (const f of p.files) {
-        if (f.image_url && !isCanonicalMediaUrl(f.image_url)) return false;
-        if (f.video_url && !isCanonicalMediaUrl(f.video_url)) return false;
-        if (f.document_url && !isCanonicalMediaUrl(f.document_url)) return false;
-      }
-    }
-    if (Array.isArray(p.media)) {
-      for (const m of p.media) {
-        if (!isCanonicalMediaUrl(m.url)) return false;
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function reloadPost(postId) {
-  return prisma.publishedPost.findUnique({
-    where: { id: postId },
-    include: { media: { orderBy: { order: "asc" } } },
-  });
-}
+// Explicit (manual) production send. For a Trial / Save Only post this is the
+// ONLY way into production: it must be confirmed ({ confirmPromotion: true })
+// and an HTTP 2xx from n8n promotes the post to deliveryMode "production".
+// A failed or timed-out send never promotes. Legacy (null) and production
+// posts behave exactly as before.
 
 export async function POST(request, { params }) {
   try {
@@ -53,6 +32,13 @@ export async function POST(request, { params }) {
       { status: brandAccess.status },
     );
   }
+    let confirmPromotion = false;
+    try {
+      const body = await request.json();
+      confirmPromotion = body?.confirmPromotion === true;
+    } catch {
+      // no / non-JSON body: legacy clients
+    }
     const startedAt = Date.now();
     console.log("[SendWebhook] request received", { brandId: id, postId });
 
@@ -74,7 +60,17 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: "Brand not found" }, { status: 404 });
     }
 
-    const payloadHasCanonicalUrls = hasCanonicalUrlsInStoredPayload(post);
+    const promoting = isNonProductionDeliveryMode(post.deliveryMode);
+    if (promoting && !confirmPromotion) {
+      // Checked before any media upload: nothing happens without confirmation.
+      return NextResponse.json({
+        error: PROMOTION_WARNING,
+        code: "PROMOTION_CONFIRMATION_REQUIRED",
+        deliveryMode: post.deliveryMode,
+      }, { status: 409 });
+    }
+
+    const payloadHasCanonicalUrls = storedPayloadHasCanonicalUrls(post);
     console.log("[SendWebhook] post loaded", {
       postId,
       postNumber: post.postNumber,
@@ -84,6 +80,7 @@ export async function POST(request, { params }) {
       hasStoredPayload: Boolean(post.jsonPayload),
       payloadHasCanonicalUrls,
       willUploadMedia: !payloadHasCanonicalUrls,
+      deliveryMode: post.deliveryMode ?? null,
     });
 
     // Upload to remote media server when stored payload lacks canonical public URLs
@@ -104,120 +101,23 @@ export async function POST(request, { params }) {
         })),
       });
 
-      const remoteResult = await uploadPublishedPostMedia({
-        post,
-        mediaRecords: post.media || [],
-        brandId: id,
-      });
-
-      if (!remoteResult.success) {
-        console.error("[SendWebhook] remote media upload failed", {
-          postId,
-          detailCode: remoteResult.detailCode,
-          error: remoteResult.error,
-          skipped: remoteResult.skipped,
-          localPath: remoteResult.localPath,
-          durationMs: Date.now() - startedAt,
-        });
+      const prepared = await preparePublicMedia({ post, brand, brandId: id, logPrefix: "[SendWebhook]" });
+      if (prepared.notFound) {
+        return NextResponse.json({ error: "Published post not found." }, { status: 404 });
+      }
+      if (!prepared.ok) {
         // Still return the saved post with the error
         const savedPost = await reloadPost(postId);
         return NextResponse.json(
           {
             success: false,
-            webhookResult: {
-              success: false,
-              code: "REMOTE_MEDIA_UPLOAD_FAILED",
-              error: "The post's media could not be uploaded to the public media server.",
-              detailCode: remoteResult.detailCode || "SFTP_UPLOAD_FAILED",
-              details: remoteResult.error || remoteResult.details || remoteResult.detailCode || null,
-              ...(remoteResult.fileSize != null ? { fileSize: remoteResult.fileSize } : {}),
-              ...(remoteResult.duration != null ? { duration: remoteResult.duration } : {}),
-              skipped: Boolean(remoteResult.skipped),
-            },
+            webhookResult: prepared.failure,
             post: serializePublishedPost(savedPost, { brandTimezone: brand.timezone ?? null }),
           },
           { status: 503 },
         );
       }
-
-      // Verify media count match — do not persist a partial mapping
-      const expectedCount = (post.media || []).length;
-      if (remoteResult.media.length !== expectedCount) {
-        console.error("[SendWebhook] remote media count mismatch", {
-          detailCode: "SFTP_MEDIA_COUNT_MISMATCH",
-          expected: expectedCount,
-          got: remoteResult.media.length,
-        });
-        const savedPost = await reloadPost(postId);
-        return NextResponse.json(
-          {
-            success: false,
-            webhookResult: {
-              success: false,
-              code: "REMOTE_MEDIA_UPLOAD_FAILED",
-              error: "The post's media could not be uploaded to the public media server.",
-              detailCode: "SFTP_MEDIA_COUNT_MISMATCH",
-              details: `Remote media count mismatch: expected ${expectedCount}, got ${remoteResult.media.length}`,
-            },
-            post: serializePublishedPost(savedPost, { brandTimezone: brand.timezone ?? null }),
-          },
-          { status: 503 },
-        );
-      }
-
-      console.log("[SendWebhook] remote media upload succeeded", {
-        postId,
-        uploaded: remoteResult.media.length,
-        thumbnailUrl: remoteResult.thumbnailUrl || null,
-        urls: remoteResult.media.map((m) => m.fileUrl),
-        durationMs: Date.now() - startedAt,
-      });
-
-      // Rebuild payload with remote URLs and persist
-      const remoteUrlByOrder = {};
-      for (const r of remoteResult.media) {
-        remoteUrlByOrder[r.order] = r;
-      }
-
-      const updatedThumbnail = remoteResult.thumbnailUrl || post.thumbnailUrl;
-
-      // Reload post to get clean state before persisting remote URLs
-      post = await reloadPost(postId);
-      if (!post) {
-        return NextResponse.json({ error: "Published post not found." }, { status: 404 });
-      }
-
-      const updatedMedia = (post.media || []).map((m) => {
-        const remote = remoteUrlByOrder[m.order];
-        return remote ? { ...m, url: remote.fileUrl, remoteUrl: remote.fileUrl } : m;
-      });
-
-      const remotePayload = buildN8nPayload(
-        { ...post, thumbnailUrl: updatedThumbnail },
-        updatedMedia,
-        brand.name,
-        brand.timezone,
-      );
-      const payloadJson = remotePayload
-        ? JSON.stringify(remotePayload, null, 2)
-        : null;
-
-      if (payloadJson) {
-        await prisma.publishedPost.update({
-          where: { id: postId },
-          data: { jsonPayload: payloadJson, thumbnailUrl: updatedThumbnail },
-        });
-      }
-
-      // Reload after persistence so the returned post matches DB
-      const persisted = await reloadPost(postId);
-      if (persisted) {
-        const finalMedia = (persisted.media || []).map((m) => {
-          const remote = remoteUrlByOrder[m.order];
-          return remote ? { ...m, url: remote.fileUrl, remoteUrl: remote.fileUrl } : m;
-        });
-        post = { ...persisted, media: finalMedia };
-      }
+      post = prepared.post;
     }
 
     console.log("[SendWebhook] posting payload to n8n", {
@@ -248,6 +148,39 @@ export async function POST(request, { params }) {
       console.error("[SendWebhook] n8n rejected the payload", webhookLog);
     }
 
+    // ── Promotion (Trial / Save Only → Production) ──────────────────────────
+    // Only an HTTP 2xx promotes. A timeout or network failure is NOT proof that
+    // n8n received nothing: report the uncertainty, never retry, never promote.
+    let promotion;
+    if (promoting) {
+      if (webhookResult.success) {
+        try {
+          await prisma.publishedPost.update({ where: { id: postId }, data: { deliveryMode: PUBLISHING_MODE_PRODUCTION } });
+          promotion = { promoted: true, from: post.deliveryMode, deliveryMode: PUBLISHING_MODE_PRODUCTION };
+        } catch (promotionError) {
+          console.error("[SendWebhook] n8n accepted but promotion was not saved", { postId, error: promotionError?.message });
+          promotion = {
+            promoted: false,
+            partialFailure: true,
+            from: post.deliveryMode,
+            deliveryMode: post.deliveryMode,
+            error: "n8n accepted the request, but the post could not be switched to Production mode. Automatic production delivery on edits stays disabled. The request was not resent.",
+          };
+        }
+      } else {
+        const uncertain = webhookResult.code === "N8N_WEBHOOK_TIMEOUT" || (webhookResult.code === "N8N_WEBHOOK_FAILED" && webhookResult.webhookStatus == null);
+        promotion = {
+          promoted: false,
+          from: post.deliveryMode,
+          deliveryMode: post.deliveryMode,
+          deliveryUncertain: uncertain,
+          ...(uncertain
+            ? { error: "Delivery is uncertain: n8n may still have received and queued this post. It was not resent automatically and stays in its current mode. Check n8n before sending again." }
+            : {}),
+        };
+      }
+    }
+
     // Reload post to get the latest persisted state
     const latestPost = await reloadPost(postId);
     const responsePost = serializePublishedPost(latestPost || post, { brandTimezone: brand.timezone ?? null });
@@ -256,6 +189,7 @@ export async function POST(request, { params }) {
       success: webhookResult.success,
       webhookResult,
       post: responsePost,
+      ...(promotion ? { promotion } : {}),
     });
   } catch (error) {
     console.error("[PublishedPosts] n8n webhook send failed", error);

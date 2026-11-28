@@ -20,6 +20,12 @@ import {
   sendPublishedPostDeleteToN8n,
 } from "@/lib/published-post-delete-webhook";
 import { sendPublishedPostToN8n } from "@/lib/published-post-webhook";
+import {
+  allowsAutomaticProductionDelivery,
+  isNonProductionDeliveryMode,
+  PRODUCTION_DELIVERY_SKIPPED_CODE,
+  PRODUCTION_DELIVERY_SKIPPED_MESSAGE,
+} from "@/lib/publishing-mode";
 import { parseScheduledDate, resolveBrandTimezone } from "@/lib/timezone";
 import {
   COLLABORATION_INCLUDE,
@@ -122,7 +128,15 @@ export async function DELETE(request, { params }) {
   // this row carries the identifiers n8n needs, so removing it before the
   // external delete succeeds would strand a live post with no way to find it.
   // No DB transaction is open across this call.
-  if (requiresExternalDeleteWebhook(post.platform)) {
+  //
+  // V1.3.56: a Trial / Save Only post that never had a production publish
+  // request initiated (productionDeliveryAttemptedAt null) cannot exist in the
+  // production workflow, so it is deleted locally only. Any recorded attempt
+  // (even a failed or timed-out one) keeps the normal delete webhook, as do
+  // legacy and Production posts.
+  const neverSentToProduction =
+    isNonProductionDeliveryMode(post.deliveryMode) && !post.productionDeliveryAttemptedAt;
+  if (requiresExternalDeleteWebhook(post.platform) && !neverSentToProduction) {
     const webhookResult = await sendPublishedPostDeleteToN8n({
       post,
       media: post.media || [],
@@ -154,7 +168,7 @@ export async function DELETE(request, { params }) {
   // Best-effort cleanup of uploaded files from disk
   await deletePublishedPostFiles(postId, id);
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, ...(neverSentToProduction ? { externalDelete: "skipped_never_sent_to_production" } : {}) });
 }
 
 export async function POST(request, { params }) {
@@ -450,20 +464,34 @@ export async function POST(request, { params }) {
     // ── Notify n8n of the edit ───────────────────────────────────────────────
     // Same fire-and-forget contract as publish: the edit is already saved above,
     // so a webhook failure is reported back but never rolls back or blocks it.
+    // Trial / Save Only posts are NOT in production delivery: no edit of any
+    // kind (including a no-op save) may reach the production webhook. Enforced
+    // here on the server; only the explicit Send to n8n operation promotes.
     let webhookResult = null;
-    try {
-      webhookResult = await sendPublishedPostToN8n({
-        post: { ...updated, jsonPayload: payloadJson },
-        media: remoteAwareMedia,
-        brandName: brand.name,
-        brandTimezone: brand.timezone,
-      });
-    } catch (webhookError) {
-      webhookResult = { success: false, error: "Failed to send to n8n webhook." };
-      console.error("[PublishedPosts] n8n webhook send failed on edit", {
-        postId,
-        error: webhookError?.message,
-      });
+    if (!allowsAutomaticProductionDelivery(existing.deliveryMode)) {
+      webhookResult = {
+        success: null,
+        skipped: true,
+        code: PRODUCTION_DELIVERY_SKIPPED_CODE,
+        deliveryMode: existing.deliveryMode,
+        message: PRODUCTION_DELIVERY_SKIPPED_MESSAGE,
+      };
+      console.log("[PublishedPosts] edit saved; production delivery skipped", { postId, deliveryMode: existing.deliveryMode });
+    } else {
+      try {
+        webhookResult = await sendPublishedPostToN8n({
+          post: { ...updated, jsonPayload: payloadJson },
+          media: remoteAwareMedia,
+          brandName: brand.name,
+          brandTimezone: brand.timezone,
+        });
+      } catch (webhookError) {
+        webhookResult = { success: false, error: "Failed to send to n8n webhook." };
+        console.error("[PublishedPosts] n8n webhook send failed on edit", {
+          postId,
+          error: webhookError?.message,
+        });
+      }
     }
 
     // Same serializer as the list/single-item read paths, so an edited post is
