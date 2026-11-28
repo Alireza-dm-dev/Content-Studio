@@ -6,6 +6,24 @@ import { X, MessageCircle } from "lucide-react";
 import { formatDisplayInTz } from "@/lib/timezone";
 import PublicReviewCommentsPanel from "./PublicReviewCommentsPanel";
 
+// Shared by ReviewPostDetailModal and ReviewPageClient (was component-scoped,
+// which made the detail modal throw "inkBtn is not defined").
+const inkBtn = {
+  fontFamily: "var(--font-mono-ink)",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  padding: "4px 10px",
+  border: "1px solid var(--sketch-ink)",
+  background: "transparent",
+  color: "var(--sketch-ink-soft)",
+  cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+};
+
 const lbl = {
   fontFamily: "var(--font-mono-ink)",
   fontSize: 10,
@@ -432,21 +450,6 @@ export default function ReviewPageClient({
 
   const commentsPost = instagramPosts.find((p) => p.id === commentsPostId) || linkedinPosts.find((p) => p.id === commentsPostId);
 
-  const inkBtn = {
-    fontFamily: "var(--font-mono-ink)",
-    fontSize: 10,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-    padding: "4px 10px",
-    border: "1px solid var(--sketch-ink)",
-    background: "transparent",
-    color: "var(--sketch-ink-soft)",
-    cursor: "pointer",
-    textDecoration: "none",
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 4,
-  };
 
   return (
     <div style={{ padding: "36px 44px 48px" }}>
