@@ -475,7 +475,7 @@ export async function POST(request, { params }) {
         jsonPayload: payloadJson,
         media: remoteAwareMedia,
         _count: existing._count,
-      }),
+      }, { brandTimezone: brand.timezone ?? null }),
       updated,
       { viewerBrandId: id, accessibleBrandIds: null },
     );

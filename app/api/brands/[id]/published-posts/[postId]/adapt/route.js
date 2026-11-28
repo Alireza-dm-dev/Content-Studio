@@ -889,7 +889,7 @@ export async function POST(request, { params }) {
 
     // ── JSON serialization safety check ────────────────────────────────────
     const responsePayload = {
-      post: serializePublishedPost(cleanPost),
+      post: serializePublishedPost(cleanPost, { brandTimezone: brand.timezone ?? null }),
       webhookResult,
       remoteResult,
       linkedInRetention,

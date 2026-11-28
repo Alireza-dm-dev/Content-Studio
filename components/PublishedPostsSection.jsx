@@ -8,7 +8,7 @@ import PostDetailModal from "@/components/PostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
 import { SectionLabel } from "@/components/content-report/SectionLabel";
 import { resolveBrandTimezone } from "@/lib/timezone";
-import { getPublishedPostFooterState } from "@/lib/published-post-footer";
+import { getSavedPostFooterState } from "@/lib/published-post-footer";
 import { sortPublishedPosts } from "@/lib/published-post-order";
 import { CollaborationBadge } from "@/components/CollaboratorBrandPicker";
 
@@ -59,7 +59,8 @@ function GridCard({ post, timeZone, onClick, onCommentClick }) {
   const isVideo = post.postType === "reel" || firstMedia?.mediaType === "VIDEO";
   const thumbnailUrl = post.thumbnailUrl;
   const postId = formatPostIdShort(post.postNumber);
-  const footerState = getPublishedPostFooterState(post, timeZone);
+  // Server-built schedule only (owning Brand's zone) — no browser conversion.
+  const footerState = getSavedPostFooterState(post);
   // A media file can still be unreachable (an old post whose upload to the
   // public media server never completed). Fall back to the placeholder rather
   // than leaving a broken-image icon in the grid. Tracking the failed URL

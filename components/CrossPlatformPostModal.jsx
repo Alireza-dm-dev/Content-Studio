@@ -3,12 +3,15 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import {
-  formatToDateTimeLocalInTz,
-  resolveBrandTimezone,
   brandTimezoneLabel,
   scheduledValueForSubmit,
+  serverScheduleFor,
+  NOT_SCHEDULED_LABEL,
+  brandTimezoneShortLabel,
+  formatWallClockForDisplay,
 } from "@/lib/timezone";
 import CaptionCheckPanel from "@/components/CaptionCheckPanel";
+import { SCHEDULE_UNAVAILABLE_TEXT } from "@/components/useServerSchedule";
 
 // Matches the server's new max SFTP upload budget (30 min). Image/PDF uploads
 // finish in milliseconds, so this only extends the ceiling for large video
@@ -324,9 +327,14 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
   const [publishTitle, setPublishTitle] = useState("");
   const [documentTitle, setDocumentTitle] = useState("");
   const [hashtags, setHashtags] = useState(() => extractHashtags(sourcePost.caption || ""));
-  const initialScheduledDate = sourcePost.scheduledDate
-    ? formatToDateTimeLocalInTz(sourcePost.scheduledDate, resolveBrandTimezone(brandTimezone))
-    : "";
+  // Server-built Brand-local values for the SOURCE post when present, so a
+  // stale browser timezone database cannot shift the prefill or the label.
+  const sourceSchedule = serverScheduleFor(sourcePost);
+  // No browser conversion: without a server schedule the picker starts empty and
+  // an untouched picker keeps the source instant (see submit).
+  const sourceInstantMs = sourcePost.scheduledDate ? new Date(sourcePost.scheduledDate).getTime() : NaN;
+  const sourceScheduleUnavailable = !sourceSchedule && !isNaN(sourceInstantMs);
+  const initialScheduledDate = sourceSchedule ? sourceSchedule.datetimeLocal : "";
   const [scheduledDate, setScheduledDate] = useState(initialScheduledDate);
   const [mediaStrategy, setMediaStrategy] = useState(isPdfBlockedSource ? "replace" : "reuse");
   const [manifest, setManifest] = useState(() => {
@@ -518,6 +526,9 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
       }
       if (scheduledDate) {
         payload.scheduledDate = scheduledValueForSubmit(scheduledDate, initialScheduledDate, sourcePost.scheduledDate);
+      } else if (sourceScheduleUnavailable) {
+        // Same as an untouched prefill: the source's own instant, never "now".
+        payload.scheduledDate = new Date(sourceInstantMs).toISOString();
       }
       if (sendToN8n) {
         payload.sendToN8n = true;
@@ -941,10 +952,32 @@ export default function CrossPlatformPostModal({ sourcePost, sourcePlatform, tar
             )}
 
             {/* Scheduled date */}
-            <div>
-              <div style={{ ...lbl, marginBottom: 4, fontSize: 9 }}>Scheduled Date (optional) · {brandTimezoneLabel(brandTimezone)}</div>
-              <input type="datetime-local" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} style={fieldStyle} />
-            </div>
+            {isLiTarget ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {/* Source schedule is fixed: derived from the source post, never from the picker. */}
+                <div>
+                  <div style={{ ...lbl, marginBottom: 2, fontSize: 9 }}>Source {sourcePlatform} schedule</div>
+                  <div style={{ fontFamily: "var(--font-mono-ink)", fontSize: 11, color: "var(--sketch-ink)" }} data-testid="adapt-source-schedule">
+                    {sourceSchedule ? sourceSchedule.dateTime : sourceScheduleUnavailable ? `${SCHEDULE_UNAVAILABLE_TEXT} — the source time is kept unless you pick a new one` : NOT_SCHEDULED_LABEL}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ ...lbl, marginBottom: 4, fontSize: 9 }}>LinkedIn publishing schedule (optional)</div>
+                  <input type="datetime-local" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} style={fieldStyle} />
+                  <div style={{ fontFamily: "var(--font-mono-ink)", fontSize: 11, color: "var(--sketch-ink)", marginTop: 4 }} data-testid="adapt-target-schedule">
+                    {formatWallClockForDisplay(scheduledDate)}
+                  </div>
+                </div>
+                <div style={{ ...lbl, fontSize: 9, overflowWrap: "anywhere" }}>
+                  Publishing timezone: <span style={{ textTransform: "none" }}>{brandTimezoneShortLabel(brandTimezone)}</span>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div style={{ ...lbl, marginBottom: 4, fontSize: 9 }}>Scheduled Date (optional) · {brandTimezoneLabel(brandTimezone)}</div>
+                <input type="datetime-local" value={scheduledDate} onChange={(e) => setScheduledDate(e.target.value)} style={fieldStyle} />
+              </div>
+            )}
 
             {/* Status - hidden, always draft */}
             <div style={{ ...lbl, fontSize: 8, color: "var(--sketch-ink-faint)" }}>

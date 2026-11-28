@@ -699,3 +699,90 @@ test("n8n payload is unchanged by collaboration (no invented collaborator field)
   assert.ok(!/collab/i.test(collab.body.post.jsonPayload));
   assert.ok(!collab.body.post.jsonPayload.includes("Brand B"));
 });
+
+// ── Payload preview endpoint (read-only, server-authoritative) ────────────────
+const payloadRoute = await import("../app/api/brands/[id]/published-posts/[postId]/payload/route.js");
+
+async function preview(brandId, postId) {
+  const res = await payloadRoute.GET(new Request("http://x"), ctx(brandId, postId));
+  return { status: res.status, cache: res.headers.get("cache-control"), body: await res.json() };
+}
+
+test("payload preview: authorization matrix, read-only, no webhook, no secrets", async () => {
+  seedPost("own", BRAND_A, { scheduledDate: "2026-11-25T12:00:00Z" });
+  seedPost("shared", BRAND_A, { scheduledDate: "2026-11-25T12:00:00Z", collaborators: [BRAND_B] });
+  seedPost("li", BRAND_A, { platform: "LinkedIn", scheduledDate: "2026-11-25T12:00:00Z" });
+  seedPost("other", BRAND_D, { scheduledDate: "2026-11-25T12:00:00Z" });
+  const before = JSON.stringify(db);
+
+  // signed out
+  currentUser = null;
+  assert.equal((await preview(BRAND_A, "own")).status, 401);
+
+  // primary Brand access: canonical payload from the OWNING brand's zone
+  currentUser = userA;
+  const ok = await preview(BRAND_A, "own");
+  assert.equal(ok.status, 200);
+  assert.match(ok.cache, /no-store/);
+  assert.match(ok.cache, /private/);
+  assert.equal(ok.body.payload["Scheduled Date"], "25/11/2026 05:00:00");
+  assert.equal(ok.body.payload.scheduled_date_utc, "2026-11-25T12:00:00.000Z");
+  assert.equal(ok.body.payload.brand_timezone, "Europe/London");
+  assert.equal(ok.body.payload.brand_local_publish_datetime, "2026-11-25T12:00:00");
+  assert.equal(ok.body.payload.brand, "Brand A");
+  assert.equal(ok.body.schedule.dateTime, "25 Nov 2026, 12:00");
+  assert.equal(ok.body.schedule.timezoneLabel, "Europe/London");
+  assert.equal((await preview(BRAND_A, "li")).status, 200);
+
+  // unauthorized Brand (exists, no membership)
+  assert.equal((await preview(BRAND_D, "other")).status, 403);
+  // guessed post id under an accessible Brand, and another Brand's post via my Brand URL
+  assert.equal((await preview(BRAND_A, "nope")).status, 404);
+  assert.equal((await preview(BRAND_A, "other")).status, 404);
+
+  // collaborator-only Instagram access: readable (read-only), values from the PRIMARY brand
+  currentUser = userB;
+  const collab = await preview(BRAND_B, "shared");
+  assert.equal(collab.status, 200);
+  assert.equal(collab.body.payload.brand_timezone, "Europe/London", "owning brand zone, not Vancouver");
+  assert.equal(collab.body.payload["Scheduled Date"], "25/11/2026 05:00:00");
+  assert.equal(collab.body.payload.brand, "Brand A");
+  // not a collaborator on the primary's other posts, and LinkedIn never shares
+  assert.equal((await preview(BRAND_B, "own")).status, 404);
+  assert.equal((await preview(BRAND_B, "li")).status, 404);
+  // unrelated Brand denied
+  assert.equal((await preview(BRAND_A, "own")).status, 403);
+
+  // no mutation, no webhook, no upload, no secrets
+  assert.equal(JSON.stringify(db), before, "preview must not write");
+  assert.equal(calls.n8nSend.length, 0);
+  assert.equal(calls.writes.length, 0);
+  const text = JSON.stringify(collab.body) + JSON.stringify(ok.body);
+  for (const leak of ["/webhook", "N8N_", "secret-a.example", "password", "OPENAI"]) {
+    assert.ok(!text.toLowerCase().includes(leak.toLowerCase()), `response leaks ${leak}`);
+  }
+});
+
+test("serialized posts carry the server-built schedule of the OWNING brand", async () => {
+  seedPost("shared", BRAND_A, { scheduledDate: "2026-11-25T12:00:00Z", collaborators: [BRAND_B] });
+  currentUser = userB;
+  const { body } = await getOne(BRAND_B, "shared");
+  assert.equal(body.schedule.timezone, "Europe/London");
+  assert.equal(body.schedule.datetimeLocal, "2026-11-25T12:00");
+  assert.equal(body.schedule.compact, "25 Nov 2026 · 12:00 · Europe/London");
+  const list = await grid(BRAND_B);
+  assert.equal(list.body.find((p) => p.id === "shared").schedule.dateTime, "25 Nov 2026, 12:00");
+});
+
+test("collaborator updates keep the owning brand's server schedule", async () => {
+  seedPost("p", BRAND_A, { scheduledDate: "2026-11-25T12:00:00Z" });
+  currentUser = userAB;
+  const before = (await getOne(BRAND_A, "p")).body.schedule;
+  for (const ids of [[BRAND_B], [], [BRAND_B]]) {
+    const res = await setCollaborators(BRAND_A, "p", ids);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.post.schedule, before, `collaborators ${JSON.stringify(ids)}`);
+    assert.equal(res.body.post.schedule.timezone, "Europe/London", "owning brand, not the Vancouver collaborator");
+    assert.equal(res.body.post.schedule.dateTime, "25 Nov 2026, 12:00");
+  }
+});

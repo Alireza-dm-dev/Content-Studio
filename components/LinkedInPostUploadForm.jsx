@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { toast } from "sonner";
-import { brandTimezoneLabel } from "@/lib/timezone";
+import { brandTimezoneShortLabel } from "@/lib/timezone";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -512,13 +512,16 @@ export default function LinkedInPostUploadForm({ brandId, brandTimezone, onCreat
 
         {/* Scheduled date */}
         <div>
-          <div style={{ ...lbl, marginBottom: 4 }}>Scheduled Date (optional) · {brandTimezoneLabel(brandTimezone)}</div>
+          <div style={{ ...lbl, marginBottom: 4 }}>Scheduled Date &amp; Time (optional)</div>
           <input
             type="datetime-local"
             value={scheduledDate}
             onChange={(e) => setScheduledDate(e.target.value)}
             style={fieldStyle}
           />
+          <div style={{ ...lbl, fontSize: 9, marginTop: 4, overflowWrap: "anywhere" }}>
+            Publishing timezone: <span style={{ textTransform: "none" }}>{brandTimezoneShortLabel(brandTimezone)}</span>
+          </div>
         </div>
 
         {/* Notes */}

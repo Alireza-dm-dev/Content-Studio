@@ -629,7 +629,7 @@ export async function POST(request, { params }) {
   await enforcePublishedPostsLimit(id);
 
   const createdPost = decorateCollaboration(
-    serializePublishedPost(result),
+    serializePublishedPost(result, { brandTimezone: brand.timezone ?? null }),
     {
       brand: { id: brand.id, name: brand.name, timezone: brand.timezone ?? null },
       collaborators: collaboratorBrands.map((b) => ({ brandId: b.id, brand: b })),

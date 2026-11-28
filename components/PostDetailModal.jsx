@@ -1,17 +1,16 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
 import PostThumbnailField, { checkThumbnailFile } from "@/components/PostThumbnailField";
 import { postTypeSupportsCover } from "@/lib/published-post-cover";
 import {
-  formatToDateTimeLocalInTz,
-  formatLegacyN8nScheduledDate,
-  normalizePayloadForN8n,
-  resolveBrandTimezone,
   brandTimezoneLabel,
   scheduledValueForSubmit,
 } from "@/lib/timezone";
+import { useServerSchedule, SCHEDULE_UNAVAILABLE_TEXT } from "@/components/useServerSchedule";
+import { useCanonicalPayload } from "@/components/useCanonicalPayload";
+import CanonicalPayloadStatus from "@/components/CanonicalPayloadStatus";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
 import CollaboratorBrandPicker, { CollaborationBadge } from "@/components/CollaboratorBrandPicker";
 import CaptionCheckPanel from "@/components/CaptionCheckPanel";
@@ -25,103 +24,6 @@ const lbl = {
   textTransform: "uppercase",
   color: "var(--sketch-ink-faint)",
 };
-
-// Local fallback: mirrors buildN8nPayload from lib/published-post-utils.js
-// but kept here because that module imports fs/promises (not client-safe).
-function mapN8nPostType(postType) {
-  if (!postType) return "single_image";
-  const lower = postType.toLowerCase().trim();
-  if (lower === "static") return "single_image";
-  if (lower === "carousel") return "carousel";
-  if (lower === "reel" || lower === "video" || lower === "reels") return "reels";
-  return "single_image";
-}
-
-function buildPayloadFromPost(post, tz) {
-  const orderedMedia = (post.media || []).sort((a, b) => a.order - b.order);
-  const mediaCount = orderedMedia.length;
-  const isCarousel = post.postType === "carousel" || mediaCount > 1;
-  const firstVideo = orderedMedia.find((m) => m.mediaType === "VIDEO");
-
-  let scheduledDateStr = "";
-  if (post.scheduledDate) {
-    scheduledDateStr = formatLegacyN8nScheduledDate(post.scheduledDate);
-  }
-
-  const now = new Date();
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const webhookSentAt = `${now.getFullYear()}-${months[now.getMonth()]} ${months[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
-
-  const postId = post.postNumber != null
-    ? `POST-${String(post.postNumber).padStart(4, "0")}`
-    : post.id;
-
-  const files = orderedMedia.map((m) => {
-    const entry = { media_type: m.mediaType };
-    if (m.mediaType === "IMAGE") {
-      entry.image_url = m.url;
-    } else if (m.mediaType === "VIDEO") {
-      entry.video_url = m.url;
-    } else if (m.mediaType === "document") {
-      entry.document_url = m.url;
-    } else {
-      entry.video_url = m.url;
-    }
-    return entry;
-  });
-
-  const mediaList = orderedMedia.map((m) => ({
-    order: m.order,
-    url: m.url,
-    media_type: m.mediaType,
-  }));
-
-  const n8nPostType = mapN8nPostType(post.postType);
-
-  const hashtags = (post.caption || "").match(/#[\w\u0600-\u06FF\u0400-\u04FF]+/g)?.join(" ") || "";
-
-  const isLinkedIn = (post.platform || "Instagram") === "LinkedIn";
-  const includeMediaUrl = n8nPostType !== "reels" && !isLinkedIn;
-  const mediaUrl = orderedMedia[0] ? orderedMedia[0].url : "";
-
-  return {
-    row_number: post.postNumber || 0,
-    "Post ID": postId,
-    Platform: post.platform || "Instagram",
-    "Post Type": n8nPostType,
-    "Scheduled Date": scheduledDateStr,
-    Caption: post.caption || "",
-    Hashtags: hashtags,
-    "Account / Profile": "",
-    Status: post.status || "draft",
-    "Webhook Sent At": webhookSentAt,
-    "Error Log": "",
-    Notes: post.notes || "",
-    data: "",
-    output: "",
-    from_smartcc: false,
-    ...(includeMediaUrl ? { media_url: mediaUrl } : {}),
-    files,
-    media: mediaList,
-    media_count: mediaCount,
-    is_carousel: isCarousel,
-    video_url: firstVideo ? firstVideo.url : "",
-    thumbnail_url: post.thumbnailUrl || "",
-  };
-}
-
-function getPayload(post, tz) {
-  if (post.jsonPayload) {
-    try {
-      return typeof post.jsonPayload === "string"
-        ? JSON.parse(post.jsonPayload)
-        : post.jsonPayload;
-    } catch {
-      // stored jsonPayload is corrupt — fall through
-    }
-  }
-  return buildPayloadFromPost(post, tz);
-}
 
 function formatPostIdShort(postNumber) {
   if (postNumber == null) return null;
@@ -152,24 +54,29 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
   const isInstagramPost = (post.platform || "Instagram") === "Instagram";
   const collaboratorBrands = post.collaboratorBrands || [];
 
-  // The brand timezone is the authority for every date/time shown or edited here.
-  const tz = resolveBrandTimezone(brandTimezone);
   // Edit form state
   const [editCaption, setEditCaption] = useState(post.caption || "");
   const [editPlatform, setEditPlatform] = useState(post.platform || "Instagram");
   const [editPostType, setEditPostType] = useState(post.postType || "static");
-  const initialScheduledLocal = post.scheduledDate ? formatToDateTimeLocalInTz(post.scheduledDate, tz) : "";
+  // Server-built Brand-local schedule only (refetched if missing) — never a
+  // browser timezone conversion of a saved post.
+  const sched = useServerSchedule(post, brandId);
+  const scheduleUnavailable = sched.state === "loading" || sched.state === "unavailable";
+  const initialScheduledLocal = sched.schedule ? sched.schedule.datetimeLocal : "";
   const [editScheduledDate, setEditScheduledDate] = useState(initialScheduledLocal);
   const [editNotes, setEditNotes] = useState(post.notes || "");
   const [editStatus, setEditStatus] = useState(post.status || "draft");
 
-  // Preview/copy/download show what n8n would receive NOW: stored payload with the
-  // time fields re-derived from the canonical scheduledDate (same helper as the send).
-  const payload = useMemo(
-    () => normalizePayloadForN8n({ payload: getPayload(post, tz), scheduledDate: post.scheduledDate, brandTimezone: tz }),
-    [post, tz],
-  );
-  const payloadStr = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
+  // Preview/copy/download: the SERVER's canonical payload (same builder as the
+  // n8n send), refetched on every panel open and whenever the saved post changes.
+  const [jsonOpenSeq, setJsonOpenSeq] = useState(0);
+  const canonical = useCanonicalPayload({
+    brandId,
+    postId: post.id,
+    version: `${post.updatedAt ?? ""}|${post.scheduledDate ?? ""}|${jsonOpenSeq}`,
+    enabled: showJson,
+  });
+  const payloadStr = canonical.status === "ready" ? canonical.text : "";
 
   const orderedMedia = [...(post.media || [])].sort((a, b) => a.order - b.order);
   const isCarousel = post.postType === "carousel" || orderedMedia.length > 1;
@@ -183,14 +90,16 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
       })
     : null;
 
-  const scheduledDateStr = post.scheduledDate
-    ? new Date(post.scheduledDate).toLocaleDateString("en-US", {
-        year: "numeric", month: "short", day: "numeric",
-        timeZone: tz,
-      })
-    : null;
+  // Same "Scheduled" field as before; the Brand-local calendar date now comes
+  // from the server, so it is right even when the UTC date differs.
+  const scheduledDateStr = sched.state === "unscheduled"
+    ? null
+    : sched.schedule
+      ? sched.schedule.date
+      : sched.state === "loading" ? "Loading…" : SCHEDULE_UNAVAILABLE_TEXT;
 
   async function handleCopyJson() {
+    if (!payloadStr) return;
     try {
       await navigator.clipboard.writeText(payloadStr);
       setCopied(true);
@@ -276,6 +185,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
   }
 
   function handleDownloadJson() {
+    if (!payloadStr) return;
     const blob = new Blob([payloadStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -320,7 +230,9 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
       // Unchanged → original instant (no drift); changed → wall-clock string that
       // the server interprets in the brand timezone.
       const scheduledDateIso =
-        scheduledValueForSubmit(editScheduledDate, initialScheduledLocal, post.scheduledDate) || null;
+        scheduleUnavailable
+          ? new Date(post.scheduledDate).toISOString() // display data missing: keep the saved instant
+          : scheduledValueForSubmit(editScheduledDate, initialScheduledLocal, post.scheduledDate) || null;
 
       const body = {
         caption: editCaption,
@@ -802,8 +714,14 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                   type="datetime-local"
                   value={editScheduledDate}
                   onChange={(e) => setEditScheduledDate(e.target.value)}
+                  disabled={scheduleUnavailable}
                   style={fieldStyle}
                 />
+                {scheduleUnavailable && (
+                  <div role="status" style={{ ...lbl, fontSize: 9, marginTop: 4, textTransform: "none" }}>
+                    {SCHEDULE_UNAVAILABLE_TEXT} — the saved time is kept. Reload to change it.
+                  </div>
+                )}
               </EditField>
               <EditField label="Notes">
                 <textarea
@@ -942,7 +860,12 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
           <div style={{ borderTop: "1px solid var(--sketch-line)", paddingTop: 12 }}>
             <button
               type="button"
-              onClick={() => setShowJson((v) => !v)}
+              onClick={() => {
+                if (!showJson) setJsonOpenSeq((n) => n + 1);
+                setShowJson((v) => !v);
+              }}
+              aria-expanded={showJson}
+              aria-label="Toggle n8n JSON payload"
               style={{
                 ...inkBtn,
                 border: "none",
@@ -951,16 +874,19 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                 padding: 0,
               }}
             >
-              <span>n8n JSON Payload</span>
+              <span>Canonical webhook payload</span>
               <span>{showJson ? "\u25B2" : "\u25BC"}</span>
             </button>
 
             {showJson && (
               <div style={{ marginTop: 10 }}>
                 <div style={{ ...lbl, fontSize: 9, color: "var(--sketch-ink-soft)", marginBottom: 8, lineHeight: 1.5 }}>
-                  Webhook-ready payload prepared for n8n or an upload automation server.
+                  Current canonical payload for this saved post, generated by the server now. It is a preview, not a record of an earlier delivery.
                 </div>
+                <CanonicalPayloadStatus canonical={canonical} />
+                {canonical.status === "ready" && (
                 <pre
+                  data-testid="canonical-payload"
                   style={{
                     fontFamily: "var(--font-mono-ink)",
                     fontSize: 10,
@@ -978,10 +904,12 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                 >
                   {payloadStr}
                 </pre>
+                )}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
                   <button
                     type="button"
                     onClick={handleCopyJson}
+                    disabled={!payloadStr}
                     style={{
                       ...inkBtn,
                       borderColor: "var(--sketch-vermilion)",
@@ -993,6 +921,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
                   <button
                     type="button"
                     onClick={handleDownloadJson}
+                    disabled={!payloadStr}
                     style={inkBtn}
                   >
                     Download JSON
@@ -1020,7 +949,7 @@ export default function PostDetailModal({ post, brandId, brandTimezone, readOnly
 
       {showAdapt && (
         <CrossPlatformPostModal
-          sourcePost={post}
+          sourcePost={sched.schedule ? { ...post, schedule: sched.schedule } : post}
           sourcePlatform="Instagram"
           targetPlatform="LinkedIn"
           brandId={brandId}

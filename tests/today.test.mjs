@@ -355,8 +355,8 @@ test("posts are listed in schedule order with a Brand-local time label", async (
   const data = await getTodayData(admin, { now: NOW });
   const list = section(data, A).instagram;
   assert.deepEqual(list.map((p) => p.id), [early, late]);
-  assert.equal(list[0].today.localTime, "9:15 AM");
-  assert.equal(list[1].today.localTime, "5:30 PM");
+  assert.equal(list[0].today.localTime, "09:15");
+  assert.equal(list[1].today.localTime, "17:30");
   assert.equal(list[0].today.timeZone, "Europe/London");
 });
 

@@ -134,7 +134,7 @@ export async function POST(request, { params }) {
               ...(remoteResult.duration != null ? { duration: remoteResult.duration } : {}),
               skipped: Boolean(remoteResult.skipped),
             },
-            post: serializePublishedPost(savedPost),
+            post: serializePublishedPost(savedPost, { brandTimezone: brand.timezone ?? null }),
           },
           { status: 503 },
         );
@@ -159,7 +159,7 @@ export async function POST(request, { params }) {
               detailCode: "SFTP_MEDIA_COUNT_MISMATCH",
               details: `Remote media count mismatch: expected ${expectedCount}, got ${remoteResult.media.length}`,
             },
-            post: savedPost,
+            post: serializePublishedPost(savedPost, { brandTimezone: brand.timezone ?? null }),
           },
           { status: 503 },
         );
@@ -250,7 +250,7 @@ export async function POST(request, { params }) {
 
     // Reload post to get the latest persisted state
     const latestPost = await reloadPost(postId);
-    const responsePost = serializePublishedPost(latestPost || post);
+    const responsePost = serializePublishedPost(latestPost || post, { brandTimezone: brand.timezone ?? null });
 
     return NextResponse.json({
       success: webhookResult.success,
@@ -264,6 +264,8 @@ export async function POST(request, { params }) {
       const { postId } = await params;
       const savedPost = await reloadPost(postId);
       if (savedPost) {
+        // `brand` is out of scope here; load only the owning brand's timezone.
+        const owner = await prisma.brand.findUnique({ where: { id: savedPost.brandId }, select: { timezone: true } });
         return NextResponse.json({
           success: false,
           webhookResult: {
@@ -271,7 +273,7 @@ export async function POST(request, { params }) {
             code: "N8N_WEBHOOK_FAILED",
             error: "Failed to send to n8n webhook.",
           },
-          post: savedPost,
+          post: serializePublishedPost(savedPost, { brandTimezone: owner?.timezone ?? null }),
         });
       }
     } catch {

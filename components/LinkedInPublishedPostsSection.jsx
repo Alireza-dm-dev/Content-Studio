@@ -9,8 +9,12 @@ import { FileText, Image as ImageIcon, Video as VideoIcon, MessageCircle, CheckC
 import LinkedInPostUploadForm from "@/components/LinkedInPostUploadForm";
 import LinkedInPostDetailModal from "@/components/LinkedInPostDetailModal";
 import PublishedPostCommentsPanel from "@/components/PublishedPostCommentsPanel";
-import { resolveBrandTimezone } from "@/lib/timezone";
-import { getPublishedPostFooterState } from "@/lib/published-post-footer";
+import {
+  resolveBrandTimezone,
+  NOT_SCHEDULED_LABEL,
+  keepServerSchedule,
+} from "@/lib/timezone";
+import { getSavedPostFooterState } from "@/lib/published-post-footer";
 import { sortPublishedPosts } from "@/lib/published-post-order";
 import { detectKind, getLinkedInPreview, buildCaptionExcerpt } from "@/lib/linkedin-post-preview";
 
@@ -366,7 +370,8 @@ function PostRow({ post, timeZone, onOpen, onCommentClick }) {
         {/*
         // ── Footer state line: POSTED / scheduled time / NOT SCHEDULED ── */}
         <div
-          aria-label={getPublishedPostFooterState(post, timeZone).ariaLabel}
+          className="li-schedule"
+          aria-label={getSavedPostFooterState(post).ariaLabel}
           style={{
             ...lbl,
             fontSize: 9,
@@ -379,7 +384,9 @@ function PostRow({ post, timeZone, onOpen, onCommentClick }) {
           }}
         >
           {(() => {
-            const fs = getPublishedPostFooterState(post, timeZone);
+            // Server-built Brand-local schedule only (owning Brand's zone); no
+            // browser timezone conversion for saved posts.
+            const fs = getSavedPostFooterState(post);
             if (fs.type === "posted") {
               return <>
                 <CheckCircle size={11} aria-hidden="true" style={{ flexShrink: 0 }} />
@@ -387,6 +394,7 @@ function PostRow({ post, timeZone, onOpen, onCommentClick }) {
               </>;
             }
             if (fs.type === "scheduled") {
+              const zoneText = fs.schedule?.timezoneLabel;
               return <>
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
                   <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
@@ -394,10 +402,20 @@ function PostRow({ post, timeZone, onOpen, onCommentClick }) {
                   <line x1="8" y1="2" x2="8" y2="6" />
                   <line x1="3" y1="10" x2="21" y2="10" />
                 </svg>
-                <span>{fs.label}</span>
+                <span style={{ textTransform: "none", flexShrink: 0 }}>
+                  {fs.label}
+                </span>
+                {zoneText && (
+                  <span
+                    title={zoneText}
+                    style={{ textTransform: "none", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}
+                  >
+                    · {zoneText}
+                  </span>
+                )}
               </>;
             }
-            return <span>{fs.label}</span>;
+            return <span style={{ textTransform: "none" }}>{NOT_SCHEDULED_LABEL}</span>;
           })()}
         </div>
 
@@ -485,7 +503,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
     if (!post) return; // retention removed the new post itself: nothing to insert
     setPosts((prev) => {
       const exists = prev.some((p) => p.id === post.id);
-      if (exists) return prev.map((p) => (p.id === post.id ? post : p));
+      if (exists) return prev.map((p) => (p.id === post.id ? keepServerSchedule(p, post) : p));
       return sortPublishedPosts([{ ...post, commentCount: post.commentCount ?? 0 }, ...prev]);
     });
   }
@@ -549,8 +567,11 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
   }
 
   function handleUpdated(updatedResponse) {
-    const { linkedInRetention, ...updatedPost } = updatedResponse || {};
+    const { linkedInRetention, ...response } = updatedResponse || {};
     removePrunedPosts(linkedInRetention);
+    // A response without a usable server schedule keeps the existing one when the
+    // scheduled instant is unchanged (never a browser-computed replacement).
+    const updatedPost = keepServerSchedule(posts.find((p) => p.id === response.id), response);
     setPosts((prev) =>
       sortPublishedPosts(prev.map((p) => (p.id === updatedPost.id ? updatedPost : p))),
     );
@@ -585,6 +606,9 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
         .li-comment-btn:focus-visible { outline: 2px solid var(--sketch-vermilion); outline-offset: 2px; }
         @media (max-width: 640px) {
           .li-post-row { flex-direction: column; align-items: stretch; gap: 10px; }
+          /* Inline alignItems wins over the rule above; clamp children to the card. */
+          .li-post-row > * { max-width: 100%; }
+          .li-schedule { white-space: normal !important; flex-wrap: wrap; }
         }
       `}</style>
 
@@ -713,7 +737,7 @@ const LinkedInPublishedPostsSection = forwardRef(function LinkedInPublishedPosts
             <PostRow
               key={post.id}
               post={post}
-              timeZone={resolveBrandTimezone(brand)}
+              timeZone={brand.timezone ?? null}
               onOpen={() => setSelectedPost(post)}
               onCommentClick={(p) => setCommentsPost(p)}
             />

@@ -3,7 +3,8 @@
 import { useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { X, MessageCircle } from "lucide-react";
-import { formatDisplayInTz } from "@/lib/timezone";
+import { brandTimezoneShortLabel, serverScheduleFor, NOT_SCHEDULED_LABEL } from "@/lib/timezone";
+import { SCHEDULE_UNAVAILABLE_TEXT } from "@/components/useServerSchedule";
 import PublicReviewCommentsPanel from "./PublicReviewCommentsPanel";
 
 // Shared by ReviewPostDetailModal and ReviewPageClient (was component-scoped,
@@ -335,8 +336,18 @@ function ReviewPostDetailModal({ post, platform, timeZone, onClose, showComment,
             <InfoField label="Platform" value={platform} />
             <InfoField label="Status" value={post.status} />
             <InfoField label="Uploaded" value={post.createdAt ? new Date(post.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : null} />
-            {post.scheduledDate && (
-              <InfoField label="Scheduled" value={formatDisplayInTz(post.scheduledDate, timeZone)} />
+            {/* Server-built Brand-local schedule only; never a browser conversion. */}
+            {platform === "LinkedIn" ? (
+              <>
+                <InfoField
+                  label="Scheduled Date & Time"
+                  value={serverScheduleFor(post)?.dateTime ?? (post.scheduledDate ? SCHEDULE_UNAVAILABLE_TEXT : NOT_SCHEDULED_LABEL)}
+                  plain
+                />
+                <InfoField label="Timezone" value={serverScheduleFor(post)?.timezoneLabel ?? brandTimezoneShortLabel(timeZone)} plain />
+              </>
+            ) : post.scheduledDate && (
+              <InfoField label="Scheduled" value={serverScheduleFor(post)?.dateTime ?? SCHEDULE_UNAVAILABLE_TEXT} plain />
             )}
           </div>
 
@@ -389,12 +400,12 @@ function ReviewPostDetailModal({ post, platform, timeZone, onClose, showComment,
   );
 }
 
-function InfoField({ label, value }) {
+function InfoField({ label, value, plain = false }) {
   if (value == null) return null;
   return (
     <div>
       <div style={{ ...lbl, marginBottom: 2 }}>{label}</div>
-      <div style={{ fontFamily: "var(--font-mono-ink)", fontSize: 11, color: "var(--sketch-ink)", textTransform: "capitalize" }}>
+      <div style={{ fontFamily: "var(--font-mono-ink)", fontSize: 11, color: "var(--sketch-ink)", textTransform: plain ? "none" : "capitalize", ...(plain ? { overflowWrap: "anywhere" } : {}) }}>
         {String(value)}
       </div>
     </div>

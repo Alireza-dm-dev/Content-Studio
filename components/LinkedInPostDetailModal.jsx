@@ -5,14 +5,15 @@ import { toast } from "sonner";
 import { StatusPill } from "@/components/content-report/StatusPill";
 import { detectKind } from "@/components/LinkedInPublishedPostsSection";
 import {
-  formatToDateTimeLocalInTz,
-  formatLegacyN8nScheduledDate,
-  normalizePayloadForN8n,
   resolveBrandTimezone,
-  brandTimezoneLabel,
   scheduledValueForSubmit,
+  brandTimezoneShortLabel,
+  NOT_SCHEDULED_LABEL,
 } from "@/lib/timezone";
+import { useServerSchedule, SCHEDULE_UNAVAILABLE_TEXT } from "@/components/useServerSchedule";
 import CrossPlatformPostModal from "@/components/CrossPlatformPostModal";
+import { useCanonicalPayload } from "@/components/useCanonicalPayload";
+import CanonicalPayloadStatus from "@/components/CanonicalPayloadStatus";
 
 const CLIENT_FETCH_TIMEOUT = 660000;
 
@@ -212,68 +213,7 @@ function mediaFormatLabel(kind) {
   return "PDF Document";
 }
 
-// Minimal LinkedIn fallback payload — used ONLY when the stored JSON is missing,
-// empty, or invalid, so the modal never breaks. It deliberately omits media_url
-// and mirrors the canonical n8n shape for the post's media kind. Valid stored
-// JSON is displayed exactly as-is (no rewriting).
-function buildLinkedInFallback(post, url, thumbnailUrl, kind, tz) {
-  const postId = formatPostId(post.postNumber) || post.id;
-  const scheduledDateStr = post.scheduledDate
-    ? formatLegacyN8nScheduledDate(post.scheduledDate)
-    : "";
-
-  let postTypeLabel;
-  let mediaType;
-  let filesEntry;
-  let mediaEntry;
-  let isCarousel = false;
-  let videoUrl = "";
-
-  if (kind === "video") {
-    postTypeLabel = "reels";
-    mediaType = "VIDEO";
-    filesEntry = { media_type: "VIDEO", video_url: url };
-    mediaEntry = { order: 1, url, media_type: "VIDEO" };
-    videoUrl = url;
-  } else if (kind === "image") {
-    postTypeLabel = "single_image";
-    mediaType = "IMAGE";
-    filesEntry = { media_type: "IMAGE", image_url: url };
-    mediaEntry = { order: 1, url, media_type: "IMAGE" };
-  } else {
-    postTypeLabel = "carousel";
-    mediaType = "document";
-    filesEntry = { media_type: "document", document_url: url };
-    mediaEntry = { order: 1, url, media_type: "document" };
-    isCarousel = true;
-  }
-
-  return {
-    "Post ID": postId,
-    Platform: "LinkedIn",
-    "Post Type": postTypeLabel,
-    Caption: post.caption || "",
-    "Scheduled Date": scheduledDateStr,
-    Status: post.status || "draft",
-    Notes: post.notes || "",
-    files: [filesEntry],
-    media: [mediaEntry],
-    media_count: 1,
-    is_carousel: isCarousel,
-    video_url: videoUrl,
-    thumbnail_url: thumbnailUrl || "",
-  };
-}
-
-function getPayload(post, url, thumbnailUrl, kind, tz) {
-  const parsed = safeParse(post.jsonPayload);
-  if (parsed && typeof parsed === "object") {
-    return { payload: parsed, usedFallback: false };
-  }
-  return { payload: buildLinkedInFallback(post, url, thumbnailUrl, kind, tz), usedFallback: true };
-}
-
-function InfoField({ label, value }) {
+function InfoField({ label, value, plain = false }) {
   if (value == null) return null;
   return (
     <div>
@@ -283,7 +223,8 @@ function InfoField({ label, value }) {
           fontFamily: "var(--font-mono-ink)",
           fontSize: 11,
           color: "var(--sketch-ink)",
-          textTransform: "capitalize",
+          textTransform: plain ? "none" : "capitalize",
+          overflowWrap: "anywhere",
         }}
       >
         {String(value)}
@@ -318,25 +259,30 @@ export default function LinkedInPostDetailModal({
   const [editCaption, setEditCaption] = useState(post.caption || "");
   // The brand timezone is the authority for every date/time shown or edited here.
   const tz = resolveBrandTimezone(brandTimezone);
-  const initialScheduledLocal = post.scheduledDate
-    ? formatToDateTimeLocalInTz(post.scheduledDate, tz)
-    : "";
+  // Server-built Brand-local values first (immune to stale browser tzdata);
+  // the browser conversion is only a fallback when the server did not send one.
+  // Server-built Brand-local schedule only (refetched if missing) — never a
+  // browser timezone conversion of a saved post.
+  const sched = useServerSchedule(post, brandId);
+  const scheduleUnavailable = sched.state === "loading" || sched.state === "unavailable";
+  const initialScheduledLocal = sched.schedule ? sched.schedule.datetimeLocal : "";
   const [editScheduledDate, setEditScheduledDate] = useState(initialScheduledLocal);
   const [editNotes, setEditNotes] = useState(post.notes || "");
   const [editStatus, setEditStatus] = useState(post.status || "draft");
 
   const resolvedPdfUrl = useMemo(() => resolvePdfUrl(post), [post]);
   const media = useMemo(() => resolveLinkedInMedia(post), [post]);
-  // Preview/copy/download show what n8n would receive NOW: time fields re-derived
-  // from the canonical scheduledDate by the same helper the server send uses.
-  const { payload, usedFallback } = useMemo(() => {
-    const r = getPayload(post, media.url, media.thumbnailUrl, media.kind, tz);
-    return {
-      ...r,
-      payload: normalizePayloadForN8n({ payload: r.payload, scheduledDate: post.scheduledDate, brandTimezone: tz }),
-    };
-  }, [post, media, tz]);
-  const payloadStr = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
+  // Preview/copy/download: the SERVER's canonical payload (same builder as the
+  // n8n send). Refetched on every panel open and whenever the saved post changes;
+  // never reconstructed in the browser.
+  const [jsonOpenSeq, setJsonOpenSeq] = useState(0);
+  const canonical = useCanonicalPayload({
+    brandId,
+    postId: post.id,
+    version: `${post.updatedAt ?? ""}|${post.scheduledDate ?? ""}|${jsonOpenSeq}`,
+    enabled: showJson,
+  });
+  const payloadStr = canonical.status === "ready" ? canonical.text : "";
 
   const docMedia =
     (post.media || []).find((m) => m.mediaType === "document") ||
@@ -350,7 +296,13 @@ export default function LinkedInPostDetailModal({
 
   const postIdShort = formatPostId(post.postNumber);
   const uploadDate = fmtDate(post.createdAt, tz);
-  const scheduledDateStr = fmtDate(post.scheduledDate, tz);
+  // Standard schedule presentation: Brand-local, 24h, raw zone for the default marker.
+  const scheduledDateStr = sched.schedule
+    ? sched.schedule.dateTime
+    : sched.state === "unscheduled"
+      ? NOT_SCHEDULED_LABEL
+      : sched.state === "loading" ? "Loading…" : SCHEDULE_UNAVAILABLE_TEXT;
+  const timezoneStr = sched.schedule ? sched.schedule.timezoneLabel : brandTimezoneShortLabel(brandTimezone);
 
   // A destructive / in-flight request is active — block dismiss actions.
   const busy = saving || deleting || sending;
@@ -374,6 +326,7 @@ export default function LinkedInPostDetailModal({
   }, [busy, onClose]);
 
   async function handleCopyJson() {
+    if (!payloadStr) return;
     try {
       await navigator.clipboard.writeText(payloadStr);
       setCopied(true);
@@ -385,6 +338,7 @@ export default function LinkedInPostDetailModal({
   }
 
   function handleDownloadJson() {
+    if (!payloadStr) return;
     const blob = new Blob([payloadStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -489,7 +443,9 @@ export default function LinkedInPostDetailModal({
       // Unchanged → original instant (no drift); changed → wall-clock string that
       // the server interprets in the brand timezone.
       const scheduledDateIso =
-        scheduledValueForSubmit(editScheduledDate, initialScheduledLocal, post.scheduledDate) || null;
+        scheduleUnavailable
+          ? new Date(post.scheduledDate).toISOString() // display data missing: keep the saved instant
+          : scheduledValueForSubmit(editScheduledDate, initialScheduledLocal, post.scheduledDate) || null;
 
       // Only editable metadata is sent. Platform / postType / media / files /
       // jsonPayload / media_url / document_url / thumbnail_url are owned by the
@@ -763,13 +719,19 @@ export default function LinkedInPostDetailModal({
                   style={fieldStyle}
                 />
               </EditField>
-              <EditField label={`Scheduled Date · ${brandTimezoneLabel(brandTimezone)}`}>
+              <EditField label={`Scheduled Date & Time · ${timezoneStr}`}>
                 <input
                   type="datetime-local"
                   value={editScheduledDate}
                   onChange={(e) => setEditScheduledDate(e.target.value)}
+                  disabled={scheduleUnavailable}
                   style={fieldStyle}
                 />
+                {scheduleUnavailable && (
+                  <div role="status" style={{ ...lbl, fontSize: 9, marginTop: 4, textTransform: "none" }}>
+                    {SCHEDULE_UNAVAILABLE_TEXT} — the saved time is kept. Reload to change it.
+                  </div>
+                )}
               </EditField>
               <EditField label="Notes">
                 <textarea
@@ -830,7 +792,8 @@ export default function LinkedInPostDetailModal({
                   <div style={{ ...lbl, marginBottom: 2 }}>Status</div>
                   <StatusPill status={post.status} />
                 </div>
-                {scheduledDateStr && <InfoField label="Scheduled" value={scheduledDateStr} />}
+                <InfoField label="Scheduled Date & Time" value={scheduledDateStr} plain />
+                <InfoField label="Timezone" value={timezoneStr} plain />
                 {uploadDate && <InfoField label="Uploaded" value={uploadDate} />}
               </div>
 
@@ -1048,7 +1011,10 @@ export default function LinkedInPostDetailModal({
           <div style={{ borderTop: "1px solid var(--sketch-line)", paddingTop: 12 }}>
             <button
               type="button"
-              onClick={() => setShowJson((v) => !v)}
+              onClick={() => {
+                if (!showJson) setJsonOpenSeq((n) => n + 1);
+                setShowJson((v) => !v);
+              }}
               aria-expanded={showJson}
               aria-label="Toggle n8n JSON payload"
               style={{
@@ -1059,13 +1025,13 @@ export default function LinkedInPostDetailModal({
                 padding: 0,
               }}
             >
-              <span>n8n JSON Payload</span>
+              <span>Canonical webhook payload</span>
               <span>{showJson ? "▲" : "▼"}</span>
             </button>
 
             {showJson && (
               <div style={{ marginTop: 10 }}>
-                {usedFallback && (
+                {canonical.status === "ready" && canonical.rebuilt && (
                   <div
                     style={{
                       ...lbl,
@@ -1075,8 +1041,8 @@ export default function LinkedInPostDetailModal({
                       lineHeight: 1.5,
                     }}
                   >
-                    Stored JSON is missing or invalid — showing a generated
-                    LinkedIn fallback payload for preview only.
+                    Stored JSON is missing or invalid — showing the payload the
+                    server would rebuild for sending.
                   </div>
                 )}
                 <div
@@ -1088,9 +1054,33 @@ export default function LinkedInPostDetailModal({
                     lineHeight: 1.5,
                   }}
                 >
-                  Webhook-ready payload prepared for n8n or an upload automation server.
+                  Current canonical payload for this saved post, generated by the server now. It is a preview, not a record of an earlier delivery.
+                  {canonical.status === "ready" && Array.isArray(canonical.payload?.files) && canonical.payload.files.some((f) => f && typeof f.document_url === "string") && (
+                    <> When sent, the LinkedIn legacy adapter rewrites Platform, files, media, media_url, media_count, is_carousel and video_url for this PDF post; the four schedule fields are sent unchanged.</>
+                  )}
+                </div>
+                <CanonicalPayloadStatus canonical={canonical} />
+                {canonical.status === "ready" && (<>
+                {/* Human-readable summary — NOT part of the payload below. Server-built. */}
+                <div
+                  aria-label="Brand publishing time summary"
+                  style={{
+                    border: "1px dashed var(--sketch-line)",
+                    padding: "8px 10px",
+                    marginBottom: 8,
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 8,
+                  }}
+                >
+                  <InfoField label="Brand publishing time" value={canonical.schedule?.dateTime ?? scheduledDateStr} plain />
+                  <InfoField label="Brand timezone" value={canonical.schedule?.timezoneLabel ?? timezoneStr} plain />
+                  <div style={{ ...lbl, fontSize: 9, gridColumn: "1 / -1", color: "var(--sketch-ink-soft)" }}>
+                    Summary only · not part of the payload
+                  </div>
                 </div>
                 <pre
+                  data-testid="canonical-payload"
                   style={{
                     fontFamily: "var(--font-mono-ink)",
                     fontSize: 10,
@@ -1108,10 +1098,12 @@ export default function LinkedInPostDetailModal({
                 >
                   {payloadStr}
                 </pre>
+                </>)}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                   <button
                     type="button"
                     onClick={handleCopyJson}
+                    disabled={!payloadStr}
                     aria-label="Copy JSON payload"
                     style={{
                       ...inkBtn,
@@ -1124,6 +1116,7 @@ export default function LinkedInPostDetailModal({
                   <button
                     type="button"
                     onClick={handleDownloadJson}
+                    disabled={!payloadStr}
                     aria-label="Download JSON payload"
                     style={inkBtn}
                   >
@@ -1151,7 +1144,7 @@ export default function LinkedInPostDetailModal({
 
       {showAdapt && (
         <CrossPlatformPostModal
-          sourcePost={post}
+          sourcePost={sched.schedule ? { ...post, schedule: sched.schedule } : post}
           sourcePlatform="LinkedIn"
           targetPlatform="Instagram"
           brandId={brandId}

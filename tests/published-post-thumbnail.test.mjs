@@ -29,6 +29,10 @@ function withRelations(post, include) {
   const out = { ...post };
   if (include?.media) out.media = state.media.filter((m) => m.publishedPostId === post.id).sort((a, b) => a.order - b.order);
   if (include?._count) out._count = { comments: 0 };
+  if (include?.brand) {
+    const b = BRANDS.find((x) => x.id === post.brandId);
+    out.brand = b ? { id: b.id, name: b.name, timezone: b.timezone } : null;
+  }
   return out;
 }
 
@@ -393,4 +397,30 @@ test("n8n payload shape is unchanged; only the existing thumbnail_url value carr
   assert.equal(withCover.thumbnail_url, "https://files.example.com/POST-0007/t.jpg");
   const strip = ({ thumbnail_url, "Webhook Sent At": _w, ...rest }) => rest;
   assert.deepEqual(strip(withCover), strip(without));
+});
+
+test("cover add / replace / remove never changes the displayed scheduled publishing time", async () => {
+  const created = await createPost(A);
+  const id = created.body.post.id;
+  // 25 Nov 2026 18:00 in Vancouver = 26 Nov 01:00 UTC (the UTC calendar date differs).
+  stored(id).scheduledDate = new Date("2026-11-26T01:00:00.000Z");
+  const expected = {
+    scheduledDateUtc: "2026-11-26T01:00:00.000Z",
+    timezone: "America/Vancouver",
+    date: "25 Nov 2026",
+    time: "18:00",
+    dateTime: "25 Nov 2026, 18:00",
+    datetimeLocal: "2026-11-25T18:00",
+  };
+  const pick = (s) => Object.fromEntries(Object.keys(expected).map((k) => [k, s?.[k]]));
+  for (const [label, run] of [
+    ["add", () => putThumb(A, id, F.jpg())],
+    ["replace", () => putThumb(A, id, F.png())],
+    ["remove", () => deleteThumb(A, id)],
+  ]) {
+    const res = await run();
+    assert.equal(res.status, 200, label);
+    assert.deepEqual(pick(res.body.post.schedule), expected, `${label}: server schedule from the owning brand`);
+    assert.equal(new Date(res.body.post.scheduledDate).toISOString(), expected.scheduledDateUtc, `${label}: instant untouched`);
+  }
 });

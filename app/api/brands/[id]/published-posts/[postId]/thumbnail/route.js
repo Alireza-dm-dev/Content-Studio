@@ -56,7 +56,13 @@ async function saveAndRespond(id, postId, data) {
   const updated = await prisma.publishedPost.update({
     where: { id: postId },
     data,
-    include: { media: { orderBy: { order: "asc" } }, _count: { select: { comments: true } } },
+    // The owning brand (id/name/timezone only) rides along with the update, so the
+    // response carries the server-built schedule without an extra query.
+    include: {
+      media: { orderBy: { order: "asc" } },
+      _count: { select: { comments: true } },
+      brand: { select: { id: true, name: true, timezone: true } },
+    },
   });
   return NextResponse.json({ success: true, post: serializePublishedPost(updated) });
 }
